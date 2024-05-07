@@ -1,0 +1,269 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.36.0.
+--
+-- see: https://github.com/sol/hpack
+
+name:           hs-hath
+version:        0.1.0.0
+synopsis:       A Haskell implementation of the Hath client
+description:    Please see the README on GitHub at <https://github.com/pe200012/hs-hath#readme>
+category:       Web
+homepage:       https://github.com/pe200012/hs-hath#readme
+bug-reports:    https://github.com/pe200012/hs-hath/issues
+author:         pe200012
+maintainer:     1326263755@qq.com
+copyright:      2024 pe200012
+license:        GPL-3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    CHANGELOG.md
+
+source-repository head
+  type: git
+  location: https://github.com/pe200012/hs-hath
+
+library
+  exposed-modules:
+      Cache
+      Query
+      Resource
+      RPCResult
+      Server
+      Types
+      Utils
+  other-modules:
+      Paths_hs_hath
+  hs-source-dirs:
+      src
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -fllvm
+  build-depends:
+      async
+    , base >=4.7 && <5
+    , base64
+    , binary
+    , bytestring
+    , co-log
+    , co-log-core
+    , containers
+    , cryptohash-sha1
+    , crypton
+    , crypton-connection
+    , crypton-x509
+    , crypton-x509-store
+    , cryptostore
+    , data-default-class
+    , dhall
+    , directory
+    , exceptions
+    , extra
+    , filepath
+    , hex-text
+    , http-client
+    , http-client-tls
+    , http-conduit
+    , http-types
+    , monad-control
+    , monad-loops
+    , mtl
+    , network
+    , optparse-applicative
+    , random
+    , scotty >=0.22
+    , sqlite-simple
+    , streaming-commons
+    , string-interpolate
+    , text
+    , time
+    , tls
+    , tls-session-manager
+    , transformers
+    , unix
+    , unliftio
+    , unordered-containers
+    , wai
+    , wai-cors
+    , wai-extra
+    , warp
+    , warp-tls
+  default-language: Haskell2010
+
+executable db-migrate
+  main-is: Main.hs
+  other-modules:
+      Paths_hs_hath
+  hs-source-dirs:
+      migrate
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -fllvm -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      async
+    , base >=4.7 && <5
+    , base64
+    , binary
+    , bytestring
+    , co-log
+    , co-log-core
+    , containers
+    , cryptohash-sha1
+    , crypton
+    , crypton-connection
+    , crypton-x509
+    , crypton-x509-store
+    , cryptostore
+    , data-default-class
+    , dhall
+    , directory
+    , exceptions
+    , extra
+    , filepath
+    , hex-text
+    , hs-hath
+    , http-client
+    , http-client-tls
+    , http-conduit
+    , http-types
+    , monad-control
+    , monad-loops
+    , mtl
+    , network
+    , optparse-applicative
+    , random
+    , scotty >=0.22
+    , sqlite-simple
+    , streaming-commons
+    , string-interpolate
+    , text
+    , time
+    , tls
+    , tls-session-manager
+    , transformers
+    , unix
+    , unliftio
+    , unordered-containers
+    , wai
+    , wai-cors
+    , wai-extra
+    , warp
+    , warp-tls
+  default-language: Haskell2010
+
+executable hs-hath
+  main-is: Main.hs
+  other-modules:
+      Paths_hs_hath
+  hs-source-dirs:
+      app
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -fllvm -threaded -rtsopts -with-rtsopts=-N -dynamic
+  build-depends:
+      async
+    , base >=4.7 && <5
+    , base64
+    , binary
+    , bytestring
+    , co-log
+    , co-log-core
+    , containers
+    , cryptohash-sha1
+    , crypton
+    , crypton-connection
+    , crypton-x509
+    , crypton-x509-store
+    , cryptostore
+    , data-default-class
+    , dhall
+    , directory
+    , exceptions
+    , extra
+    , filepath
+    , hex-text
+    , hs-hath
+    , http-client
+    , http-client-tls
+    , http-conduit
+    , http-types
+    , monad-control
+    , monad-loops
+    , mtl
+    , network
+    , optparse-applicative
+    , random
+    , scotty >=0.22
+    , sqlite-simple
+    , streaming-commons
+    , string-interpolate
+    , text
+    , time
+    , tls
+    , tls-session-manager
+    , transformers
+    , unix
+    , unliftio
+    , unordered-containers
+    , wai
+    , wai-cors
+    , wai-extra
+    , warp
+    , warp-tls
+  default-language: Haskell2010
+
+test-suite hs-hath-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_hs_hath
+  hs-source-dirs:
+      test
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -fllvm -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      async
+    , base >=4.7 && <5
+    , base64
+    , binary
+    , bytestring
+    , co-log
+    , co-log-core
+    , containers
+    , cryptohash-sha1
+    , crypton
+    , crypton-connection
+    , crypton-x509
+    , crypton-x509-store
+    , cryptostore
+    , data-default-class
+    , dhall
+    , directory
+    , exceptions
+    , extra
+    , filepath
+    , hex-text
+    , hs-hath
+    , http-client
+    , http-client-tls
+    , http-conduit
+    , http-types
+    , monad-control
+    , monad-loops
+    , mtl
+    , network
+    , optparse-applicative
+    , random
+    , scotty >=0.22
+    , sqlite-simple
+    , streaming-commons
+    , string-interpolate
+    , text
+    , time
+    , tls
+    , tls-session-manager
+    , transformers
+    , unix
+    , unliftio
+    , unordered-containers
+    , wai
+    , wai-cors
+    , wai-extra
+    , warp
+    , warp-tls
+  default-language: Haskell2010

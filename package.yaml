@@ -1,0 +1,113 @@
+name: hs-hath
+version: 0.1.0.0
+github: "pe200012/hs-hath"
+license: GPL-3
+author: "pe200012"
+maintainer: "1326263755@qq.com"
+copyright: "2024 pe200012"
+
+extra-source-files:
+  - README.md
+  - CHANGELOG.md
+
+synopsis: A Haskell implementation of the Hath client
+category: Web
+
+description: Please see the README on GitHub at <https://github.com/pe200012/hs-hath#readme>
+
+dependencies:
+  - base >= 4.7 && < 5
+  - async
+  - base64
+  - bytestring
+  - binary
+  - co-log-core
+  - co-log
+  - containers
+  - cryptohash-sha1
+  - cryptostore
+  - crypton
+  - crypton-connection
+  - directory
+  - data-default-class
+  - dhall
+  - sqlite-simple
+  - extra
+  - exceptions
+  - string-interpolate
+  - hex-text
+  - http-client
+  - http-client-tls
+  - http-conduit
+  - http-types
+  - monad-control
+  - monad-loops
+  - network
+  - mtl
+  - optparse-applicative
+  - filepath
+  - random
+  - text
+  - time
+  - transformers
+  - tls
+  - tls-session-manager
+  - scotty >= 0.22
+  - streaming-commons
+  - unordered-containers
+  - unix
+  - unliftio
+  - wai
+  - wai-cors
+  - wai-extra
+  - warp
+  - warp-tls
+  - crypton-x509
+  - crypton-x509-store
+
+ghc-options:
+  - -Wall
+  - -Wcompat
+  - -Widentities
+  - -Wincomplete-record-updates
+  - -Wincomplete-uni-patterns
+  - -Wmissing-export-lists
+  - -Wmissing-home-modules
+  - -Wpartial-fields
+  - -Wredundant-constraints
+  - -fllvm
+
+library:
+  source-dirs: src
+
+executables:
+  hs-hath:
+    main: Main.hs
+    source-dirs: app
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+      - -dynamic
+    dependencies:
+      - hs-hath
+  db-migrate:
+    main: Main.hs
+    source-dirs: migrate
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - hs-hath
+
+tests:
+  hs-hath-test:
+    main: Spec.hs
+    source-dirs: test
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - hs-hath

@@ -1,0 +1,14 @@
+resolver: lts-22.14
+
+packages:
+  - .
+
+extra-deps:
+  - scotty-0.22
+  - cryptostore-0.3.0.1
+
+flags:
+  cryptostore:
+    use_crypton: True
+
+with-gcc: /usr/bin/clang
