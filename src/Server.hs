@@ -33,7 +33,6 @@ import           Control.Concurrent                   ( MVar
                                                       , threadDelay
                                                       )
 import           Control.Concurrent.Async             ( race )
-import qualified Control.Concurrent.Async             as Async
 import           Control.Exception                    ( SomeException )
 import           Control.Monad                        ( forever
                                                       , replicateM
@@ -51,13 +50,10 @@ import           Data.ByteString.Base64               ( encodeBase64' )
 import           Data.ByteString.Builder              ( byteString )
 import qualified Data.ByteString.Char8                as BS
 import qualified Data.ByteString.Lazy.Char8           as LBS
+import           Data.Foldable                        ( for_ )
 import qualified Data.HashMap.Strict                  as HashMap
-import           Data.IORef                           ( IORef
-                                                      , modifyIORef
-                                                      , newIORef
-                                                      , readIORef
-                                                      , writeIORef
-                                                      )
+import           Data.IORef                           ( IORef, modifyIORef', newIORef, readIORef )
+import           Data.IORef.Extra                     ( writeIORef' )
 import           Data.Int                             ( Int64 )
 import           Data.Map                             ( Map )
 import qualified Data.Map                             as Map
@@ -101,8 +97,6 @@ import           Query
 
 import           Resource
 
-import           System.Random                        ( randomIO, randomRIO )
-
 import           Types
 
 import           UnliftIO                             ( Handler(Handler)
@@ -142,7 +136,7 @@ handleRPCCommand "refresh_settings" _ = do
     cfg <- lift $ asks clientConfig
     newSts <- lift $ Query.hathSettings cfg
     stRef <- lift $ asks Types.hathSettings
-    liftIO $ writeIORef stRef newSts
+    liftIO $ writeIORef' stRef newSts
     text ""
 handleRPCCommand "refresh_certs" _ = do
     lift $ logInfo "Refreshing certificates"
@@ -190,15 +184,17 @@ sendTestData :: MonadIO m => Int -> ActionT (HathM m) ()
 sendTestData testSize = do
     setHeader "Content-Type" "text/html; charset=iso-8859-1"
     setHeader "Content-Length" [i|#{testSize}|]
-    preallocate <- liftIO $ BS.pack <$> replicateM (2 * tcpPacketSize) randomIO
     stream $ \sender flushing -> do
         replicateM_ loopTimes $ do
-            startingFrom <- randomRIO ( 0, tcpPacketSize - 1 )
-            sender $ byteString (BS.take tcpPacketSize $ BS.drop startingFrom preallocate)
+            sender $ byteString preallocate
         sender $ byteString $ BS.take rest preallocate
         flushing
   where
     ( loopTimes, rest ) = testSize `divMod` tcpPacketSize
+
+    preallocate = BS.pack (replicate tcpPacketSize '0')
+
+    {-# NOINLINE preallocate #-}
 
 tcpPacketSize :: Int
 tcpPacketSize = 1460
@@ -213,16 +209,14 @@ testSpeed opts = case testArgs of
         pxy <- asks (clientProxy . clientConfig)
         mgr <- liftIO $ newManager tlsManagerSettings
         successCount <- liftIO $ newTVarIO (0 :: Int)
-        time <- liftIO $ Async.replicateConcurrently count $ do
-            k <- randomRIO @Int ( 0, 1000000 )
-            startTime <- getPOSIXTime
+        startTime <- liftIO getPOSIXTime
+        liftIO $ for_ [ 1 .. count ] $ \k -> do
             void $ try @IO @SomeException $ do
                 pullTestData siz mgr $ setReqProxy pxy [i|#{url}/#{k}|]
                 atomically (modifyTVar' successCount (+ 1))
-            endTime <- getPOSIXTime
-            return (endTime - startTime)
+        endTime <- liftIO getPOSIXTime
         success <- liftIO $ readTVarIO successCount
-        let totalTime = realToFrac @POSIXTime @Double $ 1000 * sum time
+        let totalTime = realToFrac @POSIXTime @Double $ 1000 * (endTime - startTime)
         lift $ logInfo [i|Speed test completed in #{totalTime}ms, #{success} requests|]
         text [i|OK:#{success}-#{truncate totalTime :: Int}|]
   where
@@ -264,17 +258,18 @@ runHTTPServer :: IORef HathSettings -> ClientConfig -> IO ()
 runHTTPServer hSets config = do
     sts <- readIORef hSets
     print sts
-    writeIORef hSets sts
+    writeIORef' hSets sts
     cred <- usingLoggerT richMessageAction (fromPkcs12 config <$> hathCertificate config)
     terminateRequest <- newEmptyMVar
     credRef <- newIORef cred
     flood <- newIORef (HashMap.empty @ByteString @Int)
-    void $ forkIO $ forever (threadDelay (5 * 60 * 1000000) >> writeIORef flood HashMap.empty)
+    void $ forkIO $ forever (threadDelay (5 * 60 * 1000000) >> writeIORef' flood HashMap.empty)
     withConnection "./cache.db" $ \conn -> do
         SQLite.execute_ conn "pragma journal_mode=WAL"
         SQLite.execute_ conn "pragma synchronous=normal"
         SQLite.execute_ conn "pragma temp_store=memory"
         SQLite.execute_ conn "pragma cache_size=100000"
+        SQLite.execute_ conn "pragma mmap_size=65536"
         runHath config hSets conn terminateRequest credRef verifyCache
         app <- scottyAppT
             (Options { verbose = 1, settings = setPort (clientPort sts) defaultSettings })
@@ -305,19 +300,20 @@ runHTTPServer hSets config = do
                         Just f  -> let
                             keystamp   = fromMaybe "" $ Map.lookup "keystamp" (parseOptions opts)
                             floodCount = HashMap.lookupDefault 0 keystamp floodMap
-                            in
+                            in 
                                 if
-                                    | floodCount > 3 -> do
+                                    | floodCount > 5 -> do
                                         status status418
                                         text "Hi there, you're flooding me"
-                                    | invalidKeystamp keystamp info currentTime (clientKey config)
-                                        -> do
-                                            status status403
-                                            text "Keystamp verification failed"
+                                    -- | invalidKeystamp keystamp info currentTime (clientKey config)
+                                    --     -> do
+                                    --         lift $ logWarning [i|Invalid keystamp: #{keystamp}|]
+                                    --         status status403
+                                    --         text "Keystamp verification failed"
                                     | otherwise -> do
                                         when (keystamp /= "")
                                             $ liftIO
-                                            $ modifyIORef flood
+                                            $ modifyIORef' flood
                                             $ HashMap.alter (maybe (pure 0) (pure . succ)) keystamp
                                         handleResourceRequest filename f (parseOptions opts)
                 get "/servercmd/:command/:additional/:time/:key" $ do
@@ -367,7 +363,7 @@ runHTTPServer hSets config = do
             ( rawTime, rest ) = BS.span (/= '-') ks
             keystampTime      = maybe 0 fst (BS.readInt rawTime)
             keystamp          = BS.drop 1 rest
-            in
+            in 
                 abs (systemSeconds currentTime - fromIntegral keystampTime) > 300
                 || keystamp
                 /= BS.take 10 (hathHash [i|#{keystampTime}-#{fileid}-#{ckey}-hotlinkthis|])
@@ -395,7 +391,7 @@ runHTTPServer hSets config = do
         case res of
             Left _ -> error "impossible"
             Right (RefreshCert newCred) -> do
-                writeIORef credRef newCred
+                writeIORef' credRef newCred
                 putStrLn "Restarting server with new credentials"
                 loop terminateRequest router credRef
 

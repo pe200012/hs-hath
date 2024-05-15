@@ -46,12 +46,16 @@ data HathFile
 toFileId :: HathFile -> ByteString
 toFileId (HathFile h s xres yres typ) = [i|#{h}-#{s}-#{xres}-#{yres}-#{typ}|]
 
+{-# INLINE toFileId #-}
+
 parseHathFile :: ByteString -> Maybe HathFile
 parseHathFile param = case BS.split '-' param of
     [ h, size, xres, yres, typ ] -> Just
         $ HathFile h (read $ BS.unpack size) (read $ BS.unpack xres) (read $ BS.unpack yres) typ
     [ h, size, typ ] -> Just $ HathFile h (read $ BS.unpack size) 0 0 typ
     _ -> Nothing
+
+{-# INLINE parseHathFile #-}
 
 data Cache
     = Cache { cacheLRUCounter :: {-# UNPACK #-} !Int
@@ -94,11 +98,15 @@ lookupCache (decodeUtf8 -> fileId)
                 (Only fileId)
             return $ Just $ cacheBytes c
 
+{-# INLINE lookupCache #-}
+
 updateFilenameIfMissing :: MonadIO m => ByteString -> ByteString -> HathM m ()
 updateFilenameIfMissing (decodeUtf8 -> fileId) (decodeUtf8 -> filename)
     = execute
         "UPDATE files SET file_name = ? WHERE file_id = ? AND file_name IS NULL"
         ( filename, fileId )
+
+{-# INLINE updateFilenameIfMissing #-}
 
 storeCache :: MonadIO m => HathFile -> ByteString -> ByteString -> HathM m ()
 storeCache hf bytes (decodeUtf8 -> filename)
@@ -110,3 +118,5 @@ storeCache hf bytes (decodeUtf8 -> filename)
                , cacheFileName   = Just filename
                , cacheBytes      = bytes
                })
+
+{-# INLINE storeCache #-}

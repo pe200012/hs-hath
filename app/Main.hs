@@ -1,30 +1,37 @@
 
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
+
 {-# LANGUAGE OverloadedStrings #-}
+
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Main ( main ) where
 
-import           Colog              ( logError, logInfo, richMessageAction, usingLoggerT )
+import           Colog                   ( logError, logInfo, richMessageAction, usingLoggerT )
 
-import           Control.Concurrent ( forkIO, myThreadId, threadDelay, throwTo )
-import           Control.Exception  ( SomeException, catch )
-import           Control.Monad      ( forever, void, when )
+import           Control.Concurrent      ( forkIO, myThreadId, threadDelay, throwTo )
+import           Control.Exception       ( SomeException, catch )
+import           Control.Monad           ( forever, void, when )
 
-import           Data.IORef         ( newIORef )
+import           Data.IORef              ( newIORef )
+import           Data.String.Interpolate ( i )
+import           Data.Text               ( Text )
 
 import qualified Dhall
 
-import           Network.HTTP.Types ( status200 )
+import           Network.HTTP.Types      ( status200 )
 
-import           Prelude            hiding ( log )
+import           Prelude                 hiding ( log )
 
 import           Query
 
 import           Server
 
-import           System.Exit        ( exitFailure )
-import           System.Posix       ( Handler(Catch), installHandler, sigINT, sigTERM )
+import           System.Exit             ( exitFailure )
+import           System.Posix            ( Handler(Catch), installHandler, sigINT, sigTERM )
 
 import           Types
 
@@ -52,11 +59,14 @@ hathMain = do
     usingLoggerT richMessageAction $ clientStart config
     forever $ do
         threadDelay (60 * periodSeconds)
-        heartBeat config `catch` (\(e :: SomeException) -> print e)
+        heartBeat config `catch` print @SomeException
   where
     periodSeconds = 1000000
 
 main :: IO ()
 main = do
-    usingLoggerT richMessageAction $ logInfo "Starting Hentai@Home server"
+    usingLoggerT richMessageAction
+        $ logInfo
+            ([i|Starting Hentai@Home server. Version: #{(__DATE__ :: String)} #{(__TIME__ :: String)}|]
+                 :: Text)
     hathMain

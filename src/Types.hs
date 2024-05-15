@@ -17,13 +17,13 @@ import           Colog.Core.Class       ( HasLog(..) )
 import           Control.Concurrent     ( MVar )
 import           Control.Exception      ( Exception )
 import           Control.Monad.Catch    ( MonadThrow )
-import           Control.Monad.IO.Class ( MonadIO(liftIO) )
+import           Control.Monad.IO.Class ( MonadIO )
 import           Control.Monad.Reader   ( MonadReader(..), ReaderT(runReaderT) )
 
 import           Data.Bifunctor         ( Bifunctor(bimap) )
 import           Data.ByteString        ( ByteString )
 import           Data.HashSet           ( HashSet )
-import           Data.IORef             ( IORef, newIORef )
+import           Data.IORef             ( IORef )
 import           Data.Int               ( Int64 )
 import           Data.Text              ( Text )
 import           Data.Text.Encoding     ( decodeUtf8, encodeUtf8 )
@@ -40,9 +40,6 @@ data HathError = InitialContactFailure | InvalidClientKey | InvalidCertificate
     deriving ( Show )
 
 newtype RefreshCert = RefreshCert Credential
-    deriving ( Show )
-
-instance Exception RefreshCert
 
 data GracefulShutdown = GracefulShutdown
     deriving ( Show )
@@ -90,14 +87,13 @@ data ClientProxy
                   , proxyPort :: {-# UNPACK #-} !Int
                   , proxyAuth :: {-# UNPACK #-} !(Maybe ( ByteString, ByteString ))
                   }
-    deriving ( Show )
 
 data SerializedClientProxy
     = SerializedClientProxy { sProxyHost :: {-# UNPACK #-} !Text
                             , sProxyPort :: {-# UNPACK #-} !Int
                             , sProxyAuth :: {-# UNPACK #-} !(Maybe ( Text, Text ))
                             }
-    deriving ( Generic, Show )
+    deriving ( Generic )
 
 instance FromDhall SerializedClientProxy
 
@@ -121,7 +117,6 @@ data ClientConfig
                    , clientVersion :: {-# UNPACK #-} !ByteString
                    , clientProxy   :: {-# UNPACK #-} !(Maybe ClientProxy)
                    }
-    deriving ( Show )
 
 defaultClientConfig :: ClientConfig
 defaultClientConfig
@@ -135,7 +130,7 @@ data SerializedClientConfig
                              , sClientVersion :: {-# UNPACK #-} !Text
                              , sClientProxy   :: {-# UNPACK #-} !(Maybe SerializedClientProxy)
                              }
-    deriving ( Generic, Show )
+    deriving ( Generic )
 
 instance FromDhall SerializedClientConfig
 

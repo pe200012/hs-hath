@@ -96,7 +96,7 @@ rpcQueryIO (ClientConfig { .. }) rpcEndpoint action additional errOnStatus setPr
         setReqProxy r
             = if setProxy
                 then r
-                    { proxy          = (\(ClientProxy h p _) -> Proxy h p) <$> clientProxy
+                    { proxy          = (Proxy . proxyHost <*> proxyPort) <$> clientProxy
                     , requestHeaders = case proxyAuth =<< clientProxy of
                           Nothing -> normalHeader
                           Just ( user, pass ) -> ( "Proxy-authorization"

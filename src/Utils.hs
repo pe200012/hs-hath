@@ -64,7 +64,7 @@ parseOptions param = Map.fromList kvPairs
 
 mkMngr :: String -> Credential -> IO Manager
 mkMngr hostName cred = do
-    let hooks        = def { onCertificateRequest = \_ -> return $ Just cred }
+    let hooks        = def { onCertificateRequest = const $ return $ Just cred }
         clientParams
             = (defaultParamsClient hostName "")
             { clientHooks     = hooks

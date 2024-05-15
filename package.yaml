@@ -46,7 +46,6 @@ dependencies:
   - mtl
   - optparse-applicative
   - filepath
-  - random
   - text
   - time
   - transformers
@@ -88,7 +87,7 @@ executables:
       - -threaded
       - -rtsopts
       - -with-rtsopts=-N
-      - -dynamic
+      - -fpedantic-bottoms
     dependencies:
       - hs-hath
   db-migrate:
