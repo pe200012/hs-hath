@@ -31,7 +31,6 @@ import qualified Data.ByteString.Char8      as BS
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import           Data.Foldable              ( Foldable(foldl') )
 import qualified Data.HashSet               as HashSet
-import           Data.String                ( IsString(fromString) )
 import           Data.String.Interpolate    ( i )
 import           Data.Time.Clock.System     ( SystemTime(systemSeconds), getSystemTime )
 import           Data.X509                  ( CertificateChain, PrivKey )
@@ -59,6 +58,30 @@ baseURL :: ByteString
 baseURL = "rpc.hentaiathome.net"
 
 {-# NOINLINE baseURL #-}
+
+getURLString :: ClientConfig -> ByteString -> ByteString -> SystemTime -> Request -> Request
+getURLString (ClientConfig { .. }) action additional time initReq
+    = setQueryString
+        [ ( "act", Just action )
+        , ( "cid", Just clientID )
+        , ( "add"
+          , if BS.null additional
+                then Nothing
+                else Just additional
+          )
+        , ( "acttime", Just [i|#{timeInSeconds}|] )
+        , ( "actkey", Just key )
+        , ( "clientbuild", Just clientVersion )
+        ]
+        initReq { method = "GET", responseTimeout = responseTimeoutMicro (60 * 1000000) }
+  where
+    timeInSeconds = systemSeconds time
+
+    key
+        = hathHash
+            [i|hentai@home-#{action}-#{additional}-#{clientID}-#{timeInSeconds}-#{clientKey}|]
+
+{-# INLINE getURLString #-}
 
 serverStatus :: ( MonadIO m, WithLog env Message m ) => m Status
 serverStatus = do
@@ -88,11 +111,7 @@ rpcQueryIO :: MonadIO m
 rpcQueryIO (ClientConfig { .. }) rpcEndpoint action additional errOnStatus setProxy = do
     currentTime <- liftIO getSystemTime
     initReq <- liftIO $ parseRequest [i|http://#{baseURL}#{rpcEndpoint}|]
-    let timeInSeconds = show $ systemSeconds currentTime
-        key
-            = hathHash
-                [i|hentai@home-#{action}-#{additional}-#{clientID}-#{timeInSeconds}-#{clientKey}|]
-        normalHeader  = [ ( "Connection", "Close" ), ( "User-Agent", "Hentai@Home 161" ) ]
+    let normalHeader  = [ ( "Connection", "Close" ), ( "User-Agent", "Hentai@Home 161" ) ]
         setReqProxy r
             = if setProxy
                 then r
@@ -108,18 +127,11 @@ rpcQueryIO (ClientConfig { .. }) rpcEndpoint action additional errOnStatus setPr
         req
             = bool setRequestIgnoreStatus setRequestCheckStatus errOnStatus
             $ setReqProxy
-            $ setQueryString
-                [ ( "act", Just action )
-                , ( "cid", Just clientID )
-                , ( "add"
-                  , if BS.null additional
-                        then Nothing
-                        else Just additional
-                  )
-                , ( "acttime", Just (fromString timeInSeconds) )
-                , ( "actkey", Just key )
-                , ( "clientbuild", Just clientVersion )
-                ]
+            $ getURLString
+                (ClientConfig { .. })
+                action
+                additional
+                currentTime
                 initReq { method = "GET", responseTimeout = responseTimeoutMicro (60 * 1000000) }
     res <- Simple.httpLbs req
     when (LBS.length (getResponseBody res) < 1000) $ liftIO $ LBS.putStrLn $ getResponseBody res
@@ -189,3 +201,27 @@ fromPkcs12 (clientKey -> pass) bytes = case cred of
         case maybeCred of
             Just c  -> return c
             Nothing -> error "no credential"
+
+galleryMetadata
+    :: MonadIO m => ClientConfig -> Maybe ( ByteString, ByteString ) -> m (Response LBS.ByteString)
+galleryMetadata cfg opt
+    = rpcQueryIO
+        cfg
+        "/15/dl"
+        "fetchqueue"
+        (case opt of
+             Nothing -> ""
+             Just ( gid, minxres ) -> [i|#{gid};#{minxres}|])
+        False
+        True
+
+galleryFetch
+    :: MonadIO m => ClientConfig -> Int -> GalleryFile -> Bool -> m (Response LBS.ByteString)
+galleryFetch cfg gid file forceImageServer
+    = rpcQueryIO
+        cfg
+        "/15/rpc"
+        "dlfetch"
+        [i|#{gid};#{galleryFilePage file};#{galleryFileIndex file};#{galleryFileXRes file};#{fromEnum forceImageServer}|]
+        False
+        False

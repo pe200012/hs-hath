@@ -11,30 +11,33 @@
 
 module Types ( module Types ) where
 
-import           Colog                  ( HasLog, LogAction, Message, richMessageAction )
-import           Colog.Core.Class       ( HasLog(..) )
+import           Colog                      ( HasLog, LogAction, Message, richMessageAction )
+import           Colog.Core.Class           ( HasLog(..) )
 
-import           Control.Concurrent     ( MVar )
-import           Control.Exception      ( Exception )
-import           Control.Monad.Catch    ( MonadThrow )
-import           Control.Monad.IO.Class ( MonadIO )
-import           Control.Monad.Reader   ( MonadReader(..), ReaderT(runReaderT) )
+import           Control.Concurrent         ( MVar )
+import           Control.Exception          ( Exception )
+import           Control.Monad.Catch        ( MonadThrow )
+import           Control.Monad.IO.Class     ( MonadIO )
+import           Control.Monad.Reader       ( MonadReader(..), ReaderT(runReaderT, ReaderT) )
 
-import           Data.Bifunctor         ( Bifunctor(bimap) )
-import           Data.ByteString        ( ByteString )
-import           Data.HashSet           ( HashSet )
-import           Data.IORef             ( IORef )
-import           Data.Int               ( Int64 )
-import           Data.Text              ( Text )
-import           Data.Text.Encoding     ( decodeUtf8, encodeUtf8 )
+import           Data.Bifunctor             ( Bifunctor(bimap) )
+import           Data.ByteString            ( ByteString )
+import qualified Data.ByteString.Lazy.Char8 as LBS
+import           Data.Foldable              ( foldl' )
+import           Data.Foldable.Extra        ( notNull )
+import           Data.HashSet               ( HashSet )
+import           Data.IORef                 ( IORef )
+import           Data.Int                   ( Int64 )
+import           Data.Text                  ( Text )
+import           Data.Text.Encoding         ( decodeUtf8, encodeUtf8 )
 
-import           Database.SQLite.Simple ( Connection )
+import           Database.SQLite.Simple     ( Connection )
 
-import           Dhall                  ( FromDhall, Generic, ToDhall )
+import           Dhall                      ( FromDhall, Generic, ToDhall )
 
-import           Network.TLS            ( Credential )
+import           Network.TLS                ( Credential )
 
-import           UnliftIO               ( MonadUnliftIO )
+import           UnliftIO                   ( MonadUnliftIO )
 
 data HathError = InitialContactFailure | InvalidClientKey | InvalidCertificate
     deriving ( Show )
@@ -207,3 +210,62 @@ runHath cfg hRef conn refreshCert credRef m = do
 
 {-# INLINE runHath #-}
 
+data GalleryFile
+    = GalleryFile { galleryFilePage  :: {-# UNPACK #-} !Int
+                  , galleryFileIndex :: {-# UNPACK #-} !Int
+                  , galleryFileName  :: {-# UNPACK #-} !ByteString
+                  , galleryFileXRes  :: {-# UNPACK #-} !ByteString
+                  , galleryFileHash  :: {-# UNPACK #-} !ByteString
+                  , galleryFileExt   :: {-# UNPACK #-} !ByteString
+                  }
+
+data GalleryMetadata
+    = GalleryMetadata
+    { galleryID        :: {-# UNPACK #-} !Int
+    , galleryFileCount :: {-# UNPACK #-} !Int
+    , galleryMinXRes   :: {-# UNPACK #-} !ByteString
+    , galleryTitle     :: {-# UNPACK #-} !ByteString
+    , galleryFileList  :: {-# UNPACK #-} ![ GalleryFile ]
+    }
+
+emptyMetadata :: GalleryMetadata
+emptyMetadata
+    = GalleryMetadata
+    { galleryID        = 0
+    , galleryFileCount = 0
+    , galleryMinXRes   = ""
+    , galleryTitle     = ""
+    , galleryFileList  = []
+    }
+
+{-# NOINLINE emptyMetadata #-}
+
+parseMetadata :: LBS.ByteString -> GalleryMetadata
+parseMetadata bytes = foldl' go emptyMetadata (LBS.lines bytes)
+  where
+    unsafeReadInt bs = case LBS.readInt bs of
+        Just ( i, _ ) -> i
+        Nothing       -> error "parseMetadata: unsafeReadInt"
+
+    go metadata line = case LBS.words line of
+        [ "GID", gid ] -> metadata { galleryID = unsafeReadInt gid }
+        [ "FILECOUNT", count ] -> metadata { galleryFileCount = unsafeReadInt count }
+        [ "MINXRES", xres ] -> metadata { galleryMinXRes = LBS.toStrict xres }
+        ("TITLE" : rest) -> metadata { galleryTitle = LBS.toStrict $ LBS.unwords rest }
+        xs
+            | notNull xs -> case LBS.readInt (head xs) of
+                Nothing          -> metadata
+                Just ( page, _ ) -> let
+                    [ _, fid, mxres, hash, ext, basename ] = xs
+                    in 
+                        metadata { galleryFileList = GalleryFile
+                                       { galleryFilePage  = page
+                                       , galleryFileIndex = unsafeReadInt fid
+                                       , galleryFileName  = LBS.toStrict basename
+                                       , galleryFileXRes  = LBS.toStrict mxres
+                                       , galleryFileHash  = LBS.toStrict hash
+                                       , galleryFileExt   = LBS.toStrict ext
+                                       }
+                                       : galleryFileList metadata
+                                 }
+        _ -> metadata

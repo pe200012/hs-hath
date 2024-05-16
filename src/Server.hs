@@ -10,6 +10,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
@@ -35,7 +36,6 @@ import           Control.Concurrent                   ( MVar
 import           Control.Concurrent.Async             ( race )
 import           Control.Exception                    ( SomeException )
 import           Control.Monad                        ( forever
-                                                      , replicateM
                                                       , replicateM_
                                                       , void
                                                       , when
@@ -74,6 +74,7 @@ import           Network.HTTP.Client                  ( Proxy(Proxy)
                                                       )
 import           Network.HTTP.Client.TLS              ( tlsManagerSettings )
 import           Network.HTTP.Simple                  ( getResponseBody )
+import qualified Network.HTTP.Simple                  as Simple
 import           Network.HTTP.Types                   ( status200
                                                       , status301
                                                       , status403
@@ -96,6 +97,8 @@ import           Prelude                              hiding ( log )
 import           Query
 
 import           Resource
+
+import           System.Directory                     ( createDirectoryIfMissing )
 
 import           Types
 
@@ -155,7 +158,36 @@ handleRPCCommand "speed_test" additional = do
     opts     = parseOptions additional
 
     testSize = maybe 1000000 fst (BS.readInt =<< Map.lookup "testsize" opts)
+handleRPCCommand "start_downloader" _ = do
+    lift $ logInfo "Starting gallery downloader"
+    cfg <- lift $ asks clientConfig
+    metadata <- lift (parseMetadata . getResponseBody <$> galleryMetadata cfg Nothing)
+    void $ liftIO $ forkIO $ downloadGallery cfg metadata
+    text ""
 handleRPCCommand _ _ = text "INVALID_COMMAND"
+
+downloadGallery :: ClientConfig -> GalleryMetadata -> IO ()
+downloadGallery cfg meta = do
+    createDirectoryIfMissing True [i|download/#{galleryTitle meta}|]
+    mapM_ (downloadFile 0) (galleryFileList meta)
+  where
+    gid = galleryID meta
+
+    downloadFile :: Int -> GalleryFile -> IO ()
+    downloadFile trial f
+        | trial > 3 = putStrLn [i|Failed to download #{galleryFileName f}|]
+        | otherwise = do
+            url <- LBS.toStrict . (!! 1) . LBS.lines . getResponseBody
+                <$> galleryFetch cfg gid f (trial > 0)
+            bytes <- LBS.toStrict . getResponseBody <$> Simple.httpLbs [i|#{url}|]
+            if galleryFileHash f == hathHash bytes
+                then do
+                    BS.writeFile filePath bytes
+                    putStrLn [i|Downloaded #{galleryFileName f}.#{galleryFileExt f}|]
+                else downloadFile (trial + 1) f
+      where
+        filePath :: FilePath
+        filePath = [i|download/#{galleryTitle meta}/#{galleryFileName f}.#{galleryFileExt f}|]
 
 handleResourceRequest :: ( MonadIO m, MonadThrow m )
                       => ByteString
@@ -300,7 +332,7 @@ runHTTPServer hSets config = do
                         Just f  -> let
                             keystamp   = fromMaybe "" $ Map.lookup "keystamp" (parseOptions opts)
                             floodCount = HashMap.lookupDefault 0 keystamp floodMap
-                            in 
+                            in
                                 if
                                     | floodCount > 5 -> do
                                         status status418
@@ -363,7 +395,7 @@ runHTTPServer hSets config = do
             ( rawTime, rest ) = BS.span (/= '-') ks
             keystampTime      = maybe 0 fst (BS.readInt rawTime)
             keystamp          = BS.drop 1 rest
-            in 
+            in
                 abs (systemSeconds currentTime - fromIntegral keystampTime) > 300
                 || keystamp
                 /= BS.take 10 (hathHash [i|#{keystampTime}-#{fileid}-#{ckey}-hotlinkthis|])
