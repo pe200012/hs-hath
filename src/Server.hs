@@ -35,11 +35,7 @@ import           Control.Concurrent                   ( MVar
                                                       )
 import           Control.Concurrent.Async             ( race )
 import           Control.Exception                    ( SomeException )
-import           Control.Monad                        ( forever
-                                                      , replicateM_
-                                                      , void
-                                                      , when
-                                                      )
+import           Control.Monad                        ( forever, replicateM_, void, when )
 import           Control.Monad.Catch                  ( MonadThrow )
 import           Control.Monad.IO.Class               ( MonadIO(liftIO) )
 import           Control.Monad.Reader                 ( asks )
@@ -97,6 +93,11 @@ import           Prelude                              hiding ( log )
 import           Query
 
 import           Resource
+
+import           Result                               ( RPCResult(..)
+                                                      , StatusCode(..)
+                                                      , parseRPCResult
+                                                      )
 
 import           System.Directory                     ( createDirectoryIfMissing )
 
@@ -170,6 +171,7 @@ downloadGallery :: ClientConfig -> GalleryMetadata -> IO ()
 downloadGallery cfg meta = do
     createDirectoryIfMissing True [i|download/#{galleryTitle meta}|]
     mapM_ (downloadFile 0) (galleryFileList meta)
+    void $ galleryMetadata cfg (Just ( [i|#{gid}|], galleryMinXRes meta ))
   where
     gid = galleryID meta
 
@@ -177,14 +179,16 @@ downloadGallery cfg meta = do
     downloadFile trial f
         | trial > 3 = putStrLn [i|Failed to download #{galleryFileName f}|]
         | otherwise = do
-            url <- LBS.toStrict . (!! 1) . LBS.lines . getResponseBody
-                <$> galleryFetch cfg gid f (trial > 0)
-            bytes <- LBS.toStrict . getResponseBody <$> Simple.httpLbs [i|#{url}|]
-            if galleryFileHash f == hathHash bytes
-                then do
-                    BS.writeFile filePath bytes
-                    putStrLn [i|Downloaded #{galleryFileName f}.#{galleryFileExt f}|]
-                else downloadFile (trial + 1) f
+            res <- parseRPCResult . getResponseBody <$> galleryFetch cfg gid f (trial > 0)
+            case (rpcStatusCode res, rpcResults res) of
+                (OK, url : _) -> do
+                    bytes <- LBS.toStrict . getResponseBody <$> Simple.httpLbs [i|#{url}|]
+                    if galleryFileHash f == hathHash bytes
+                        then do
+                            BS.writeFile filePath bytes
+                            putStrLn [i|Downloaded #{galleryFileName f}.#{galleryFileExt f}|]
+                        else downloadFile (trial + 1) f
+                _  -> downloadFile (trial + 1) f
       where
         filePath :: FilePath
         filePath = [i|download/#{galleryTitle meta}/#{galleryFileName f}.#{galleryFileExt f}|]

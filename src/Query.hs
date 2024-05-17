@@ -50,6 +50,8 @@ import           Network.HTTP.Types         ( Status )
 
 import           Prelude                    hiding ( log )
 
+import           Result                     ( RPCResult(..), StatusCode(..), parseRPCResult )
+
 import           Types
 
 import           Utils
@@ -152,10 +154,10 @@ heartBeat cfg = void $ rpcQueryIO cfg "/15/rpc" "still_alive" "" False True
 clientStart :: ( MonadIO m, WithLog env Message m ) => ClientConfig -> m ()
 clientStart cfg = do
     logInfo "Starting client"
-    res <- rpcQueryIO cfg "/15/rpc" "client_start" "" True True
-    let ( failCode, _ ) = splitRPCResponse $ getResponseBody res
-    when (failCode /= "OK") $ do
-        logInfo [i|Client start failed: #{failCode}|]
+    res <- parseRPCResult . getResponseBody
+        <$> rpcQueryIO cfg "/15/rpc" "client_start" "" True True
+    when (rpcStatusCode res /= OK) $ do
+        logInfo [i|Client start failed: #{show (rpcStatusCode res)}|]
         error "Client start failed"
 
 clientStop :: ( MonadIO m, WithLog env Message m ) => ClientConfig -> m ()
@@ -181,7 +183,8 @@ hathSettings cfg = do
                         "diskremaining_bytes" -> s { diskRemainingBytes = read $ LBS.unpack v }
                         "static_ranges" -> s
                             { staticRanges = HashSet.fromList $ LBS.toStrict <$> LBS.split ';' v }
-                        _ -> s) defaultHathSettings . (drop 1 . LBS.split '\n' . getResponseBody)
+                        _ -> s) defaultHathSettings
+        . (rpcResults . parseRPCResult . getResponseBody)
         <$> rpcQueryIO cfg "/15/rpc" "client_settings" "" True True
 
 hathCertificate :: ( MonadIO m, WithLog env Message m ) => ClientConfig -> m LBS.ByteString

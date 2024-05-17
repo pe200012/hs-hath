@@ -30,7 +30,7 @@ library
       Cache
       Query
       Resource
-      RPCResult
+      Result
       Server
       Types
       Utils

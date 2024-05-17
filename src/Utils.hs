@@ -38,13 +38,6 @@ import           Text.Hex                   ( encodeHex )
 
 import           Types                      ( HathM, HathSettings, Singleton(..) )
 
-splitRPCResponse :: LBS.ByteString -> ( LBS.ByteString, LBS.ByteString )
-splitRPCResponse bytes = ( failCode, LBS.drop 1 body )
-  where
-    ( failCode, body ) = LBS.span (/= '\n') bytes
-
-{-# INLINE splitRPCResponse #-}
-
 hathHash :: ByteString -> ByteString
 hathHash = encodeUtf8 . encodeHex . hash
 

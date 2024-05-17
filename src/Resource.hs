@@ -32,7 +32,7 @@ import           Prelude                    hiding ( log )
 
 import           Query
 
-import           RPCResult                  ( RPCResult(rpcResults), parseRPCResult )
+import           Result                     ( RPCResult(rpcResults), parseRPCResult )
 
 import           Types
 
