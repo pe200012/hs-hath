@@ -11,12 +11,12 @@ import           Data.Foldable           ( for_ )
 import qualified Data.HashSet            as HashSet
 import           Data.String.Interpolate ( i )
 import qualified Data.Text               as Text
-import           Data.Text.Encoding      ( decodeUtf8 )
 
 import           Database.SQLite.Simple  ( Connection, execute, execute_, query, withConnection )
 
+import           Relude
+
 import           System.Directory        ( getDirectoryContents )
-import           System.Environment      ( getArgs )
 import           System.FilePath         ( (</>), takeBaseName )
 import           System.Posix            ( getFileStatus, isDirectory )
 

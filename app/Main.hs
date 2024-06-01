@@ -7,10 +7,8 @@ module Main ( main ) where
 import           Colog                   ( logError, logInfo, richMessageAction, usingLoggerT )
 
 import           Control.Concurrent      ( forkIO, myThreadId, threadDelay, throwTo )
-import           Control.Exception       ( SomeException, catch )
-import           Control.Monad           ( forever, void, when )
+import           Control.Exception       ( catch )
 
-import           Data.IORef              ( newIORef )
 import           Data.String.Interpolate ( i )
 import           Data.Text               ( Text )
 
@@ -20,9 +18,10 @@ import           Network.HTTP.Types      ( status200 )
 
 import           Query
 
+import           Relude
+
 import           Server
 
-import           System.Exit             ( exitFailure )
 import           System.Posix            ( Handler(Catch), installHandler, sigINT, sigTERM )
 
 import           Types

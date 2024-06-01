@@ -15,11 +15,9 @@ import           Data.ByteString            ( ByteString )
 import qualified Data.ByteString.Char8      as BS
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import           Data.Default.Class         ( Default(def) )
-import           Data.IORef                 ( readIORef )
 import           Data.Map                   ( Map )
 import qualified Data.Map                   as Map
 import           Data.String                ( IsString )
-import           Data.Text.Encoding         ( encodeUtf8 )
 
 import           Database.SQLite.Simple     ( FromRow, Query, ToRow )
 import qualified Database.SQLite.Simple     as SQLite
@@ -34,6 +32,8 @@ import           Network.TLS                ( ClientHooks(..)
                                             , defaultParamsClient
                                             )
 import           Network.TLS.Extra          ( ciphersuite_strong )
+
+import           Relude
 
 import           Text.Hex                   ( encodeHex )
 

@@ -27,16 +27,8 @@ import           Colog                                ( Message
                                                       , usingLoggerT
                                                       )
 
-import           Control.Concurrent                   ( MVar
-                                                      , forkIO
-                                                      , newEmptyMVar
-                                                      , putMVar
-                                                      , takeMVar
-                                                      , threadDelay
-                                                      )
+import           Control.Concurrent                   ( forkIO, threadDelay )
 import           Control.Concurrent.Async             ( race )
-import           Control.Exception                    ( SomeException )
-import           Control.Monad                        ( forever, replicateM_, void, when )
 import           Control.Monad.Catch                  ( MonadThrow )
 import           Control.Monad.IO.Class               ( MonadIO(liftIO) )
 import           Control.Monad.Reader                 ( asks )
@@ -49,10 +41,8 @@ import qualified Data.ByteString.Char8                as BS
 import qualified Data.ByteString.Lazy.Char8           as LBS
 import           Data.Foldable                        ( for_ )
 import qualified Data.HashMap.Strict                  as HashMap
-import           Data.IORef                           ( IORef, modifyIORef', newIORef, readIORef )
 import           Data.IORef.Extra                     ( writeIORef' )
 import           Data.Int                             ( Int64 )
-import           Data.Map                             ( Map )
 import qualified Data.Map                             as Map
 import           Data.Maybe                           ( fromMaybe )
 import           Data.String.Interpolate              ( i )
@@ -92,9 +82,9 @@ import           Network.Wai.Handler.WarpTLS          ( OnInsecure(AllowInsecure
 import           Network.Wai.Handler.WarpTLS.Internal ( defaultTlsSettings )
 import           Network.Wai.Middleware.RequestLogger ( logStdoutDev )
 
-import           Prelude                              hiding ( log )
-
 import           Query
+
+import           Relude                               hiding ( Proxy, get )
 
 import           Resource
 
@@ -107,13 +97,7 @@ import           System.Directory                     ( createDirectoryIfMissing
 
 import           Types
 
-import           UnliftIO                             ( Handler(Handler)
-                                                      , atomically
-                                                      , modifyTVar'
-                                                      , newTVarIO
-                                                      , readTVarIO
-                                                      , try
-                                                      )
+import           UnliftIO                             ( Handler(Handler), try )
 
 import           Utils
 

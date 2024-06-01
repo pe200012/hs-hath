@@ -39,6 +39,7 @@ library
   hs-source-dirs:
       src
   default-extensions:
+      NoImplicitPrelude
       TypeApplications
       OverloadedStrings
       ScopedTypeVariables
@@ -101,6 +102,7 @@ executable db-migrate
   hs-source-dirs:
       migrate
   default-extensions:
+      NoImplicitPrelude
       TypeApplications
       OverloadedStrings
       ScopedTypeVariables
@@ -164,6 +166,7 @@ executable hs-hath
   hs-source-dirs:
       app
   default-extensions:
+      NoImplicitPrelude
       TypeApplications
       OverloadedStrings
       ScopedTypeVariables
@@ -228,6 +231,7 @@ test-suite hs-hath-test
   hs-source-dirs:
       test
   default-extensions:
+      NoImplicitPrelude
       TypeApplications
       OverloadedStrings
       ScopedTypeVariables

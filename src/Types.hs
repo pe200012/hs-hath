@@ -29,13 +29,14 @@ import           Data.HashSet               ( HashSet )
 import           Data.IORef                 ( IORef )
 import           Data.Int                   ( Int64 )
 import           Data.Text                  ( Text )
-import           Data.Text.Encoding         ( decodeUtf8, encodeUtf8 )
 
 import           Database.SQLite.Simple     ( Connection )
 
 import           Dhall                      ( FromDhall, Generic, ToDhall )
 
 import           Network.TLS                ( Credential )
+
+import           Relude
 
 import           UnliftIO                   ( MonadUnliftIO )
 

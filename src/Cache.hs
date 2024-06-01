@@ -13,7 +13,6 @@ module Cache ( module Cache ) where
 
 import           Colog                   ( Message, WithLog, logInfo )
 
-import           Control.Monad           ( when )
 import           Control.Monad.Reader
 
 import           Data.ByteString         ( ByteString )
@@ -22,13 +21,12 @@ import qualified Data.HashSet            as HashSet
 import           Data.HashSet            ( HashSet )
 import           Data.String.Interpolate ( i )
 import           Data.Text               ( Text )
-import           Data.Text.Encoding      ( decodeUtf8 )
 
 import           Database.SQLite.Simple  ( FromRow, Only(Only), ToRow )
 
 import           GHC.Generics            ( Generic )
 
-import           Prelude                 hiding ( log )
+import           Relude
 
 import           Text.Read               ( readMaybe )
 
@@ -96,7 +94,7 @@ verifyCache = do
         = BS.intercalate " AND " $ map (\x -> [i|s4 NOT LIKE '#{x}%'|]) (HashSet.toList srs)
 
 lookupCache :: MonadIO m => ByteString -> HathM m (Maybe ByteString)
-lookupCache (decodeUtf8 -> fileId)
+lookupCache (decodeUtf8 @Text -> fileId)
     = query "SELECT * FROM files WHERE file_id = ?" (Only fileId) >>= \case
         []      -> return Nothing
         (c : _) -> do
@@ -108,7 +106,7 @@ lookupCache (decodeUtf8 -> fileId)
 {-# INLINE lookupCache #-}
 
 updateFilenameIfMissing :: MonadIO m => ByteString -> ByteString -> HathM m ()
-updateFilenameIfMissing (decodeUtf8 -> fileId) (decodeUtf8 -> filename)
+updateFilenameIfMissing (decodeUtf8 @Text -> fileId) (decodeUtf8 @Text -> filename)
     = execute
         "UPDATE files SET file_name = ? WHERE file_id = ? AND file_name IS NULL"
         ( filename, fileId )
@@ -116,7 +114,7 @@ updateFilenameIfMissing (decodeUtf8 -> fileId) (decodeUtf8 -> filename)
 {-# INLINE updateFilenameIfMissing #-}
 
 storeCache :: MonadIO m => HathFile -> ByteString -> ByteString -> HathM m ()
-storeCache hf bytes (decodeUtf8 -> filename)
+storeCache hf bytes (decodeUtf8 @Text -> filename)
     = execute
         "INSERT INTO files (lru_counter, s4, file_id, file_name, bytes) VALUES (?, ?, ?, ?, ?)"
         (Cache { cacheLRUCounter = 1

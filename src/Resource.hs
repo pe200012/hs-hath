@@ -19,7 +19,6 @@ import           Data.ByteString            ( ByteString )
 import qualified Data.ByteString.Char8      as BS
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import qualified Data.HashSet               as HashSet
-import           Data.Map                   ( Map )
 import qualified Data.Map                   as Map
 import           Data.String.Interpolate    ( i )
 
@@ -28,9 +27,9 @@ import           Network.HTTP.Simple        ( getResponseBody, getResponseStatus
 import qualified Network.HTTP.Simple        as Simple
 import           Network.HTTP.Types         ( status200 )
 
-import           Prelude                    hiding ( log )
-
 import           Query
+
+import           Relude
 
 import           Result                     ( RPCResult(rpcResults), parseRPCResult )
 

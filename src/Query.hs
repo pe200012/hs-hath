@@ -13,7 +13,6 @@ module Query ( module Query ) where
 
 import           Colog                      ( Message, WithLog, logInfo )
 
-import           Control.Monad              ( void, when )
 import           Control.Monad.IO.Class     ( MonadIO(liftIO) )
 import           Control.Monad.Reader       ( asks )
 
@@ -25,7 +24,6 @@ import           Crypto.Store.PKCS12        ( readP12FileFromMemory
                                             )
 
 import           Data.Bool                  ( bool )
-import           Data.ByteString            ( ByteString )
 import           Data.ByteString.Base64     ( encodeBase64' )
 import qualified Data.ByteString.Char8      as BS
 import qualified Data.ByteString.Lazy.Char8 as LBS
@@ -49,11 +47,9 @@ import qualified Network.HTTP.Simple        as Simple
 import           Network.HTTP.Simple        ( getResponseBody, getResponseStatus )
 import           Network.HTTP.Types         ( Status )
 
-import           Prelude                    hiding ( log )
+import           Relude                     hiding ( Proxy )
 
 import           Result                     ( RPCResult(..), StatusCode(..), parseRPCResult )
-
-import           Text.Read                  ( readMaybe )
 
 import           Types
 
@@ -156,7 +152,7 @@ clientStart cfg = do
     res <- parseRPCResult . getResponseBody
         <$> rpcQueryIO cfg "/15/rpc" "client_start" "" True True
     when (rpcStatusCode res /= OK) $ do
-        logInfo [i|Client start failed: #{show (rpcStatusCode res)}|]
+        logInfo [i|Client start failed: #{show @Text (rpcStatusCode res)}|]
         error "Client start failed"
 
 clientStop :: ( MonadIO m, WithLog env Message m ) => ClientConfig -> m ()

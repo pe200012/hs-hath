@@ -3,6 +3,8 @@ module Result ( module Result ) where
 
 import           Data.ByteString.Lazy.Char8 ( ByteString, split )
 
+import           Relude                     hiding ( ByteString )
+
 data StatusCode = OK | INVALID_REQUEST | KEY_EXPIRED | Other {-# UNPACK #-} !ByteString
     deriving ( Show, Eq )
 
