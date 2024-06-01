@@ -22,6 +22,7 @@ import           Colog                                ( Message
                                                       , WithLog
                                                       , logError
                                                       , logInfo
+                                                      , logWarning
                                                       , richMessageAction
                                                       , usingLoggerT
                                                       )
@@ -81,10 +82,13 @@ import           Network.TLS                          ( Credential
                                                       , Credentials(Credentials)
                                                       , Version(..)
                                                       )
-import           Network.TLS.Extra.Cipher             ( ciphersuite_default )
+import           Network.TLS.Extra.Cipher             ( ciphersuite_all, ciphersuite_default )
 import           Network.Wai                          ( Application )
 import           Network.Wai.Handler.Warp             ( defaultSettings, setPort )
-import           Network.Wai.Handler.WarpTLS          ( TLSSettings(..), runTLS )
+import           Network.Wai.Handler.WarpTLS          ( OnInsecure(AllowInsecure)
+                                                      , TLSSettings(..)
+                                                      , runTLS
+                                                      )
 import           Network.Wai.Handler.WarpTLS.Internal ( defaultTlsSettings )
 import           Network.Wai.Middleware.RequestLogger ( logStdoutDev )
 
@@ -319,94 +323,78 @@ runHTTPServer hSets config = do
                 get "/robots.txt" $ do
                     status status200
                     text "User-agent: *\nDisallow: /"
-                get "/h/:info/:opts/:filename" $ do
-                    setCommonHeader
-                    info <- pathParam @ByteString "info"
-                    opts <- pathParam @ByteString "opts"
-                    filename <- pathParam @ByteString "filename"
-                    floodMap <- liftIO $ readIORef flood
-                    currentTime <- liftIO getSystemTime
-                    case parseHathFile info of
-                        Nothing -> do
-                            status status404
-                            text "Invalid or missing file info"
-                        Just f  -> let
-                            keystamp   = fromMaybe "" $ Map.lookup "keystamp" (parseOptions opts)
-                            floodCount = HashMap.lookupDefault 0 keystamp floodMap
-                            in
-                                if
-                                    | floodCount > 5 -> do
-                                        status status418
-                                        text "Hi there, you're flooding me"
-                                    -- | invalidKeystamp keystamp info currentTime (clientKey config)
-                                    --     -> do
-                                    --         lift $ logWarning [i|Invalid keystamp: #{keystamp}|]
-                                    --         status status403
-                                    --         text "Keystamp verification failed"
-                                    | otherwise -> do
-                                        when (keystamp /= "")
-                                            $ liftIO
-                                            $ modifyIORef' flood
-                                            $ HashMap.alter (maybe (pure 0) (pure . succ)) keystamp
-                                        handleResourceRequest filename f (parseOptions opts)
-                get "/servercmd/:command/:additional/:time/:key" $ do
-                    setCommonHeader
-                    cmd <- pathParam @ByteString "command"
-                    add <- pathParam @ByteString "additional"
-                    key <- pathParam @ByteString "key"
-                    time <- pathParam @ByteString "time"
-                    if key
-                        /= hathHash
-                            [i|hentai@home-servercmd-#{cmd}-#{add}-#{clientID config}-#{time}-#{clientKey config}|]
-                        then status status403
-                        else handleRPCCommand cmd add
-                get "/t/:testsize/:testtime/:testkey/:nothing" $ do
-                    setCommonHeader
-                    testSize <- pathParam @Int "testsize"
-                    testTime <- pathParam @Int64 "testtime"
-                    testKey <- pathParam @ByteString "testkey"
-                    currentTime <- liftIO getSystemTime
-                    let cid  = clientID config
-                        ckey = clientKey config
-                    if
-                        | abs (systemSeconds currentTime - testTime)
-                          > maxTimeDrift -> status status403
-                        | testKey
-                          /= hathHash
-                              [i|hentai@home-speedtest-#{testSize}-#{testTime}-#{cid}-#{ckey}|]
-                            -> status status403
-                        | otherwise -> sendTestData testSize
-                notFound $ do
-                    status status403
-                    -- check if they accept gzip
-                    acceptGzip <- header "Accept-Encoding"
-                    when (maybe False (Text.isInfixOf "gzip") acceptGzip) $ do
-                        -- try to give them a "surprise"
-                        setCommonHeader
-                        lift $ logInfo "Sending 100G.gzip"
-                        status status200
-                        setHeader "Content-Encoding" "gzip"
-                        setHeader "Content-Type" "text/html"
-                        file "100G.gzip"
+                resourceRequestHandler flood
+                serverCommandHandler
+                speedTestHandler
+                notFound $ status status403
         loop terminateRequest app credRef
   where
+    speedTestHandler = get "/t/:testsize/:testtime/:testkey/:nothing" $ do
+        setCommonHeader
+        testSize <- pathParam @Int "testsize"
+        testTime <- pathParam @Int64 "testtime"
+        testKey <- pathParam @ByteString "testkey"
+        currentTime <- liftIO getSystemTime
+        let cid  = clientID config
+            ckey = clientKey config
+        if
+            | abs (systemSeconds currentTime - testTime) > maxTimeDrift -> status status403
+            | testKey /= hathHash [i|hentai@home-speedtest-#{testSize}-#{testTime}-#{cid}-#{ckey}|]
+                -> status status403
+            | otherwise -> sendTestData testSize
+
+    serverCommandHandler = get "/servercmd/:command/:additional/:time/:key" $ do
+        setCommonHeader
+        cmd <- pathParam @ByteString "command"
+        add <- pathParam @ByteString "additional"
+        key <- pathParam @ByteString "key"
+        time <- pathParam @ByteString "time"
+        if key
+            /= hathHash
+                [i|hentai@home-servercmd-#{cmd}-#{add}-#{clientID config}-#{time}-#{clientKey config}|]
+            then status status403
+            else handleRPCCommand cmd add
+
+    resourceRequestHandler flood = get "/h/:info/:opts/:filename" $ do
+        setCommonHeader
+        info <- pathParam @ByteString "info"
+        opts <- pathParam @ByteString "opts"
+        filename <- pathParam @ByteString "filename"
+        floodMap <- liftIO $ readIORef flood
+        currentTime <- liftIO getSystemTime
+        case parseHathFile info of
+            Nothing -> do
+                status status404
+                text "Invalid or missing file info"
+            Just f  -> let
+                keystamp   = fromMaybe "" $ Map.lookup "keystamp" (parseOptions opts)
+                floodCount = HashMap.lookupDefault 0 keystamp floodMap
+                in 
+                    if
+                        | floodCount > 3 -> do
+                            status status418
+                            text "Hi there, you're flooding me"
+                        | invalidKeystamp keystamp info currentTime (clientKey config) -> do
+                            lift $ logWarning [i|Invalid keystamp: #{keystamp}|]
+                            status status403
+                            text "Keystamp verification failed"
+                        | otherwise -> do
+                            when (keystamp /= "")
+                                $ liftIO
+                                $ modifyIORef' flood
+                                $ HashMap.alter (pure . maybe 0 succ) keystamp
+                            handleResourceRequest filename f (parseOptions opts)
+
     invalidKeystamp :: ByteString -> ByteString -> SystemTime -> ByteString -> Bool
     invalidKeystamp ks fileid currentTime ckey
         = let
             ( rawTime, rest ) = BS.span (/= '-') ks
             keystampTime      = maybe 0 fst (BS.readInt rawTime)
             keystamp          = BS.drop 1 rest
-            in
+            in 
                 abs (systemSeconds currentTime - fromIntegral keystampTime) > 300
                 || keystamp
                 /= BS.take 10 (hathHash [i|#{keystampTime}-#{fileid}-#{ckey}-hotlinkthis|])
-
-    setCommonHeader = do
-        setHeader "Connection" "close"
-        setHeader "User-Agent" "Hentai@Home 161"
-        setHeader "Cache-Control" "public, max-age=31536000"
-        setHeader "Server" "Server: Genetic Lifeform and Distributed Open Server 1.6.2"
-        setHeader "X-Content-Type-Options" "nosniff"
 
     loop :: MVar RefreshCert -> Application -> IORef Credential -> IO ()
     loop terminateRequest router credRef = do
@@ -415,8 +403,9 @@ runHTTPServer hSets config = do
         res <- race
             (runTLS
                  (defaultTlsSettings { tlsCredentials     = Just (Credentials [ cred ])
+                                     , onInsecure         = AllowInsecure
                                      , tlsAllowedVersions = [ TLS13, TLS12, TLS10, TLS11 ]
-                                     , tlsCiphers         = ciphersuite_default
+                                     , tlsCiphers         = ciphersuite_all
                                      })
                  (setPort cPort defaultSettings)
                  (logStdoutDev router))
