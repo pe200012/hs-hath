@@ -46,7 +46,7 @@ main = do
     withConnection "cache.db" $ \conn -> do
         execute_
             conn
-            "CREATE TABLE IF NOT EXISTS files (lru_counter INTEGER NOT NULL DEFAULT 0, s4 TEXT NOT NULL, file_id TEXT PRIMARY KEY, file_name TEXT, bytes BLOB NOT NULL)"
+            "CREATE TABLE IF NOT EXISTS files (lru_counter INTEGER NOT NULL DEFAULT 0, s4 TEXT NOT NULL, file_id TEXT PRIMARY KEY, file_name TEXT, bytes BLOB NOT NULL) strict"
         already <- HashSet.fromList . fmap (Text.unpack . cacheFileId)
             <$> query conn "SELECT * FROM files" ()
         iterateDir path (\f -> takeBaseName f `HashSet.member` already) (process conn)
