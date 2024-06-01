@@ -17,7 +17,7 @@ parseRPCResult bytes = case status of
     [ "OK" ] -> RPCResult OK results
     [ "INVALID_REQUEST" ] -> RPCResult INVALID_REQUEST results
     [ "KEY_EXPIRED" ] -> RPCResult KEY_EXPIRED results
-    _ -> RPCResult (Other $ head status) results
+    (code : _) -> RPCResult (Other code) results
   where
     segments = split '\n' bytes
 
