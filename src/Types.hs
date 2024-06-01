@@ -54,7 +54,7 @@ data HathSettings
     { rpcBaseURL         :: {-# UNPACK #-} !ByteString
     , clientHost         :: {-# UNPACK #-} !ByteString
     , clientPort         :: {-# UNPACK #-} !Int
-    , throttleBytes      :: {-# UNPACK #-} !Int
+    , throttleBytes      :: {-# UNPACK #-} !Int64
     , diskLimitBytes     :: {-# UNPACK #-} !Int64
     , diskRemainingBytes :: {-# UNPACK #-} !Int64
     , cacheNeedsRescan   :: {-# UNPACK #-} !Bool
@@ -123,7 +123,7 @@ data ClientConfig
 
 defaultClientConfig :: ClientConfig
 defaultClientConfig
-    = ClientConfig { clientID = "", clientKey = "", clientVersion = "160", clientProxy = Nothing }
+    = ClientConfig { clientID = "", clientKey = "", clientVersion = "169", clientProxy = Nothing }
 
 {-# NOINLINE defaultClientConfig #-}
 

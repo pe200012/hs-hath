@@ -18,8 +18,6 @@ import qualified Dhall
 
 import           Network.HTTP.Types      ( status200 )
 
-import           Prelude                 hiding ( log )
-
 import           Query
 
 import           Server
