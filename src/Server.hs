@@ -179,16 +179,16 @@ downloadGallery cfg meta = do
     downloadFile trial f
         | trial > 3 = putStrLn [i|Failed to download #{galleryFileName f}|]
         | otherwise = do
-            res <- parseRPCResult . getResponseBody <$> galleryFetch cfg gid f (trial > 0)
-            case (rpcStatusCode res, rpcResults res) of
-                (OK, url : _) -> do
+            res <- parseRPCResult . getResponseBody <$> galleryFetch cfg gid f trial
+            case ( rpcStatusCode res, rpcResults res ) of
+                ( OK, url : _ ) -> do
                     bytes <- LBS.toStrict . getResponseBody <$> Simple.httpLbs [i|#{url}|]
                     if galleryFileHash f == hathHash bytes
                         then do
                             BS.writeFile filePath bytes
                             putStrLn [i|Downloaded #{galleryFileName f}.#{galleryFileExt f}|]
                         else downloadFile (trial + 1) f
-                _  -> downloadFile (trial + 1) f
+                _ -> downloadFile (trial + 1) f
       where
         filePath :: FilePath
         filePath = [i|download/#{galleryTitle meta}/#{galleryFileName f}.#{galleryFileExt f}|]

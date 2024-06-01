@@ -218,12 +218,12 @@ galleryMetadata cfg opt
         True
 
 galleryFetch
-    :: MonadIO m => ClientConfig -> Int -> GalleryFile -> Bool -> m (Response LBS.ByteString)
-galleryFetch cfg gid file forceImageServer
+    :: MonadIO m => ClientConfig -> Int -> GalleryFile -> Int -> m (Response LBS.ByteString)
+galleryFetch cfg gid file retries
     = rpcQueryIO
         cfg
         "/15/rpc"
         "dlfetch"
-        [i|#{gid};#{galleryFilePage file};#{galleryFileIndex file};#{galleryFileXRes file};#{fromEnum forceImageServer}|]
+        [i|#{gid};#{galleryFilePage file};#{galleryFileIndex file};#{galleryFileXRes file};#{retries}|]
         False
         False
