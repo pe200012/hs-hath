@@ -25,7 +25,6 @@ dependencies:
   - co-log >= 0.6 && < 0.7
   - containers >= 0.6 && < 0.7
   - cryptostore >= 0.3 && < 0.4
-  - cryptohash-sha1 >= 0.11 && < 0.12
   - crypton >= 1.0 && < 1.1
   - crypton-connection >= 0.4 && < 0.5
   - crypton-x509 >= 1.7 && < 1.8
@@ -37,7 +36,6 @@ dependencies:
   - extra >= 1.7 && < 1.8
   - exceptions >= 0.10 && < 0.11
   - string-interpolate >= 0.3 && < 0.4
-  - hex-text >= 0.1 && < 0.2
   - http-client >= 0.7 && < 0.8
   - http-client-tls >= 0.3 && < 0.4
   - http-conduit >= 2.3 && < 2.4

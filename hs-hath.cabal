@@ -67,7 +67,6 @@ library
     , exceptions ==0.10.*
     , extra ==1.7.*
     , filepath ==1.4.*
-    , hex-text ==0.1.*
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-conduit ==2.3.*
@@ -129,7 +128,6 @@ executable db-migrate
     , exceptions ==0.10.*
     , extra ==1.7.*
     , filepath ==1.4.*
-    , hex-text ==0.1.*
     , hs-hath
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
@@ -192,7 +190,6 @@ executable hs-hath
     , exceptions ==0.10.*
     , extra ==1.7.*
     , filepath ==1.4.*
-    , hex-text ==0.1.*
     , hs-hath
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
@@ -256,7 +253,6 @@ test-suite hs-hath-test
     , exceptions ==0.10.*
     , extra ==1.7.*
     , filepath ==1.4.*
-    , hex-text ==0.1.*
     , hs-hath
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
