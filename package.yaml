@@ -17,52 +17,49 @@ description: Please see the README on GitHub at <https://github.com/pe200012/hs-
 
 dependencies:
   - base >= 4.7 && < 5
-  - async
-  - base64
-  - bytestring
-  - binary
-  - co-log-core
-  - co-log
-  - containers
-  - cryptohash-sha1
-  - cryptostore
-  - crypton
-  - crypton-connection
-  - directory
-  - data-default-class
-  - dhall
-  - sqlite-simple
-  - extra
-  - exceptions
-  - string-interpolate
-  - hex-text
-  - http-client
-  - http-client-tls
-  - http-conduit
-  - http-types
-  - monad-control
-  - monad-loops
-  - network
-  - mtl
-  - optparse-applicative
-  - filepath
-  - text
-  - time
-  - transformers
-  - tls
-  - tls-session-manager
-  - scotty >= 0.22
-  - streaming-commons
-  - unordered-containers
-  - unix
-  - unliftio
-  - wai
-  - wai-cors
-  - wai-extra
-  - warp
-  - warp-tls
-  - crypton-x509
-  - crypton-x509-store
+  - async >= 2.2 && < 2.3
+  - base64 >= 1.0 && < 1.1
+  - bytestring >= 0.11 && < 0.12
+  - binary >= 0.8 && < 0.9
+  - co-log-core >= 0.3 && < 0.4
+  - co-log >= 0.6 && < 0.7
+  - containers >= 0.6 && < 0.7
+  - cryptostore >= 0.3 && < 0.4
+  - cryptohash-sha1 >= 0.11 && < 0.12
+  - crypton >= 1.0 && < 1.1
+  - crypton-connection >= 0.4 && < 0.5
+  - crypton-x509 >= 1.7 && < 1.8
+  - crypton-x509-store >= 1.6 && < 1.7
+  - directory >= 1.3 && < 1.4
+  - data-default-class >= 0.1 && < 0.2
+  - dhall >= 1.42 && < 1.43
+  - sqlite-simple >= 0.4 && < 0.5
+  - extra >= 1.7 && < 1.8
+  - exceptions >= 0.10 && < 0.11
+  - string-interpolate >= 0.3 && < 0.4
+  - hex-text >= 0.1 && < 0.2
+  - http-client >= 0.7 && < 0.8
+  - http-client-tls >= 0.3 && < 0.4
+  - http-conduit >= 2.3 && < 2.4
+  - http-types >= 0.12 && < 0.13
+  - monad-control >= 1.0 && < 1.1
+  - monad-loops >= 0.4 && < 0.5
+  - network >= 3.1 && < 3.2
+  - mtl >= 2.3 && < 2.4
+  - optparse-applicative >= 0.18 && < 0.19
+  - filepath >= 1.4 && < 1.5
+  - text >= 2.0 && < 2.1
+  - time >= 1.12 && < 1.13
+  - transformers >= 0.6 && < 0.7
+  - tls >= 2.0 && < 2.1
+  - tls-session-manager >= 0.0.5 && < 0.1
+  - scotty >= 0.22 && < 0.23
+  - unix >= 2.8 && < 2.9
+  - unliftio >= 0.2 && < 0.3
+  - wai >= 3.2 && < 3.3
+  - wai-extra >= 3.1 && < 3.2
+  - warp >= 3.4 && < 3.5
+  - warp-tls >= 3.4 && < 3.5
 
 ghc-options:
   - -Wall
