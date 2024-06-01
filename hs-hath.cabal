@@ -56,7 +56,6 @@ library
     , co-log ==0.6.*
     , co-log-core ==0.3.*
     , containers ==0.6.*
-    , cryptohash-sha1 ==0.11.*
     , crypton ==1.0.*
     , crypton-connection ==0.4.*
     , crypton-x509 ==1.7.*
@@ -119,7 +118,6 @@ executable db-migrate
     , co-log ==0.6.*
     , co-log-core ==0.3.*
     , containers ==0.6.*
-    , cryptohash-sha1 ==0.11.*
     , crypton ==1.0.*
     , crypton-connection ==0.4.*
     , crypton-x509 ==1.7.*
@@ -183,7 +181,6 @@ executable hs-hath
     , co-log ==0.6.*
     , co-log-core ==0.3.*
     , containers ==0.6.*
-    , cryptohash-sha1 ==0.11.*
     , crypton ==1.0.*
     , crypton-connection ==0.4.*
     , crypton-x509 ==1.7.*
@@ -248,7 +245,6 @@ test-suite hs-hath-test
     , co-log ==0.6.*
     , co-log-core ==0.3.*
     , containers ==0.6.*
-    , cryptohash-sha1 ==0.11.*
     , crypton ==1.0.*
     , crypton-connection ==0.4.*
     , crypton-x509 ==1.7.*

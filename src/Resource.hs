@@ -10,12 +10,8 @@ import           Cache
 
 import           Colog                      ( logInfo )
 
-import           Control.Applicative        ( asum )
 import           Control.Monad.Catch        ( MonadThrow )
-import           Control.Monad.IO.Class     ( MonadIO )
-import           Control.Monad.Reader       ( asks )
 
-import           Data.ByteString            ( ByteString )
 import qualified Data.ByteString.Char8      as BS
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import qualified Data.HashSet               as HashSet

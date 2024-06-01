@@ -15,20 +15,13 @@ import           Colog                   ( Message, WithLog, logInfo )
 
 import           Control.Monad.Reader
 
-import           Data.ByteString         ( ByteString )
 import qualified Data.ByteString.Char8   as BS
 import qualified Data.HashSet            as HashSet
-import           Data.HashSet            ( HashSet )
 import           Data.String.Interpolate ( i )
-import           Data.Text               ( Text )
 
 import           Database.SQLite.Simple  ( FromRow, Only(Only), ToRow )
 
-import           GHC.Generics            ( Generic )
-
 import           Relude
-
-import           Text.Read               ( readMaybe )
 
 import           Types                   ( HathM, HathSettings(staticRanges), Singleton(..) )
 

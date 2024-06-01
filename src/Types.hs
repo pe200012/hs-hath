@@ -14,25 +14,13 @@ module Types ( module Types ) where
 import           Colog                      ( HasLog, LogAction, Message, richMessageAction )
 import           Colog.Core.Class           ( HasLog(..) )
 
-import           Control.Concurrent         ( MVar )
-import           Control.Exception          ( Exception )
 import           Control.Monad.Catch        ( MonadThrow )
-import           Control.Monad.IO.Class     ( MonadIO )
-import           Control.Monad.Reader       ( MonadReader(..), ReaderT(runReaderT, ReaderT) )
 
-import           Data.Bifunctor             ( Bifunctor(bimap) )
-import           Data.ByteString            ( ByteString )
 import qualified Data.ByteString.Lazy.Char8 as LBS
-import           Data.Foldable              ( foldl' )
-import           Data.Foldable.Extra        ( notNull )
-import           Data.HashSet               ( HashSet )
-import           Data.IORef                 ( IORef )
-import           Data.Int                   ( Int64 )
-import           Data.Text                  ( Text )
 
 import           Database.SQLite.Simple     ( Connection )
 
-import           Dhall                      ( FromDhall, Generic, ToDhall )
+import           Dhall                      ( FromDhall, ToDhall )
 
 import           Network.TLS                ( Credential )
 

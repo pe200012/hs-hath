@@ -6,43 +6,34 @@
 
 module Utils ( module Utils ) where
 
-import           Control.Monad.IO.Class     ( MonadIO(liftIO) )
-import           Control.Monad.Reader       ( asks )
+import           Crypto.Hash             ( SHA1, hash )
 
-import           Crypto.Hash.SHA1           ( hash )
+import qualified Data.ByteString.Char8   as BS
+import           Data.Default.Class      ( Default(def) )
+import qualified Data.Map                as Map
 
-import           Data.ByteString            ( ByteString )
-import qualified Data.ByteString.Char8      as BS
-import qualified Data.ByteString.Lazy.Char8 as LBS
-import           Data.Default.Class         ( Default(def) )
-import           Data.Map                   ( Map )
-import qualified Data.Map                   as Map
-import           Data.String                ( IsString )
+import           Database.SQLite.Simple  ( FromRow, Query, ToRow )
+import qualified Database.SQLite.Simple  as SQLite
 
-import           Database.SQLite.Simple     ( FromRow, Query, ToRow )
-import qualified Database.SQLite.Simple     as SQLite
-
-import           Network.Connection         ( TLSSettings(TLSSettings) )
-import           Network.HTTP.Client        ( Manager, newManager )
-import           Network.HTTP.Client.TLS    ( mkManagerSettings )
-import           Network.TLS                ( ClientHooks(..)
-                                            , ClientParams(..)
-                                            , Credential
-                                            , Supported(supportedCiphers)
-                                            , defaultParamsClient
-                                            )
-import           Network.TLS.Extra          ( ciphersuite_strong )
+import           Network.Connection      ( TLSSettings(TLSSettings) )
+import           Network.HTTP.Client     ( Manager, newManager )
+import           Network.HTTP.Client.TLS ( mkManagerSettings )
+import           Network.TLS             ( ClientHooks(..)
+                                         , ClientParams(..)
+                                         , Credential
+                                         , Supported(supportedCiphers)
+                                         , defaultParamsClient
+                                         )
+import           Network.TLS.Extra       ( ciphersuite_strong )
 
 import           Relude
 
-import           Text.Hex                   ( encodeHex )
+import           Types                   ( HathM, HathSettings, Singleton(..) )
 
-import           Types                      ( HathM, HathSettings, Singleton(..) )
-
-import           Web.Scotty.Trans           ( ActionT, setHeader )
+import           Web.Scotty.Trans        ( ActionT, setHeader )
 
 hathHash :: ByteString -> ByteString
-hathHash = encodeUtf8 . encodeHex . hash
+hathHash = show . hash @ByteString @SHA1
 
 {-# INLINE hathHash #-}
 

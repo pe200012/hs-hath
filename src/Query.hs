@@ -13,9 +13,6 @@ module Query ( module Query ) where
 
 import           Colog                      ( Message, WithLog, logInfo )
 
-import           Control.Monad.IO.Class     ( MonadIO(liftIO) )
-import           Control.Monad.Reader       ( asks )
-
 import           Crypto.Store.PKCS12        ( readP12FileFromMemory
                                             , recover
                                             , recoverAuthenticated
@@ -23,13 +20,10 @@ import           Crypto.Store.PKCS12        ( readP12FileFromMemory
                                             , toProtectionPassword
                                             )
 
-import           Data.Bool                  ( bool )
 import           Data.ByteString.Base64     ( encodeBase64' )
 import qualified Data.ByteString.Char8      as BS
 import qualified Data.ByteString.Lazy.Char8 as LBS
-import           Data.Foldable              ( Foldable(foldl') )
 import qualified Data.HashSet               as HashSet
-import           Data.Int                   ( Int64 )
 import           Data.String.Interpolate    ( i )
 import           Data.Time.Clock.System     ( SystemTime(systemSeconds), getSystemTime )
 import           Data.X509                  ( CertificateChain, PrivKey )

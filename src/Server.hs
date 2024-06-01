@@ -30,23 +30,15 @@ import           Colog                                ( Message
 import           Control.Concurrent                   ( forkIO, threadDelay )
 import           Control.Concurrent.Async             ( race )
 import           Control.Monad.Catch                  ( MonadThrow )
-import           Control.Monad.IO.Class               ( MonadIO(liftIO) )
-import           Control.Monad.Reader                 ( asks )
-import           Control.Monad.Trans                  ( lift )
 
-import           Data.ByteString                      ( ByteString )
 import           Data.ByteString.Base64               ( encodeBase64' )
 import           Data.ByteString.Builder              ( byteString )
 import qualified Data.ByteString.Char8                as BS
 import qualified Data.ByteString.Lazy.Char8           as LBS
-import           Data.Foldable                        ( for_ )
 import qualified Data.HashMap.Strict                  as HashMap
 import           Data.IORef.Extra                     ( writeIORef' )
-import           Data.Int                             ( Int64 )
 import qualified Data.Map                             as Map
-import           Data.Maybe                           ( fromMaybe )
 import           Data.String.Interpolate              ( i )
-import qualified Data.Text                            as Text
 import           Data.Time.Clock.POSIX                ( POSIXTime, getPOSIXTime )
 import           Data.Time.Clock.System               ( SystemTime(systemSeconds), getSystemTime )
 
@@ -72,7 +64,7 @@ import           Network.TLS                          ( Credential
                                                       , Credentials(Credentials)
                                                       , Version(..)
                                                       )
-import           Network.TLS.Extra.Cipher             ( ciphersuite_all, ciphersuite_default )
+import           Network.TLS.Extra.Cipher             ( ciphersuite_all )
 import           Network.Wai                          ( Application )
 import           Network.Wai.Handler.Warp             ( defaultSettings, setPort )
 import           Network.Wai.Handler.WarpTLS          ( OnInsecure(AllowInsecure)
@@ -105,9 +97,7 @@ import           Web.Scotty.Trans                     ( pathParam )
 import           Web.Scotty.Trans.Strict              ( ActionT
                                                       , Options(..)
                                                       , defaultHandler
-                                                      , file
                                                       , get
-                                                      , header
                                                       , headers
                                                       , notFound
                                                       , raw
