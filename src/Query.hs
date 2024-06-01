@@ -93,12 +93,8 @@ serverStatus = do
         let req
                 = setRequestCheckStatus
                 $ setQueryString
-                    [ ( "act", Just "server_stat" ), ( "clientbuild", Just "161" ) ]
-                    initReq
-                    { method         = "GET"
-                    , requestHeaders
-                          = [ ( "Connection", "Close" ), ( "User-Agent", "Hentai@Home 161" ) ]
-                    }
+                    [ ( "act", Just "server_stat" ), ( "clientbuild", Just "169" ) ]
+                    initReq { method = "GET", requestHeaders = commonHeader }
         Simple.httpLbs req
     return $ getResponseStatus res
 
@@ -113,7 +109,7 @@ rpcQueryIO :: MonadIO m
 rpcQueryIO (ClientConfig { .. }) rpcEndpoint action additional errOnStatus setProxy = do
     currentTime <- liftIO getSystemTime
     initReq <- liftIO $ parseRequest [i|http://#{baseURL}#{rpcEndpoint}|]
-    let normalHeader  = [ ( "Connection", "Close" ), ( "User-Agent", "Hentai@Home 161" ) ]
+    let normalHeader  = commonHeader
         setReqProxy r
             = if setProxy
                 then r

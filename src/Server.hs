@@ -265,12 +265,9 @@ testSpeed opts = case testArgs of
               Nothing -> []
               Just ( user, pass )
                   -> [ ( "Proxy-authorization", [i|Basic #{encodeBase64' (user <> ":" <> pass)}|] )
-                     , ( "Connection", "close" )
-                     , ( "User-Agent", "Hentai@Home 161" )
-                     , ( "Cache-Control", "public, max-age=31536000" )
-                     , ( "Server", "Genetic Lifeform and Distributed Open Server 1.6.2" )
                      , ( "Proxy-Connection", "Keep-Alive" )
-                     ] }
+                     ]
+                  ++ commonHeader }
 
     testArgs :: Maybe ( ByteString, Int, Int )
     testArgs = do

@@ -18,6 +18,7 @@ import           Data.Default.Class         ( Default(def) )
 import           Data.IORef                 ( readIORef )
 import           Data.Map                   ( Map )
 import qualified Data.Map                   as Map
+import           Data.String                ( IsString )
 import           Data.Text.Encoding         ( encodeUtf8 )
 
 import           Database.SQLite.Simple     ( FromRow, Query, ToRow )
@@ -37,6 +38,8 @@ import           Network.TLS.Extra          ( ciphersuite_strong )
 import           Text.Hex                   ( encodeHex )
 
 import           Types                      ( HathM, HathSettings, Singleton(..) )
+
+import           Web.Scotty.Trans           ( ActionT, setHeader )
 
 hathHash :: ByteString -> ByteString
 hathHash = encodeUtf8 . encodeHex . hash
@@ -98,3 +101,19 @@ getHathSettings :: MonadIO m => HathM m HathSettings
 getHathSettings = liftIO . readIORef =<< asks hathSettings
 
 {-# INLINE getHathSettings #-}
+
+commonHeader :: ( IsString a, IsString b ) => [ ( a, b ) ]
+commonHeader
+    = [ ( "Connection", "close" )
+      , ( "User-Agent", "Hentai@Home 169" )
+      , ( "Cache-Control", "public, max-age=31536000" )
+      , ( "Server", "Genetic Lifeform and Distributed Open Server 1.6.3" )
+      , ( "X-Content-Type-Options", "nosniff" )
+      ]
+
+{-# INLINE commonHeader #-}
+
+setCommonHeader :: MonadIO m => ActionT m ()
+setCommonHeader = mapM_ (uncurry setHeader) commonHeader
+
+{-# INLINE setCommonHeader #-}

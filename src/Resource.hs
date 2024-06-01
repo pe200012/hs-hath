@@ -77,10 +77,8 @@ pullResource reqToken uri = do
     initReq <- parseRequest $ LBS.unpack uri
     let req
             = setRequestIgnoreStatus
-            $ initReq { method         = "GET"
-                      , requestHeaders
-                            = [ ( "User-Agent", "Hentai@Home 161" ), ( "Hath-Request", reqToken ) ]
-                      }
+            $ initReq
+            { method = "GET", requestHeaders = ( "Hath-Request", reqToken ) : commonHeader }
     res <- Simple.httpLbs req
     return
         $ if getResponseStatus res == status200
