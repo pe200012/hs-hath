@@ -38,6 +38,13 @@ library
       Paths_hs_hath
   hs-source-dirs:
       src
+  default-extensions:
+      TypeApplications
+      OverloadedStrings
+      ScopedTypeVariables
+      QuasiQuotes
+      LambdaCase
+      ViewPatterns
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -fllvm
   build-depends:
       async
@@ -95,6 +102,13 @@ executable db-migrate
       Paths_hs_hath
   hs-source-dirs:
       migrate
+  default-extensions:
+      TypeApplications
+      OverloadedStrings
+      ScopedTypeVariables
+      QuasiQuotes
+      LambdaCase
+      ViewPatterns
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -fllvm -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       async
@@ -153,6 +167,13 @@ executable hs-hath
       Paths_hs_hath
   hs-source-dirs:
       app
+  default-extensions:
+      TypeApplications
+      OverloadedStrings
+      ScopedTypeVariables
+      QuasiQuotes
+      LambdaCase
+      ViewPatterns
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -fllvm -threaded -rtsopts -with-rtsopts=-N -fpedantic-bottoms
   build-depends:
       async
@@ -212,6 +233,13 @@ test-suite hs-hath-test
       Paths_hs_hath
   hs-source-dirs:
       test
+  default-extensions:
+      TypeApplications
+      OverloadedStrings
+      ScopedTypeVariables
+      QuasiQuotes
+      LambdaCase
+      ViewPatterns
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -fllvm -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       async

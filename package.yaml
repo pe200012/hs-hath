@@ -76,6 +76,14 @@ ghc-options:
   - -Wredundant-constraints
   - -fllvm
 
+default-extensions:
+  - TypeApplications
+  - OverloadedStrings
+  - ScopedTypeVariables
+  - QuasiQuotes
+  - LambdaCase
+  - ViewPatterns
+
 library:
   source-dirs: src
 
@@ -90,6 +98,7 @@ executables:
       - -fpedantic-bottoms
     dependencies:
       - hs-hath
+
   db-migrate:
     main: Main.hs
     source-dirs: migrate

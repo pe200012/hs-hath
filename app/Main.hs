@@ -2,12 +2,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 
-{-# LANGUAGE OverloadedStrings #-}
-
-{-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-
 module Main ( main ) where
 
 import           Colog                   ( logError, logInfo, richMessageAction, usingLoggerT )
