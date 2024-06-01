@@ -31,6 +31,7 @@ import qualified Data.ByteString.Char8      as BS
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import           Data.Foldable              ( Foldable(foldl') )
 import qualified Data.HashSet               as HashSet
+import           Data.Int                   ( Int64 )
 import           Data.String.Interpolate    ( i )
 import           Data.Time.Clock.System     ( SystemTime(systemSeconds), getSystemTime )
 import           Data.X509                  ( CertificateChain, PrivKey )
@@ -51,6 +52,8 @@ import           Network.HTTP.Types         ( Status )
 import           Prelude                    hiding ( log )
 
 import           Result                     ( RPCResult(..), StatusCode(..), parseRPCResult )
+
+import           Text.Read                  ( readMaybe )
 
 import           Types
 
@@ -171,13 +174,13 @@ hathSettings cfg = do
                 ( k, rest ) = LBS.span (/= '=') kv
                 v           = LBS.drop 1 rest
                 in 
-                    case k of
-                        "host" -> s { clientHost = LBS.toStrict v }
-                        "port" -> s { clientPort = read $ LBS.unpack v }
-                        "throttle_bytes" -> s { throttleBytes = read $ LBS.unpack v }
-                        "disklimit_bytes" -> s { diskLimitBytes = read $ LBS.unpack v }
-                        "diskremaining_bytes" -> s { diskRemainingBytes = read $ LBS.unpack v }
-                        "static_ranges" -> s
+                    case ( k, readMaybe @Int64 (LBS.unpack v) ) of
+                        ( "host", _ ) -> s { clientHost = LBS.toStrict v }
+                        ( "port", Just p ) -> s { clientPort = fromIntegral p }
+                        ( "throttle_bytes", Just bytes ) -> s { throttleBytes = bytes }
+                        ( "disklimit_bytes", Just bytes ) -> s { diskLimitBytes = bytes }
+                        ( "diskremaining_bytes", Just bytes ) -> s { diskRemainingBytes = bytes }
+                        ( "static_ranges", _ ) -> s
                             { staticRanges = HashSet.fromList $ LBS.toStrict <$> LBS.split ';' v }
                         _ -> s) defaultHathSettings
         . (rpcResults . parseRPCResult . getResponseBody)

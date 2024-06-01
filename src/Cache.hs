@@ -30,6 +30,8 @@ import           GHC.Generics            ( Generic )
 
 import           Prelude                 hiding ( log )
 
+import           Text.Read               ( readMaybe )
+
 import           Types                   ( HathM, HathSettings(staticRanges), Singleton(..) )
 
 import           Utils
@@ -50,9 +52,14 @@ toFileId (HathFile h s xres yres typ) = [i|#{h}-#{s}-#{xres}-#{yres}-#{typ}|]
 
 parseHathFile :: ByteString -> Maybe HathFile
 parseHathFile param = case BS.split '-' param of
-    [ h, size, xres, yres, typ ] -> Just
-        $ HathFile h (read $ BS.unpack size) (read $ BS.unpack xres) (read $ BS.unpack yres) typ
-    [ h, size, typ ] -> Just $ HathFile h (read $ BS.unpack size) 0 0 typ
+    [ h, size, xres, yres, typ ] -> do
+        siz <- readMaybe $ BS.unpack size
+        xre <- readMaybe $ BS.unpack xres
+        yre <- readMaybe $ BS.unpack yres
+        return $ HathFile h siz xre yre typ
+    [ h, size, typ ] -> do
+        siz <- readMaybe $ BS.unpack size
+        return $ HathFile h siz 0 0 typ
     _ -> Nothing
 
 {-# INLINE parseHathFile #-}

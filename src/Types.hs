@@ -243,29 +243,28 @@ emptyMetadata
 parseMetadata :: LBS.ByteString -> GalleryMetadata
 parseMetadata bytes = foldl' go emptyMetadata (LBS.lines bytes)
   where
-    unsafeReadInt bs = case LBS.readInt bs of
-        Just ( i, _ ) -> i
-        Nothing       -> error "parseMetadata: unsafeReadInt"
-
     go metadata line = case LBS.words line of
-        [ "GID", gid ] -> metadata { galleryID = unsafeReadInt gid }
-        [ "FILECOUNT", count ] -> metadata { galleryFileCount = unsafeReadInt count }
+        [] -> metadata
+        [ "GID", maybeGid ]
+            -> maybe metadata (\( gid, _ ) -> metadata { galleryID = gid }) (LBS.readInt maybeGid)
+        [ "FILECOUNT", maybeCount ] -> maybe
+            metadata
+            (\( count, _ ) -> metadata { galleryFileCount = count })
+            (LBS.readInt maybeCount)
         [ "MINXRES", xres ] -> metadata { galleryMinXRes = LBS.toStrict xres }
         ("TITLE" : rest) -> metadata { galleryTitle = LBS.toStrict $ LBS.unwords rest }
-        xs
-            | notNull xs -> case LBS.readInt (head xs) of
-                Nothing          -> metadata
-                Just ( page, _ ) -> let
-                    [ _, fid, mxres, hash, ext, basename ] = xs
-                    in 
-                        metadata { galleryFileList = GalleryFile
-                                       { galleryFilePage  = page
-                                       , galleryFileIndex = unsafeReadInt fid
-                                       , galleryFileName  = LBS.toStrict basename
-                                       , galleryFileXRes  = LBS.toStrict mxres
-                                       , galleryFileHash  = LBS.toStrict hash
-                                       , galleryFileExt   = LBS.toStrict ext
-                                       }
-                                       : galleryFileList metadata
-                                 }
+        [ maybePage, maybeFid, mxres, hash, ext, basename ]
+            -> case ( LBS.readInt maybePage, LBS.readInt maybeFid ) of
+                ( Just ( page, _ ), Just ( fid, _ ) ) -> metadata
+                    { galleryFileList = GalleryFile
+                          { galleryFilePage  = page
+                          , galleryFileIndex = fid
+                          , galleryFileName  = LBS.toStrict basename
+                          , galleryFileXRes  = LBS.toStrict mxres
+                          , galleryFileHash  = LBS.toStrict hash
+                          , galleryFileExt   = LBS.toStrict ext
+                          }
+                          : galleryFileList metadata
+                    }
+                _ -> metadata
         _ -> metadata
