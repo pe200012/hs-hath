@@ -26,12 +26,12 @@ import           Network.TLS                ( Credential )
 
 import           Relude
 
-import           UnliftIO                   ( MonadUnliftIO )
+import           UnliftIO                   ( Chan, MonadUnliftIO )
 
 data HathError = InitialContactFailure | InvalidClientKey | InvalidCertificate
     deriving ( Show )
 
-newtype RefreshCert = RefreshCert Credential
+data ServerAction = RefreshCert Credential | Reload
 
 data GracefulShutdown = GracefulShutdown
     deriving ( Show )
@@ -151,10 +151,11 @@ unmarshallClientConfig (SerializedClientConfig cid ckey cver cproxy)
 data Singleton m msg
     = Singleton { clientConfig       :: {-# UNPACK #-} !ClientConfig
                 , hathSettings       :: {-# UNPACK #-} !(IORef HathSettings)
-                , refreshCertificate :: {-# UNPACK #-} !(MVar RefreshCert)
+                , shutdownRequest :: {-# UNPACK #-} !(MVar ServerAction)
                 , logAction          :: !(LogAction m msg)
                 , database           :: {-# UNPACK #-} !Connection
                 , credential         :: {-# UNPACK #-} !(IORef Credential)
+                , galleryTask        :: {-# UNPACK #-} !(Chan ())
                 }
 
 instance HasLog (Singleton m msg) msg m where
@@ -182,19 +183,21 @@ runHath :: MonadIO m
         => ClientConfig
         -> IORef HathSettings
         -> Connection
-        -> MVar RefreshCert
+        -> MVar ServerAction
         -> IORef Credential
+        -> Chan ()
         -> HathM m a
         -> m a
-runHath cfg hRef conn refreshCert credRef m = do
+runHath cfg hRef conn refreshCert credRef queue m = do
     runReaderT
         (runHathM m)
         (Singleton { clientConfig       = cfg
                    , hathSettings       = hRef
-                   , refreshCertificate = refreshCert
+                   , shutdownRequest = refreshCert
                    , logAction          = richMessageAction
                    , database           = conn
                    , credential         = credRef
+                   , galleryTask        = queue
                    })
 
 {-# INLINE runHath #-}
@@ -257,3 +260,5 @@ parseMetadata bytes = foldl' go emptyMetadata (LBS.lines bytes)
                     }
                 _ -> metadata
         _ -> metadata
+
+    {-# INLINE go #-}

@@ -27,10 +27,17 @@ import           Colog                                ( Message
                                                       , usingLoggerT
                                                       )
 
-import           Control.Concurrent                   ( forkIO, threadDelay )
+import           Control.Concurrent                   ( ThreadId, forkIO, threadDelay )
 import           Control.Concurrent.Async             ( race )
 import           Control.Monad.Catch                  ( MonadThrow )
 
+import           Crypto.Cipher.AES                    ( AES256 )
+import           Crypto.Cipher.AESGCMSIV              ( decrypt, nonce )
+import           Crypto.Cipher.Types                  ( AuthTag(AuthTag), Cipher(cipherInit) )
+import           Crypto.Error                         ( CryptoFailable(..) )
+import           Crypto.Hash                          ( SHA1, hash )
+
+import           Data.ByteArray.Encoding              ( Base(Base64), convertFromBase )
 import           Data.ByteString.Base64               ( encodeBase64' )
 import           Data.ByteString.Builder              ( byteString )
 import qualified Data.ByteString.Char8                as BS
@@ -39,11 +46,14 @@ import qualified Data.HashMap.Strict                  as HashMap
 import           Data.IORef.Extra                     ( writeIORef' )
 import qualified Data.Map                             as Map
 import           Data.String.Interpolate              ( i )
+import qualified Data.Text                            as Text
 import           Data.Time.Clock.POSIX                ( POSIXTime, getPOSIXTime )
 import           Data.Time.Clock.System               ( SystemTime(systemSeconds), getSystemTime )
 
 import           Database.SQLite.Simple               ( withConnection )
 import qualified Database.SQLite.Simple               as SQLite
+
+import           Gallery                              ( galleryHandler )
 
 import           Network.HTTP.Client                  ( Proxy(Proxy)
                                                       , Request(..)
@@ -54,8 +64,10 @@ import           Network.HTTP.Client                  ( Proxy(Proxy)
 import           Network.HTTP.Client.TLS              ( tlsManagerSettings )
 import           Network.HTTP.Simple                  ( getResponseBody )
 import qualified Network.HTTP.Simple                  as Simple
-import           Network.HTTP.Types                   ( status200
+import           Network.HTTP.Types                   ( StdMethod(HEAD)
+                                                      , status200
                                                       , status301
+                                                      , status401
                                                       , status403
                                                       , status404
                                                       , status418
@@ -89,17 +101,26 @@ import           System.Directory                     ( createDirectoryIfMissing
 
 import           Types
 
-import           UnliftIO                             ( Handler(Handler), try )
+import           UnliftIO                             ( Handler(Handler)
+                                                      , newChan
+                                                      , throwTo
+                                                      , try
+                                                      , writeChan
+                                                      )
 
 import           Utils
 
-import           Web.Scotty.Trans                     ( pathParam )
+import           Web.Scotty.Trans                     ( pathParam, regex )
 import           Web.Scotty.Trans.Strict              ( ActionT
                                                       , Options(..)
+                                                      , addroute
                                                       , defaultHandler
+                                                      , formParam
                                                       , get
+                                                      , header
                                                       , headers
                                                       , notFound
+                                                      , post
                                                       , raw
                                                       , scottyAppT
                                                       , setHeader
@@ -125,7 +146,7 @@ handleRPCCommand "refresh_certs" _ = do
     cfg <- lift $ asks clientConfig
     cred <- lift $ liftA2 fromPkcs12 (asks clientConfig) (hathCertificate cfg)
     text ""
-    shutdown <- lift $ asks Types.refreshCertificate
+    shutdown <- lift $ asks shutdownRequest
     liftIO $ putMVar shutdown (RefreshCert cred)
 handleRPCCommand "threaded_proxy_test" additional = do
     lift $ logInfo "Starting threaded speed test"
@@ -139,37 +160,10 @@ handleRPCCommand "speed_test" additional = do
     testSize = maybe 1000000 fst (BS.readInt =<< Map.lookup "testsize" opts)
 handleRPCCommand "start_downloader" _ = do
     lift $ logInfo "Starting gallery downloader"
-    cfg <- lift $ asks clientConfig
-    metadata <- lift (parseMetadata . getResponseBody <$> galleryMetadata cfg Nothing)
-    void $ liftIO $ forkIO $ downloadGallery cfg metadata
+    initiateTask <- asks galleryTask
+    writeChan initiateTask ()
     text ""
 handleRPCCommand _ _ = text "INVALID_COMMAND"
-
-downloadGallery :: ClientConfig -> GalleryMetadata -> IO ()
-downloadGallery cfg meta = do
-    createDirectoryIfMissing True [i|download/#{galleryTitle meta}|]
-    mapM_ (downloadFile 0) (galleryFileList meta)
-    void $ galleryMetadata cfg (Just ( [i|#{gid}|], galleryMinXRes meta ))
-  where
-    gid = galleryID meta
-
-    downloadFile :: Int -> GalleryFile -> IO ()
-    downloadFile trial f
-        | trial > 3 = putStrLn [i|Failed to download #{galleryFileName f}|]
-        | otherwise = do
-            res <- parseRPCResult . getResponseBody <$> galleryFetch cfg gid f trial
-            case ( rpcStatusCode res, rpcResults res ) of
-                ( OK, url : _ ) -> do
-                    bytes <- LBS.toStrict . getResponseBody <$> Simple.httpLbs [i|#{url}|]
-                    if galleryFileHash f == hathHash bytes
-                        then do
-                            BS.writeFile filePath bytes
-                            putStrLn [i|Downloaded #{galleryFileName f}.#{galleryFileExt f}|]
-                        else downloadFile (trial + 1) f
-                _ -> downloadFile (trial + 1) f
-      where
-        filePath :: FilePath
-        filePath = [i|download/#{galleryTitle meta}/#{galleryFileName f}.#{galleryFileExt f}|]
 
 handleResourceRequest :: ( MonadIO m, MonadThrow m )
                       => ByteString
@@ -265,8 +259,8 @@ testSpeed opts = case testArgs of
 maxTimeDrift :: Int64
 maxTimeDrift = 300
 
-runHTTPServer :: IORef HathSettings -> ClientConfig -> IO ()
-runHTTPServer hSets config = do
+runHTTPServer :: ThreadId -> IORef HathSettings -> ClientConfig -> IO ()
+runHTTPServer mainThread hSets config = do
     sts <- readIORef hSets
     print sts
     writeIORef' hSets sts
@@ -275,20 +269,27 @@ runHTTPServer hSets config = do
     credRef <- newIORef cred
     flood <- newIORef (HashMap.empty @ByteString @Int)
     void $ forkIO $ forever (threadDelay (5 * 60 * 1000000) >> writeIORef' flood HashMap.empty)
+    galleryQueue <- newChan
     withConnection "./cache.db" $ \conn -> do
         SQLite.execute_ conn "pragma journal_mode=WAL"
         SQLite.execute_ conn "pragma synchronous=normal"
         SQLite.execute_ conn "pragma temp_store=memory"
         SQLite.execute_ conn "pragma cache_size=100000"
         SQLite.execute_ conn "pragma mmap_size=65536"
-        runHath config hSets conn terminateRequest credRef verifyCache
+        runHath config hSets conn terminateRequest credRef galleryQueue verifyCache
+        void
+            $ forkIO
+            $ runHath config hSets conn terminateRequest credRef galleryQueue galleryHandler
         app <- scottyAppT
             (Options { verbose = 1, settings = setPort (clientPort sts) defaultSettings })
-            (runHath config hSets conn terminateRequest credRef)
+            (runHath config hSets conn terminateRequest credRef galleryQueue)
             $ do
                 defaultHandler $ Handler $ \(e :: SomeException) -> do
                     reqHeader <- headers
                     lift $ logError [i|Unhandled exception: #{e}, headers: #{reqHeader}|]
+                addroute HEAD (regex ".*") $ do
+                    setCommonHeader
+                    text ""
                 get "/" $ status status404
                 get "/favicon.ico" $ do
                     status status301
@@ -300,9 +301,32 @@ runHTTPServer hSets config = do
                 resourceRequestHandler flood
                 serverCommandHandler
                 speedTestHandler
+                reloadHandler
                 notFound $ status status403
         loop terminateRequest app credRef
   where
+    aes = case cipherInit @AES256 (clientKey config) of
+        CryptoPassed x   -> x
+        CryptoFailed err -> error (show err)
+
+    reloadHandler = post "/reload" $ do
+        setCommonHeader
+        authTag <- formParam "authTag"
+            >>= (\case
+                     Left err    -> error $ Text.pack err
+                     Right bytes -> pure (AuthTag bytes)) . convertFromBase @ByteString Base64
+        cText <- formParam "cipherText"
+        n <- formParam "nonce" >>= (\case
+                                        CryptoPassed x   -> pure x
+                                        CryptoFailed err -> error (show err)) . nonce @ByteString
+        case decrypt aes n BS.empty cText authTag of
+            Nothing -> status status403
+            Just p  -> if p == clientID config
+                then do
+                    shutdown <- asks shutdownRequest
+                    liftIO $ putMVar shutdown Reload
+                else status status401
+
     speedTestHandler = get "/t/:testsize/:testtime/:testkey/:nothing" $ do
         setCommonHeader
         testSize <- pathParam @Int "testsize"
@@ -366,11 +390,10 @@ runHTTPServer hSets config = do
             keystampTime      = maybe 0 fst (BS.readInt rawTime)
             keystamp          = BS.drop 1 rest
             in 
-                abs (systemSeconds currentTime - fromIntegral keystampTime) > 300
-                || keystamp
+                keystamp
                 /= BS.take 10 (hathHash [i|#{keystampTime}-#{fileid}-#{ckey}-hotlinkthis|])
 
-    loop :: MVar RefreshCert -> Application -> IORef Credential -> IO ()
+    loop :: MVar ServerAction -> Application -> IORef Credential -> IO ()
     loop terminateRequest router credRef = do
         cred <- readIORef credRef
         cPort <- clientPort <$> readIORef hSets
@@ -390,6 +413,10 @@ runHTTPServer hSets config = do
                 writeIORef' credRef newCred
                 putStrLn "Restarting server with new credentials"
                 loop terminateRequest router credRef
+            Right Reload -> do
+                putStrLn "Shutdown without sending clientStop"
+                throwTo mainThread GracefulShutdown
+
 
 
 

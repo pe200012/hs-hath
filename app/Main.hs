@@ -38,7 +38,7 @@ hathMain = do
     hSets <- newIORef sts
     usingLoggerT richMessageAction $ logInfo "Starting server"
     myId <- myThreadId
-    serverId <- forkIO $ runHTTPServer hSets config
+    serverId <- forkIO $ runHTTPServer myId hSets config
     void $ installHandler sigINT (Catch $ do
                                       usingLoggerT richMessageAction $ clientStop config
                                       throwTo serverId GracefulShutdown
@@ -47,6 +47,7 @@ hathMain = do
                                        usingLoggerT richMessageAction $ clientStop config
                                        throwTo serverId GracefulShutdown
                                        throwTo myId GracefulShutdown) Nothing
+    threadDelay (1 * periodSeconds)
     usingLoggerT richMessageAction $ clientStart config
     forever $ do
         threadDelay (60 * periodSeconds)
