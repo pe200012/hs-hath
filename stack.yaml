@@ -36,5 +36,3 @@ extra-deps:
 flags:
   cryptostore:
     use_crypton: True
-
-with-gcc: /usr/bin/clang

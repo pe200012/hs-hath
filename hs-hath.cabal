@@ -28,6 +28,7 @@ source-repository head
 library
   exposed-modules:
       Cache
+      Gallery
       Query
       Resource
       Result
@@ -46,7 +47,7 @@ library
       QuasiQuotes
       LambdaCase
       ViewPatterns
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -fllvm
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2 -static -optl-static
   build-depends:
       async ==2.2.*
     , base >=4.7 && <5
@@ -71,6 +72,7 @@ library
     , http-client-tls ==0.3.*
     , http-conduit ==2.3.*
     , http-types ==0.12.*
+    , memory ==0.18.*
     , monad-control ==1.0.*
     , monad-loops ==0.4.*
     , mtl ==2.3.*
@@ -107,7 +109,7 @@ executable db-migrate
       QuasiQuotes
       LambdaCase
       ViewPatterns
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -fllvm -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2 -static -optl-static -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       async ==2.2.*
     , base >=4.7 && <5
@@ -133,6 +135,7 @@ executable db-migrate
     , http-client-tls ==0.3.*
     , http-conduit ==2.3.*
     , http-types ==0.12.*
+    , memory ==0.18.*
     , monad-control ==1.0.*
     , monad-loops ==0.4.*
     , mtl ==2.3.*
@@ -169,7 +172,7 @@ executable hs-hath
       QuasiQuotes
       LambdaCase
       ViewPatterns
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -fllvm -threaded -rtsopts -with-rtsopts=-N -fpedantic-bottoms
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2 -static -optl-static -threaded -rtsopts -with-rtsopts=-N -fpedantic-bottoms
   build-depends:
       async ==2.2.*
     , base >=4.7 && <5
@@ -195,6 +198,7 @@ executable hs-hath
     , http-client-tls ==0.3.*
     , http-conduit ==2.3.*
     , http-types ==0.12.*
+    , memory ==0.18.*
     , monad-control ==1.0.*
     , monad-loops ==0.4.*
     , mtl ==2.3.*
@@ -232,7 +236,7 @@ test-suite hs-hath-test
       QuasiQuotes
       LambdaCase
       ViewPatterns
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -fllvm -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2 -static -optl-static -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       async ==2.2.*
     , base >=4.7 && <5
@@ -258,6 +262,7 @@ test-suite hs-hath-test
     , http-client-tls ==0.3.*
     , http-conduit ==2.3.*
     , http-types ==0.12.*
+    , memory ==0.18.*
     , monad-control ==1.0.*
     , monad-loops ==0.4.*
     , mtl ==2.3.*
