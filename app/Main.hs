@@ -1,5 +1,4 @@
 
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 
 module Main ( main ) where
@@ -10,7 +9,6 @@ import           Control.Concurrent      ( forkIO, myThreadId, threadDelay, thro
 import           Control.Exception       ( catch )
 
 import           Data.String.Interpolate ( i )
-import           Data.Text               ( Text )
 
 import qualified Dhall
 
@@ -20,11 +18,15 @@ import           Query
 
 import           Relude
 
-import           Server
+import           Server                  ( runHTTPServer )
 
 import           System.Posix            ( Handler(Catch), installHandler, sigINT, sigTERM )
 
-import           Types
+import           Types                   ( GracefulShutdown(GracefulShutdown)
+                                         , unmarshallClientConfig
+                                         )
+
+import           Version                 ( versionString )
 
 hathMain :: IO ()
 hathMain = do
