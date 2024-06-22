@@ -30,6 +30,7 @@ import           Colog.Core.Class           ( HasLog(..) )
 
 import           Control.Monad.Catch        ( MonadThrow )
 
+import qualified Data.ByteString.Char8      as BS
 import qualified Data.ByteString.Lazy.Char8 as LBS
 
 import           Database.SQLite.Simple     ( Connection )
@@ -244,28 +245,28 @@ emptyMetadata
 {-# NOINLINE emptyMetadata #-}
 
 parseMetadata :: LBS.ByteString -> GalleryMetadata
-parseMetadata bytes = foldl' go emptyMetadata (LBS.lines bytes)
+parseMetadata (LBS.toStrict -> bytes) = foldl' go emptyMetadata (BS.lines bytes)
   where
-    go metadata line = case LBS.words line of
+    go metadata line = case BS.words line of
         [] -> metadata
         [ "GID", maybeGid ]
-            -> maybe metadata (\( gid, _ ) -> metadata { galleryID = gid }) (LBS.readInt maybeGid)
+            -> maybe metadata (\( gid, _ ) -> metadata { galleryID = gid }) (BS.readInt maybeGid)
         [ "FILECOUNT", maybeCount ] -> maybe
             metadata
             (\( count, _ ) -> metadata { galleryFileCount = count })
-            (LBS.readInt maybeCount)
-        [ "MINXRES", xres ] -> metadata { galleryMinXRes = LBS.toStrict xres }
-        ("TITLE" : rest) -> metadata { galleryTitle = LBS.toStrict $ LBS.unwords rest }
+            (BS.readInt maybeCount)
+        [ "MINXRES", xres ] -> metadata { galleryMinXRes = xres }
+        ("TITLE" : rest) -> metadata { galleryTitle = BS.unwords rest }
         [ maybePage, maybeFid, mxres, hash, ext, basename ]
-            -> case ( LBS.readInt maybePage, LBS.readInt maybeFid ) of
+            -> case ( BS.readInt maybePage, BS.readInt maybeFid ) of
                 ( Just ( page, _ ), Just ( fid, _ ) ) -> metadata
                     { galleryFileList = GalleryFile
                           { galleryFilePage  = page
                           , galleryFileIndex = fid
-                          , galleryFileName  = LBS.toStrict basename
-                          , galleryFileXRes  = LBS.toStrict mxres
-                          , galleryFileHash  = LBS.toStrict hash
-                          , galleryFileExt   = LBS.toStrict ext
+                          , galleryFileName  = basename
+                          , galleryFileXRes  = mxres
+                          , galleryFileHash  = hash
+                          , galleryFileExt   = ext
                           }
                           : galleryFileList metadata
                     }
