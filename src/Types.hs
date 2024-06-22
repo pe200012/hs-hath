@@ -1,5 +1,3 @@
-{-# LANGUAGE DeriveGeneric #-}
-
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 
@@ -9,7 +7,23 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Types ( module Types ) where
+module Types
+    ( HathError(..)
+    , ServerAction(..)
+    , GracefulShutdown(GracefulShutdown)
+    , HathSettings(..)
+    , defaultHathSettings
+    , ClientProxy(..)
+    , ClientConfig(..)
+    , defaultClientConfig
+    , Singleton(..)
+    , HathM(..)
+    , runHath
+    , GalleryFile(..)
+    , GalleryMetadata(..)
+    , emptyMetadata
+    , parseMetadata
+    ) where
 
 import           Colog                      ( HasLog, LogAction, Message, richMessageAction )
 import           Colog.Core.Class           ( HasLog(..) )
@@ -22,7 +36,6 @@ import           Database.SQLite.Simple     ( Connection )
 
 import           Dhall                      ( (>*<)
                                             , Decoder
-                                            , Encoder(Encoder)
                                             , FromDhall
                                             , ToDhall(injectWith)
                                             , encodeField
@@ -33,7 +46,6 @@ import           Dhall                      ( (>*<)
                                             , strictText
                                             )
 import qualified Dhall
-import           Dhall.Core                 ( Expr(..) )
 
 import           Network.TLS                ( Credential )
 
