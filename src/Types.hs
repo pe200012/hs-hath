@@ -20,7 +20,20 @@ import qualified Data.ByteString.Lazy.Char8 as LBS
 
 import           Database.SQLite.Simple     ( Connection )
 
-import           Dhall                      ( FromDhall, ToDhall )
+import           Dhall                      ( (>*<)
+                                            , Decoder
+                                            , Encoder(Encoder)
+                                            , FromDhall
+                                            , ToDhall(injectWith)
+                                            , encodeField
+                                            , encodeFieldWith
+                                            , inject
+                                            , record
+                                            , recordEncoder
+                                            , strictText
+                                            )
+import qualified Dhall
+import           Dhall.Core                 ( Expr(..) )
 
 import           Network.TLS                ( Credential )
 
@@ -74,34 +87,34 @@ defaultHathSettings
 
 {-# NOINLINE defaultHathSettings #-}
 
+readableByteString :: Decoder ByteString
+readableByteString = encodeUtf8 <$> strictText
+
 data ClientProxy
     = ClientProxy { proxyHost :: {-# UNPACK #-} !ByteString
                   , proxyPort :: {-# UNPACK #-} !Int
                   , proxyAuth :: {-# UNPACK #-} !(Maybe ( ByteString, ByteString ))
                   }
 
-data SerializedClientProxy
-    = SerializedClientProxy { sProxyHost :: {-# UNPACK #-} !Text
-                            , sProxyPort :: {-# UNPACK #-} !Int
-                            , sProxyAuth :: {-# UNPACK #-} !(Maybe ( Text, Text ))
-                            }
-    deriving ( Generic )
+instance FromDhall ClientProxy where
+    autoWith _
+        = record
+            (ClientProxy <$> Dhall.field "host" readableByteString
+             <*> Dhall.field "port" Dhall.auto
+             <*> Dhall.field
+                 "auth"
+                 (Dhall.maybe (Dhall.pair readableByteString readableByteString)))
 
-instance FromDhall SerializedClientProxy
-
-instance ToDhall SerializedClientProxy
-
-marshallClientProxy :: ClientProxy -> SerializedClientProxy
-marshallClientProxy (ClientProxy h p pa)
-    = SerializedClientProxy (decodeUtf8 h) p (bimap decodeUtf8 decodeUtf8 <$> pa)
-
-{-# INLINE marshallClientProxy #-}
-
-unmarshallClientProxy :: SerializedClientProxy -> ClientProxy
-unmarshallClientProxy (SerializedClientProxy h p pa)
-    = ClientProxy (encodeUtf8 h) p (bimap encodeUtf8 encodeUtf8 <$> pa)
-
-{-# INLINE unmarshallClientProxy #-}
+instance ToDhall ClientProxy where
+    injectWith _
+        = recordEncoder
+            (adapt >$< encodeField "host"
+             >*< encodeField "port"
+             >*< encodeFieldWith
+                 "auth"
+                 (contramap (fmap (bimap decodeUtf8 decodeUtf8)) (inject @(Maybe ( Text, Text )))))
+      where
+        adapt (ClientProxy h p a) = ( h, ( p, a ) )
 
 data ClientConfig
     = ClientConfig { clientID      :: {-# UNPACK #-} !ByteString
@@ -110,52 +123,38 @@ data ClientConfig
                    , clientProxy   :: {-# UNPACK #-} !(Maybe ClientProxy)
                    }
 
+instance FromDhall ClientConfig where
+    autoWith _
+        = record
+            (ClientConfig <$> Dhall.field "id" readableByteString
+             <*> Dhall.field "key" readableByteString
+             <*> Dhall.field "version" readableByteString
+             <*> Dhall.field "proxy" (Dhall.maybe Dhall.auto))
+
+instance ToDhall ClientConfig where
+    injectWith _
+        = recordEncoder
+            (adapt >$< encodeField "id"
+             >*< encodeField "key"
+             >*< encodeField "version"
+             >*< encodeField "proxy")
+      where
+        adapt (ClientConfig i k v p) = ( i, ( k, ( v, p ) ) )
+
 defaultClientConfig :: ClientConfig
 defaultClientConfig
     = ClientConfig { clientID = "", clientKey = "", clientVersion = "169", clientProxy = Nothing }
 
 {-# NOINLINE defaultClientConfig #-}
 
-data SerializedClientConfig
-    = SerializedClientConfig { sClientID      :: {-# UNPACK #-} !Text
-                             , sClientKey     :: {-# UNPACK #-} !Text
-                             , sClientVersion :: {-# UNPACK #-} !Text
-                             , sClientProxy   :: {-# UNPACK #-} !(Maybe SerializedClientProxy)
-                             }
-    deriving ( Generic )
-
-instance FromDhall SerializedClientConfig
-
-instance ToDhall SerializedClientConfig
-
-marshallClientConfig :: ClientConfig -> SerializedClientConfig
-marshallClientConfig (ClientConfig cid ckey cver cproxy)
-    = SerializedClientConfig
-        (decodeUtf8 cid)
-        (decodeUtf8 ckey)
-        (decodeUtf8 cver)
-        (marshallClientProxy <$> cproxy)
-
-{-# INLINE marshallClientConfig #-}
-
-unmarshallClientConfig :: SerializedClientConfig -> ClientConfig
-unmarshallClientConfig (SerializedClientConfig cid ckey cver cproxy)
-    = ClientConfig
-        (encodeUtf8 cid)
-        (encodeUtf8 ckey)
-        (encodeUtf8 cver)
-        (unmarshallClientProxy <$> cproxy)
-
-{-# INLINE unmarshallClientConfig #-}
-
 data Singleton m msg
-    = Singleton { clientConfig       :: {-# UNPACK #-} !ClientConfig
-                , hathSettings       :: {-# UNPACK #-} !(IORef HathSettings)
+    = Singleton { clientConfig    :: {-# UNPACK #-} !ClientConfig
+                , hathSettings    :: {-# UNPACK #-} !(IORef HathSettings)
                 , shutdownRequest :: {-# UNPACK #-} !(MVar ServerAction)
-                , logAction          :: !(LogAction m msg)
-                , database           :: {-# UNPACK #-} !Connection
-                , credential         :: {-# UNPACK #-} !(IORef Credential)
-                , galleryTask        :: {-# UNPACK #-} !(Chan ())
+                , logAction       :: !(LogAction m msg)
+                , database        :: {-# UNPACK #-} !Connection
+                , credential      :: {-# UNPACK #-} !(IORef Credential)
+                , galleryTask     :: {-# UNPACK #-} !(Chan ())
                 }
 
 instance HasLog (Singleton m msg) msg m where
@@ -191,13 +190,13 @@ runHath :: MonadIO m
 runHath cfg hRef conn refreshCert credRef queue m = do
     runReaderT
         (runHathM m)
-        (Singleton { clientConfig       = cfg
-                   , hathSettings       = hRef
+        (Singleton { clientConfig    = cfg
+                   , hathSettings    = hRef
                    , shutdownRequest = refreshCert
-                   , logAction          = richMessageAction
-                   , database           = conn
-                   , credential         = credRef
-                   , galleryTask        = queue
+                   , logAction       = richMessageAction
+                   , database        = conn
+                   , credential      = credRef
+                   , galleryTask     = queue
                    })
 
 {-# INLINE runHath #-}

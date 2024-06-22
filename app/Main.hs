@@ -22,15 +22,13 @@ import           Server                  ( runHTTPServer )
 
 import           System.Posix            ( Handler(Catch), installHandler, sigINT, sigTERM )
 
-import           Types                   ( GracefulShutdown(GracefulShutdown)
-                                         , unmarshallClientConfig
-                                         )
+import           Types                   ( GracefulShutdown(GracefulShutdown) )
 
 import           Version                 ( versionString )
 
 hathMain :: IO ()
 hathMain = do
-    config <- unmarshallClientConfig <$> Dhall.input Dhall.auto "./client-login"
+    config <- Dhall.input Dhall.auto "./client-login"
     res <- usingLoggerT richMessageAction serverStatus
     when (res /= status200) $ do
         usingLoggerT richMessageAction $ logError "Server status request failed"
