@@ -35,6 +35,7 @@ library
       Server
       Types
       Utils
+      Version
   other-modules:
       Paths_hs_hath
   hs-source-dirs:

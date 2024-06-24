@@ -58,7 +58,5 @@ hathMain = do
 main :: IO ()
 main = do
     usingLoggerT richMessageAction
-        $ logInfo
-            ([i|Starting Hentai@Home server. Version: #{(__DATE__ :: String)} #{(__TIME__ :: String)}|]
-                 :: Text)
+        $ logInfo ([i|Starting Hentai@Home server. Version: #{versionString}|] :: Text)
     hathMain
