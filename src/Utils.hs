@@ -6,11 +6,15 @@
 
 module Utils ( module Utils ) where
 
+import           Control.Monad.Loops     ( whileM_ )
+import           Control.Monad.ST.Strict ( runST )
+
 import           Crypto.Hash             ( SHA1, hash )
 
 import qualified Data.ByteString.Char8   as BS
 import           Data.Default.Class      ( Default(def) )
 import qualified Data.Map                as Map
+import           Data.STRef.Strict       ( modifySTRef', newSTRef, readSTRef, writeSTRef )
 
 import           Database.SQLite.Simple  ( FromRow, Query, ToRow )
 import qualified Database.SQLite.Simple  as SQLite
@@ -38,14 +42,33 @@ hathHash = show . hash @ByteString @SHA1
 {-# INLINE hathHash #-}
 
 parseOptions :: ByteString -> Map ByteString ByteString
-parseOptions param = Map.fromList kvPairs
-  where
-    kvs     = BS.split ';' param
+parseOptions param = runST $ do
+    m <- newSTRef Map.empty
+    itr <- newSTRef 0
+    keyStart <- newSTRef 0
+    let withinBound = liftA2 (<) (readSTRef itr) (pure (BS.length param))
+    whileM_ withinBound $ do
+        readSTRef itr >>= \idx -> case BS.index param idx of
+            ';' -> do
+                ks <- readSTRef keyStart
+                modifySTRef' m $ Map.insert (slice ks idx) ""
+                writeSTRef keyStart (idx + 1)
+            '=' -> do
+                ks <- readSTRef keyStart
+                let searchingDelimiter = liftA2 (/=) (BS.index param <$> readSTRef itr) (pure ';')
+                whileM_ (liftA2 (&&) withinBound searchingDelimiter) $ modifySTRef' itr succ
+                idx2 <- readSTRef itr
+                modifySTRef' m $ Map.insert (slice ks idx) (slice (idx + 1) idx2)
+                writeSTRef keyStart (idx2 + 1)
+            _   -> pure ()
 
-    kvPairs = map (\kv -> let
-                       ( k, v ) = BS.span (/= '=') kv
-                       in 
-                           ( k, BS.drop 1 v )) kvs
+        modifySTRef' itr succ
+    readSTRef m
+  where
+    slice :: Int -> Int -> ByteString
+    slice start end = BS.take (end - start) $ BS.drop start param
+
+    {-# INLINE slice #-}
 
 {-# INLINE parseOptions #-}
 
