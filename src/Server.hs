@@ -153,7 +153,9 @@ handleRPCCommand "start_downloader" _ = do
     initiateTask <- asks galleryTask
     writeChan initiateTask ()
     text ""
-handleRPCCommand _ _ = text "INVALID_COMMAND"
+handleRPCCommand c _ = do
+    lift $ logWarning [i|Unknown command: #{c}|]
+    text ""
 
 handleResourceRequest :: ( MonadIO m, MonadThrow m )
                       => ByteString
