@@ -1,3 +1,4 @@
+
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 
@@ -57,7 +58,7 @@ import           UnliftIO                   ( Chan, MonadUnliftIO )
 data HathError = InitialContactFailure | InvalidClientKey | InvalidCertificate
     deriving ( Show )
 
-data ServerAction = RefreshCert Credential | Reload
+data ServerAction = RefreshCert {-# UNPACK #-} !Credential | Reload
 
 data GracefulShutdown = GracefulShutdown
     deriving ( Show )

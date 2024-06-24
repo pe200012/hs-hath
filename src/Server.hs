@@ -35,7 +35,6 @@ import           Crypto.Cipher.AES                    ( AES256 )
 import           Crypto.Cipher.AESGCMSIV              ( decrypt, nonce )
 import           Crypto.Cipher.Types                  ( AuthTag(AuthTag), Cipher(cipherInit) )
 import           Crypto.Error                         ( CryptoFailable(..) )
-import           Crypto.Hash                          ( SHA1, hash )
 
 import           Data.ByteArray.Encoding              ( Base(Base64), convertFromBase )
 import           Data.ByteString.Base64               ( encodeBase64' )
@@ -63,7 +62,6 @@ import           Network.HTTP.Client                  ( Proxy(Proxy)
                                                       )
 import           Network.HTTP.Client.TLS              ( tlsManagerSettings )
 import           Network.HTTP.Simple                  ( getResponseBody )
-import qualified Network.HTTP.Simple                  as Simple
 import           Network.HTTP.Types                   ( StdMethod(HEAD)
                                                       , status200
                                                       , status301
@@ -92,13 +90,6 @@ import           Relude                               hiding ( Proxy, get )
 
 import           Resource
 
-import           Result                               ( RPCResult(..)
-                                                      , StatusCode(..)
-                                                      , parseRPCResult
-                                                      )
-
-import           System.Directory                     ( createDirectoryIfMissing )
-
 import           Types
 
 import           UnliftIO                             ( Handler(Handler)
@@ -117,7 +108,6 @@ import           Web.Scotty.Trans.Strict              ( ActionT
                                                       , defaultHandler
                                                       , formParam
                                                       , get
-                                                      , header
                                                       , headers
                                                       , notFound
                                                       , post
@@ -416,7 +406,4 @@ runHTTPServer mainThread hSets config = do
             Right Reload -> do
                 putStrLn "Shutdown without sending clientStop"
                 throwTo mainThread GracefulShutdown
-
-
-
 

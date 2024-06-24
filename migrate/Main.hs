@@ -3,11 +3,10 @@ module Main ( main ) where
 
 import           Cache                   ( Cache(..) )
 
-import           Control.Exception       ( SomeException, catch )
+import           Control.Exception       ( catch )
 
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Char8   as BSC
-import           Data.Foldable           ( for_ )
 import qualified Data.HashSet            as HashSet
 import           Data.String.Interpolate ( i )
 import qualified Data.Text               as Text

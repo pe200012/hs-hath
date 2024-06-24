@@ -3,7 +3,7 @@ module Gallery ( galleryHandler ) where
 
 import           Colog                   ( logInfo, logWarning )
 
-import           Control.Concurrent      ( Chan, readChan )
+import           Control.Concurrent      ( readChan )
 
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as LBS

@@ -5,5 +5,5 @@ module Version ( versionString ) where
 
 import           Relude
 
-versionString :: String
+versionString :: Text
 versionString = __DATE__ <> " " <> __TIME__
