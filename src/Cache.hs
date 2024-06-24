@@ -111,7 +111,7 @@ storeCache hf bytes (decodeUtf8 @Text -> filename)
     = execute
         "INSERT INTO files (lru_counter, s4, file_id, file_name, bytes) VALUES (?, ?, ?, ?, ?)"
         (Cache { cacheLRUCounter = 1
-               , cacheS4         = decodeUtf8 $ fileHash hf
+               , cacheS4         = decodeUtf8 $ BS.take 4 $ fileHash hf
                , cacheFileId     = decodeUtf8 $ toFileId hf
                , cacheFileName   = Just filename
                , cacheBytes      = bytes
