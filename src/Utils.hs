@@ -6,35 +6,25 @@
 
 module Utils ( module Utils ) where
 
-import           Control.Monad.Loops     ( whileM_ )
-import           Control.Monad.ST.Strict ( runST )
+import           Control.Monad.Loops      ( whileM_ )
+import           Control.Monad.ST.Strict  ( runST )
 
-import           Crypto.Hash             ( SHA1, hash )
+import           Crypto.Hash              ( SHA1, hash )
 
-import qualified Data.ByteString.Char8   as BS
-import           Data.Default.Class      ( Default(def) )
-import qualified Data.Map                as Map
-import           Data.STRef.Strict       ( modifySTRef', newSTRef, readSTRef, writeSTRef )
+import qualified Data.ByteString.Char8    as BS
+import qualified Data.ByteString.Internal as BS ( c2w, w2c )
+import qualified Data.ByteString.Unsafe   as BS
+import qualified Data.Map                 as Map
+import           Data.STRef.Strict        ( modifySTRef', newSTRef, readSTRef, writeSTRef )
 
-import           Database.SQLite.Simple  ( FromRow, Query, ToRow )
-import qualified Database.SQLite.Simple  as SQLite
-
-import           Network.Connection      ( TLSSettings(TLSSettings) )
-import           Network.HTTP.Client     ( Manager, newManager )
-import           Network.HTTP.Client.TLS ( mkManagerSettings )
-import           Network.TLS             ( ClientHooks(..)
-                                         , ClientParams(..)
-                                         , Credential
-                                         , Supported(supportedCiphers)
-                                         , defaultParamsClient
-                                         )
-import           Network.TLS.Extra       ( ciphersuite_strong )
+import           Database.SQLite.Simple   ( FromRow, Query, ToRow )
+import qualified Database.SQLite.Simple   as SQLite
 
 import           Relude
 
-import           Types                   ( HathM, HathSettings, Singleton(..) )
+import           Types                    ( HathM, HathSettings, Singleton(..) )
 
-import           Web.Scotty.Trans        ( ActionT, setHeader )
+import           Web.Scotty.Trans         ( ActionT, setHeader )
 
 hathHash :: ByteString -> ByteString
 hathHash = show . hash @ByteString @SHA1
@@ -71,17 +61,6 @@ parseOptions param = runST $ do
     {-# INLINE slice #-}
 
 {-# INLINE parseOptions #-}
-
-mkMngr :: String -> Credential -> IO Manager
-mkMngr hostName cred = do
-    let hooks        = def { onCertificateRequest = const $ return $ Just cred }
-        clientParams
-            = (defaultParamsClient hostName "")
-            { clientHooks     = hooks
-            , clientSupported = def { supportedCiphers = ciphersuite_strong }
-            }
-        tlsSettings  = TLSSettings clientParams
-    newManager $ mkManagerSettings tlsSettings Nothing
 
 query :: forall m q r. ( ToRow q, FromRow r, MonadIO m ) => Query -> q -> HathM m [ r ]
 query q p = do
