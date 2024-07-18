@@ -38,14 +38,15 @@ parseOptions param = runST $ do
     keyStart <- newSTRef 0
     let withinBound = liftA2 (<) (readSTRef itr) (pure (BS.length param))
     whileM_ withinBound $ do
-        readSTRef itr >>= \idx -> case BS.index param idx of
+        readSTRef itr >>= \idx -> case BS.w2c $ BS.unsafeIndex param idx of
             ';' -> do
                 ks <- readSTRef keyStart
                 modifySTRef' m $ Map.insert (slice ks idx) ""
                 writeSTRef keyStart (idx + 1)
             '=' -> do
                 ks <- readSTRef keyStart
-                let searchingDelimiter = liftA2 (/=) (BS.index param <$> readSTRef itr) (pure ';')
+                let searchingDelimiter
+                        = liftA2 (/=) (BS.unsafeIndex param <$> readSTRef itr) (pure (BS.c2w ';'))
                 whileM_ (liftA2 (&&) withinBound searchingDelimiter) $ modifySTRef' itr succ
                 idx2 <- readSTRef itr
                 modifySTRef' m $ Map.insert (slice ks idx) (slice (idx + 1) idx2)
