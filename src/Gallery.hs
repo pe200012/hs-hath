@@ -21,13 +21,16 @@ import           System.Directory        ( createDirectoryIfMissing )
 
 import           Types
 
+import           UnliftIO                ( tryAny )
+import           UnliftIO.Directory      ( doesFileExist )
+
 import           Utils                   ( hathHash )
 
 galleryHandler :: HathM IO ()
 galleryHandler = do
-    logInfo "Starting Gallery Downloader..."
+    logInfo "Starting Gallery Listener..."
     queue <- asks galleryTask
-    forever $ do
+    forever $ void $ tryAny $ do
         void $ liftIO $ readChan queue
         logInfo "Downloading gallery..."
         cfg <- asks clientConfig
@@ -37,16 +40,28 @@ galleryHandler = do
 download :: ClientConfig -> GalleryMetadata -> HathM IO ()
 download cfg meta = do
     liftIO $ createDirectoryIfMissing True [i|download/#{galleryTitle meta}|]
-    mapM_ (fetchFile 0) (galleryFileList meta)
+    mapM_ checkAndFetch (galleryFileList meta)
     logInfo "Notify that we have finished downloading..."
     void $ galleryMetadata cfg (Just ( [i|#{gid}|], galleryMinXRes meta ))
   where
     gid = galleryID meta
 
-    fetchFile :: Int -> GalleryFile -> HathM IO ()
-    fetchFile trial f
-        | trial > 3 = logWarning [i|Failed to download #{galleryFileName f}|]
-        | otherwise = do
+    checkAndFetch f = doesFileExist filePath >>= \case
+        True  -> do
+            existingBytes <- liftIO $ BS.readFile filePath
+            if galleryFileHash f == hathHash existingBytes
+                then logInfo [i|#{galleryFileName f}.#{galleryFileExt f} already exists, skipping|]
+                else operate 0
+        False -> operate 0
+      where
+        operate trial
+            | trial > 3 = logWarning [i|Failed to download #{galleryFileName f}|]
+            | otherwise = tryAny (fetch trial) >>= \case
+                Right True -> pure ()
+                _          -> operate (trial + 1)
+
+        fetch :: Int -> HathM IO Bool
+        fetch trial = do
             res <- parseRPCResult . getResponseBody <$> galleryFetch cfg gid f trial
             case ( rpcStatusCode res, rpcResults res ) of
                 ( OK, url : _ ) -> do
@@ -55,8 +70,8 @@ download cfg meta = do
                         then do
                             liftIO $ BS.writeFile filePath bytes
                             logInfo [i|Downloaded #{galleryFileName f}.#{galleryFileExt f}|]
-                        else fetchFile (trial + 1) f
-                _ -> fetchFile (trial + 1) f
-      where
-        filePath :: FilePath
+                            pure True
+                        else pure False
+                _ -> pure False
+
         filePath = [i|download/#{galleryTitle meta}/#{galleryFileName f}.#{galleryFileExt f}|]
