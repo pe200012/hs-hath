@@ -63,6 +63,7 @@ import           Network.HTTP.Client                  ( Proxy(Proxy)
 import           Network.HTTP.Client.TLS              ( tlsManagerSettings )
 import           Network.HTTP.Simple                  ( getResponseBody )
 import           Network.HTTP.Types                   ( StdMethod(HEAD)
+                                                      , mkStatus
                                                       , status200
                                                       , status301
                                                       , status401
@@ -260,7 +261,7 @@ runHTTPServer mainThread hSets config = do
     terminateRequest <- newEmptyMVar
     credRef <- newIORef cred
     flood <- newIORef (HashMap.empty @ByteString @Int)
-    void $ forkIO $ forever (threadDelay (5 * 60 * 1000000) >> writeIORef' flood HashMap.empty)
+    void $ forkIO (forever (threadDelay (5 * 60 * 1000000) >> writeIORef' flood HashMap.empty))
     galleryQueue <- newChan
     withConnection "./cache.db" $ \conn -> do
         SQLite.execute_ conn "pragma journal_mode=WAL"
@@ -271,7 +272,7 @@ runHTTPServer mainThread hSets config = do
         runHath config hSets conn terminateRequest credRef galleryQueue verifyCache
         void
             $ forkIO
-            $ runHath config hSets conn terminateRequest credRef galleryQueue galleryHandler
+                (runHath config hSets conn terminateRequest credRef galleryQueue galleryHandler)
         app <- scottyAppT
             (Options { verbose = 1, settings = setPort (clientPort sts) defaultSettings })
             (runHath config hSets conn terminateRequest credRef galleryQueue)
@@ -362,8 +363,9 @@ runHTTPServer mainThread hSets config = do
                 in 
                     if
                         | floodCount > 3 -> do
-                            status status418
-                            text "Hi there, you're flooding me"
+                            status (mkStatus 509 "Bandwidth Limit Exceeded")
+                            text
+                                "Your requests are too frequent, please wait for 5 minutes before trying again"
                         | invalidKeystamp keystamp info currentTime (clientKey config) -> do
                             lift $ logWarning [i|Invalid keystamp: #{keystamp}|]
                             status status403

@@ -3,7 +3,7 @@ module Main ( main ) where
 
 import           Cache                   ( Cache(..) )
 
-import           Control.Exception       ( catch )
+import           Control.Exception.Safe  ( catch )
 
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Char8   as BSC

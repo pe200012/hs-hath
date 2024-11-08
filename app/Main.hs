@@ -3,6 +3,8 @@
 
 module Main ( main ) where
 
+import           CLI                     ( getOptions )
+
 import           Colog                   ( logError, logInfo, richMessageAction, usingLoggerT )
 
 import           Control.Concurrent      ( forkIO, myThreadId, threadDelay, throwTo )
@@ -47,7 +49,7 @@ hathMain = do
                                        usingLoggerT richMessageAction $ clientStop config
                                        throwTo serverId GracefulShutdown
                                        throwTo myId GracefulShutdown) Nothing
-    threadDelay (1 * periodSeconds)
+    threadDelay (5 * periodSeconds)
     usingLoggerT richMessageAction $ clientStart config
     forever $ do
         threadDelay (60 * periodSeconds)
@@ -57,6 +59,8 @@ hathMain = do
 
 main :: IO ()
 main = do
+    opts <- getOptions
+    print opts
     usingLoggerT richMessageAction
         $ logInfo ([i|Starting Hentai@Home server. Version: #{versionString}|] :: Text)
     hathMain

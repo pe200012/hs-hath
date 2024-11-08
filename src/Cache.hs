@@ -80,8 +80,9 @@ verifyCache = do
                 logInfo "deleting"
                 execute_ [i|DELETE FROM files WHERE #{buildExpr srs}|]
         _ -> pure ()
-    logInfo "Cache verified"
   where
+                -- execute_ [i|"DELETE FROM files WHERE fileId = #{fid}|]
+
     buildExpr :: HashSet ByteString -> ByteString
     buildExpr srs
         = BS.intercalate " AND " $ map (\x -> [i|s4 NOT LIKE '#{x}%'|]) (HashSet.toList srs)

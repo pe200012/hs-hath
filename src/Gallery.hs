@@ -1,7 +1,7 @@
 
 module Gallery ( galleryHandler ) where
 
-import           Colog                   ( logInfo, logWarning )
+import           Colog                   ( logError, logInfo, logWarning )
 
 import           Control.Concurrent      ( readChan )
 
@@ -30,12 +30,17 @@ galleryHandler :: HathM IO ()
 galleryHandler = do
     logInfo "Starting Gallery Listener..."
     queue <- asks galleryTask
-    forever $ void $ tryAny $ do
+    forever $ exhibit $ tryAny $ do
         void $ liftIO $ readChan queue
         logInfo "Downloading gallery..."
         cfg <- asks clientConfig
         metadata <- liftIO (parseMetadata . getResponseBody <$> galleryMetadata cfg Nothing)
         download cfg metadata
+  where
+    exhibit :: HathM IO (Either SomeException a) -> HathM IO ()
+    exhibit action = action >>= \case
+        Left e  -> logError [i|Error: #{displayException e}|]
+        Right _ -> pure ()
 
 download :: ClientConfig -> GalleryMetadata -> HathM IO ()
 download cfg meta = do
