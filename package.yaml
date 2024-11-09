@@ -132,3 +132,24 @@ tests:
       - -with-rtsopts=-N
     dependencies:
       - hs-hath
+
+benchmarks:
+  hs-hath-bench:
+    main: Main.hs
+    source-dirs: benchmark
+    dependencies:
+      - hs-hath
+      - criterion
+      - bytestring
+      - containers
+    ghc-options:
+      - -Wall
+      - -O2
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    default-extensions:
+      - NoImplicitPrelude
+      - TypeApplications
+      - OverloadedStrings
+      - ScopedTypeVariables
