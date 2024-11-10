@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 
-module Types
+module Type
     ( -- * Types
       ClientConfig(..)
     , ClientProxy(..)
