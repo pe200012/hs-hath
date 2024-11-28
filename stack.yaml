@@ -32,7 +32,6 @@ extra-deps:
   - time-manager-0.1.0
   - http-semantics-0.0.1
   - network-control-0.1.0
-  - vendor/warp-tls
 
 flags:
   cryptostore:
