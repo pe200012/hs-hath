@@ -32,6 +32,11 @@ extra-deps:
   - time-manager-0.1.0
   - http-semantics-0.0.1
   - network-control-0.1.0
+  - polysemy-zoo-0.8.2.0
+
+allow-newer: true
+allow-newer-deps:
+  - polysemy-zoo
 
 flags:
   cryptostore:

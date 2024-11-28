@@ -200,6 +200,13 @@ packages:
       size: 543
   original:
     hackage: network-control-0.1.0
+- completed:
+    hackage: polysemy-zoo-0.8.2.0@sha256:bd8f802cb0402082053b3b0b97c8b551b071a14960e6b271a5b78be728b73a24,3952
+    pantry-tree:
+      sha256: 6ba0b1b3b7390946be95267809be44377b2c15da2fae9904fa763f1cbfcb39fd
+      size: 2904
+  original:
+    hackage: polysemy-zoo-0.8.2.0
 snapshots:
 - completed:
     sha256: 87da71cb0ae9ee1ea1bf51a8eb9812f39f779be76abc0a3c926defd8afda05d1

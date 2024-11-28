@@ -11,6 +11,7 @@
       - "-XTypeApplications"
       - "-XViewPatterns"
       - "-XQuasiQuotes"
+      - "-XQualifiedDo"
 - ignore:
       name: Use head
 - ignore:

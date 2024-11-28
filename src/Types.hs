@@ -1,83 +1,95 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE Strict #-}
 
 module Types
-    ( -- * Types
-      ClientConfig(..)
-    , ClientProxy(..)
-    , ConfigText(..)
+    (  -- * Types
+      MkClientProxy(..)
+    , MkClientConfig(..)
     , GalleryMetadata(..)
     , HathException(..)
     , HathSettings(..)
     , GalleryFile(..)
     , HathM(..)
     , GlobalContext(..)
+    , ClientConfig
+    , ClientProxy
+    , FileURI(..)
       -- * Default values
     , defaultHathSettings
       -- * Parsing
     , parseMetadata
+    , readClientConfig
       -- * HathM handler
     , runHath
     ) where
 
-import           Colog                  ( HasLog(..), LogAction, Message, richMessageAction )
+import           Colog                   ( HasLog(..), LogAction, Message, richMessageAction )
 
-import           Control.Monad.Catch    ( MonadThrow )
+import           Control.Monad.Catch     ( MonadThrow )
 
-import qualified Data.ByteString.Char8  as BS
-import qualified Data.ByteString.Lazy   as LBS
-import qualified Data.ByteString.Short  as SBS
-import qualified Data.Text.Encoding     as TE
+import qualified Data.ByteString.Char8   as BS
+import qualified Data.ByteString.Lazy    as LBS
+import qualified Data.ByteString.Short   as SBS
+import           Data.String.Interpolate ( i )
+import qualified Data.Text.Encoding      as TE
+import           Data.Tuple.Extra        ( both )
 
-import           Database.SQLite.Simple ( Connection )
+import           Database.SQLite.Simple  ( Connection )
 
-import           Dhall                  ( FromDhall(..), ToDhall(..), auto, inject )
+import           Dhall                   ( FromDhall(..), ToDhall(..), auto, input )
 
-import           Network.TLS            ( Credential )
+import           Network.TLS             ( Credential )
+
+import           Prelude                 ( show )
 
 import           Relude
 
-import           UnliftIO               ( MonadUnliftIO )
+import           UnliftIO                ( MonadUnliftIO )
 
 data HathException = GracefulShutdown | UnrecoverableError SomeException | HotReload
     deriving ( Show )
 
 instance Exception HathException
 
--- Newtype wrapper for ShortByteString
-newtype ConfigText = ConfigText { unConfigText :: ShortByteString }
+data MkClientProxy t
+    = MkClientProxy
+    { host :: !t, port :: {-# UNPACK #-} !Integer, auth :: {-# UNPACK #-} !(Maybe ( t, t )) }
     deriving ( Show, Generic )
 
-instance FromDhall ConfigText where
-    autoWith _ = ConfigText . SBS.toShort . TE.encodeUtf8 <$> Dhall.auto
-
-instance ToDhall ConfigText where
-    injectWith _ = (TE.decodeUtf8 . SBS.fromShort . unConfigText) >$< Dhall.inject
-
-data ClientProxy
-    = ClientProxy { host :: {-# UNPACK #-} !ConfigText
-                  , port :: {-# UNPACK #-} !Integer
-                  , auth :: {-# UNPACK #-} !(Maybe ( ConfigText, ConfigText ))
-                  }
+data MkClientConfig t
+    = MkClientConfig { clientId    :: !t
+                     , key         :: !t
+                     , version     :: !t
+                     , proxy       :: {-# UNPACK #-} !(Maybe (MkClientProxy t))
+                     , downloadDir :: !t
+                     , cachePath   :: !t
+                     }
     deriving ( Show, Generic )
 
-data ClientConfig
-    = ClientConfig { clientId    :: {-# UNPACK #-} !ConfigText
-                   , key         :: {-# UNPACK #-} !ConfigText
-                   , version     :: {-# UNPACK #-} !ConfigText
-                   , proxy       :: {-# UNPACK #-} !(Maybe ClientProxy)
-                   , downloadDir :: {-# UNPACK #-} !ConfigText
-                   , cachePath   :: {-# UNPACK #-} !ConfigText
-                   }
-    deriving ( Show, Generic )
+instance FromDhall t => FromDhall (MkClientProxy t)
 
-instance FromDhall ClientProxy
+instance FromDhall t => FromDhall (MkClientConfig t)
 
-instance FromDhall ClientConfig
+instance ToDhall t => ToDhall (MkClientProxy t)
 
-instance ToDhall ClientProxy
+instance ToDhall t => ToDhall (MkClientConfig t)
 
-instance ToDhall ClientConfig
+type ClientConfig = MkClientConfig ShortByteString
+
+type ClientProxy = MkClientProxy ShortByteString
+
+readClientConfig :: Text -> IO ClientConfig
+readClientConfig path = do
+    MkClientConfig { clientId, key, version, proxy, downloadDir, cachePath } <- input auto path
+    pure
+        MkClientConfig
+        { clientId = t2bs clientId, key = t2bs key, version = t2bs version, proxy = case proxy of
+              Just (MkClientProxy { host, port, auth }) -> Just
+                  (MkClientProxy { host = t2bs host, port = port, auth = fmap (both t2bs) auth })
+              Nothing -> Nothing, downloadDir = t2bs downloadDir, cachePath = t2bs cachePath }
+  where
+    t2bs = SBS.toShort . TE.encodeUtf8
 
 data HathSettings
     = HathSettings
@@ -229,3 +241,15 @@ parseMetadata (LBS.toStrict -> bytes) = foldl' go emptyMetadata (BS.lines bytes)
         _ -> metadata
 
     {-# INLINE go #-}
+
+data FileURI
+    = FileURI { fileHash :: {-# UNPACK #-} !ByteString
+              , fileSize :: {-# UNPACK #-} !Int
+              , fileXRes :: {-# UNPACK #-} !Int
+              , fileYRes :: {-# UNPACK #-} !Int
+              , fileExt  :: {-# UNPACK #-} !ByteString
+              }
+
+instance Show FileURI where
+    show (FileURI { fileHash, fileSize, fileXRes, fileYRes, fileExt })
+        = [i|#{fileHash}-#{fileSize}-#{fileXRes}-#{fileYRes}-#{fileExt}|]
