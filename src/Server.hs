@@ -240,7 +240,7 @@ server
             = let
                 rs        = fromMaybe "" (Map.lookup "keystamp" opts)
                 ( t, rk ) = BSC.span (/= '-') rs
-                in
+                in 
                     ( fromIntegral $ maybe 0 fst $ BSC.readInteger t, BS.tail rk )
 
         {-# INLINE challange #-}
@@ -263,7 +263,7 @@ server
                     , testSize
                     , [i|#{protocol}://#{hostname}:#{port}/t/#{testSize}/#{testTime}/#{testKey}/0|]
                     )
-            in
+            in 
                 case args of
                     Nothing -> throw err403
                     Just ( testCount, testSize, url ) -> do
@@ -283,7 +283,7 @@ server
                     1000000
                     (fromIntegral . fst)
                     (BSC.readInteger =<< lookupParam "testsize" additional)
-            in
+            in 
                 return
                 $ addHeader @"Content-Length" testSize
                 $ Source.fromStepT
@@ -367,6 +367,7 @@ periodic config ipMap = forever $ do
 notifyStart :: HathSettings -> IO ()
 notifyStart settings = do
     mgr <- newManager tlsManagerSettings
+    putStrLn "Starting server..."
     phi mgr
   where
     phi mgr = do
