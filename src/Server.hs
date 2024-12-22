@@ -473,29 +473,29 @@ startServer config settings certs chan port = do
             Right _ -> error "Server terminated unexpectedly"
 
 normalizeAcceptMiddleware :: Middleware
-normalizeAcceptMiddleware app req = app (traceShowId (req { requestHeaders = normalizedHeaders }))
+normalizeAcceptMiddleware app req = app req { requestHeaders = normalizedHeaders }
   where
     normalizedHeaders = map normalizeHeader (requestHeaders req)
 
     normalizeHeader ( name, value )
-        | name == hAccept = ( name, normalizeAcceptHeader value )
+        | name == hAccept = ( name, "*/*" )
         | otherwise = ( name, value )
 
-    normalizeAcceptHeader
-        = BSC.intercalate ", " . nub . map (normalizeQuality . normalizeAsterisk) . parseAccept
+-- normalizeAcceptHeader
+--     = BSC.intercalate ", " . nub . map (normalizeQuality . normalizeAsterisk) . parseAccept
 
-    parseAccept = BSC.split ',' . BSC.filter (not . isSpace)
+-- parseAccept = BSC.split ',' . BSC.filter (not . isSpace)
 
-    normalizeAsterisk t = case BSC.stripPrefix "*" t of
-        Nothing -> t
-        Just t' -> case BSC.stripPrefix "/*" t' of
-            Just _  -> t
-            Nothing -> "*/*" <> t'
+-- normalizeAsterisk t = case BSC.stripPrefix "*" t of
+--     Nothing -> t
+--     Just t' -> case BSC.stripPrefix "/*" t' of
+--         Just _  -> t
+--         Nothing -> "*/*" <> t'
 
-    normalizeQuality mediaType = case BSC.split ';' mediaType of
-        [ t ]    -> t  -- No q parameter
-        [ t, q ] -> case BSC.stripPrefix "q=." q of
-            Just rest
-                | BSC.all isDigit rest -> t <> ";q=0." <> rest  -- Fix q=.x format
-            _         -> t <> ";" <> q  -- Keep other q values as is
-        _        -> mediaType  -- Unexpected format, leave it unchanged
+-- normalizeQuality mediaType = case BSC.split ';' mediaType of
+--     [ t ]    -> t  -- No q parameter
+--     [ t, q ] -> case BSC.stripPrefix "q=." q of
+--         Just rest
+--             | BSC.all isDigit rest -> t <> ";q=0." <> rest  -- Fix q=.x format
+--         _         -> t <> ";" <> q  -- Keep other q values as is
+--     _        -> mediaType  -- Unexpected format, leave it unchanged
