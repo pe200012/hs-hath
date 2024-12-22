@@ -37,8 +37,10 @@ import           Hash                                 ( hash )
 import           Locate
 
 import           Network.HTTP.Client                  ( brReadSome
+                                                      , httpLbs
                                                       , newManager
                                                       , parseRequest
+                                                      , responseBody
                                                       , withResponse
                                                       )
 import           Network.HTTP.Client.TLS              ( tlsManagerSettings )
@@ -82,7 +84,7 @@ import           SpeedTest                            ( bufferSending )
 
 import           Types                                ( ClientConfig
                                                       , FileURI(fileExt)
-                                                      , HathSettings
+                                                      , HathSettings(..)
                                                       , MkClientConfig(..)
                                                       , RPCError
                                                       , hentaiHeader
@@ -238,7 +240,7 @@ server
             = let
                 rs        = fromMaybe "" (Map.lookup "keystamp" opts)
                 ( t, rk ) = BSC.span (/= '-') rs
-                in 
+                in
                     ( fromIntegral $ maybe 0 fst $ BSC.readInteger t, BS.tail rk )
 
         {-# INLINE challange #-}
@@ -261,7 +263,7 @@ server
                     , testSize
                     , [i|#{protocol}://#{hostname}:#{port}/t/#{testSize}/#{testTime}/#{testKey}/0|]
                     )
-            in 
+            in
                 case args of
                     Nothing -> throw err403
                     Just ( testCount, testSize, url ) -> do
@@ -281,7 +283,7 @@ server
                     1000000
                     (fromIntegral . fst)
                     (BSC.readInteger =<< lookupParam "testsize" additional)
-            in 
+            in
                 return
                 $ addHeader @"Content-Length" testSize
                 $ Source.fromStepT
@@ -362,6 +364,19 @@ periodic config ipMap = forever $ do
     void $ runRPCIO config stillAlive
     threadDelay (1000000 * 60)
 
+notifyStart :: HathSettings -> IO ()
+notifyStart settings = do
+    mgr <- newManager tlsManagerSettings
+    phi mgr
+  where
+    phi mgr = do
+        req <- parseRequest $ "https://localhost:" <> show (clientPort settings) <> "/robots.txt"
+        res <- httpLbs req mgr
+        unless (responseBody res == "User-agent: *\nDisallow: /") $ do
+            putStrLn "Server is not ready yet"
+            threadDelay 1000000
+            phi mgr
+
 -- Create the WAI application with rate limiting
 makeApplication :: ClientConfig
                 -> HathSettings
@@ -420,7 +435,8 @@ startServer config settings certs chan port = do
     loop cfg set cets conn = do
         ipMap <- newTVarIO Map.empty
         app <- makeApplication cfg set chan ipMap conn
-        result <- withAsync (periodic cfg ipMap) $ \_ -> race (takeMVar chan)
+        result <- withAsync (periodic cfg ipMap) $ \_ -> withAsync (notifyStart set) $ \_ -> race
+            (takeMVar chan)
             $ runTLS
                 (defaultTlsSettings { tlsCredentials = Just (Credentials [ cets ]) })
                 (setPort port defaultSettings)
