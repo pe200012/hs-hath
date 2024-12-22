@@ -150,7 +150,7 @@ instance MimeRender SpeedTest ByteString where
     mimeRender _ = LBS.fromStrict
 
 instance Accept SpeedTest where
-    contentType _ = "text/html; charset=iso-8859-1"
+    contentType _ = "text/html, image/gif, image/jpeg, *; q=.2, */*; q=.2"
 
 -- floskell-disable
 -- API type definitions

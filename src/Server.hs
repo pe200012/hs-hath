@@ -61,7 +61,8 @@ import           Network.Wai                          ( Middleware
                                                       )
 import qualified Network.Wai.Handler.Warp             as Warp
 import           Network.Wai.Handler.Warp             ( defaultSettings, setPort )
-import           Network.Wai.Handler.WarpTLS          ( TLSSettings(..)
+import           Network.Wai.Handler.WarpTLS          ( OnInsecure(AllowInsecure)
+                                                      , TLSSettings(..)
                                                       , defaultTlsSettings
                                                       , runTLS
                                                       )
@@ -160,7 +161,7 @@ checkRateLimit ipMap ip now = atomically $ do
 
     -- Check if requests are within rate limit window and update accordingly
     checkAndUpdateRequests record = do
-        let windowStart    = addUTCTime (-timeWindow) now  -- 10 second window
+        let windowStart    = addUTCTime (-timeWindow) now
             recentRequests = filter (> windowStart) (requestTimes record)
             newRequests    = now : recentRequests
 
@@ -373,7 +374,8 @@ periodic config ipMap = forever $ do
     threadDelay (1000000 * 60)
 
 notifyStart :: ClientConfig -> HathSettings -> IO ()
-notifyStart config _ = psi
+-- notifyStart config _ = psi
+notifyStart config _ = pure ()
   where
     psi = do
         putStrLn "Trying to notify start..."
@@ -385,14 +387,11 @@ notifyStart config _ = psi
                 psi
 
 -- Create the WAI application with rate limiting
-makeApplication :: ClientConfig
-                -> HathSettings
-                -> MVar ServerAction
-                -> TVar IPMap
-                -> Connection
-                -> IO Application
-makeApplication config settings action ipMap conn = do
-    pure $ rateLimitMiddleware ipMap $ serve api (hoistServer api interpretServer server)
+makeApplication
+    :: ClientConfig -> HathSettings -> MVar ServerAction -> TVar IPMap -> Connection -> Application
+makeApplication config settings action ipMap conn
+    -- = rateLimitMiddleware ipMap $ serve api (hoistServer api interpretServer server)
+    = serve api (hoistServer api interpretServer server)
   where
     interpretServer :: Sem _ a -> Handler a
     interpretServer
@@ -441,11 +440,12 @@ startServer config settings certs chan port = do
 
     loop cfg set cets conn = do
         ipMap <- newTVarIO Map.empty
-        app <- makeApplication cfg set chan ipMap conn
+        let app = makeApplication cfg set chan ipMap conn
         result <- withAsync (periodic cfg ipMap) $ \_ -> withAsync (notifyStart cfg set)
             $ \_ -> race (takeMVar chan)
             $ runTLS
-                (defaultTlsSettings { tlsCredentials = Just (Credentials [ cets ]) })
+                (defaultTlsSettings
+                 { tlsCredentials = Just (Credentials [ cets ]), onInsecure = AllowInsecure })
                 (setPort port defaultSettings)
             $ logStdoutDev
             $ logStdout app

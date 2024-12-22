@@ -17,4 +17,4 @@ tcpBufferSize :: Int
 tcpBufferSize = 1460
 
 preallocated :: ByteString
-preallocated = BS.pack (replicate tcpBufferSize 0xFF)
+preallocated = BS.pack (replicate tcpBufferSize 54)
