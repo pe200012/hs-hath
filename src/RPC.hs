@@ -62,8 +62,8 @@ runRPC :: forall a r. Members '[ Embed IO, Error RPCError, Reader ClientConfig, 
 runRPC = interpret $ \case
     ServerStat -> checkServerStatus
     StillAlive -> heartbeat
-    ClientStart -> startListening
-    ClientStop -> stopListening
+    ClientStart -> void startListening
+    ClientStop -> void stopListening
     ClientLogin -> login
     CheckGalleryTask -> nextGalleryTask
     NotifyGalleryCompletion metadata -> completeGalleryTask metadata

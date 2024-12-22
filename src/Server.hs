@@ -97,6 +97,9 @@ maxTimeDrift :: Int64
 maxTimeDrift = 300
 
 data ServerAction = Reload | Cert | Settings | GracefulShutdown
+    deriving ( Show )
+
+instance Exception ServerAction
 
 -- Data types for tracking requests
 data IPRecord

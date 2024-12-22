@@ -6,7 +6,7 @@ import           RPC
 
 import           Relude              hiding ( runReader )
 
-import           Server              ( startServer )
+import           Server              ( ServerAction(GracefulShutdown), startServer )
 
 import           System.Posix        ( Handler(Catch), installHandler, sigINT, sigTERM )
 

@@ -93,6 +93,7 @@ import           Types                    ( ClientConfig
                                           , HathSettings
                                           , MkClientConfig(..)
                                           , RPCError(CertificateFailure)
+                                          , RPCResponse(statusCode)
                                           , emptyMetadata
                                           , hentaiHeader
                                           , parseMetadata
@@ -285,11 +286,19 @@ checkServerStatus = do
 heartbeat :: Member EHentaiAPI r => Sem r ()
 heartbeat = void $ ehRPC emptyRPCParams { act = Just "still_alive" }
 
-startListening :: Member EHentaiAPI r => Sem r ()
-startListening = void $ ehRPC emptyRPCParams { act = Just "client_start" }
+startListening :: Member EHentaiAPI r => Sem r Bool
+startListening = do
+    res <- ehRPC emptyRPCParams { act = Just "client_start" }
+    case parseRPCResponse res of
+        Left _  -> return False
+        Right x -> return $ statusCode x == "OK"
 
-stopListening :: Member EHentaiAPI r => Sem r ()
-stopListening = void $ ehRPC emptyRPCParams { act = Just "client_stop" }
+stopListening :: Member EHentaiAPI r => Sem r Bool
+stopListening = do
+    res <- ehRPC emptyRPCParams { act = Just "client_stop" }
+    case parseRPCResponse res of
+        Left _  -> return False
+        Right x -> return $ statusCode x == "OK"
 
 login :: Members '[ EHentaiAPI, Error RPCError ] r => Sem r HathSettings
 login = do

@@ -7,7 +7,6 @@ module Types
       MkClientProxy(..)
     , MkClientConfig(..)
     , GalleryMetadata(..)
-    , HathException(..)
     , HathSettings(..)
     , GalleryFile(..)
     , RPCError(..)
@@ -62,11 +61,6 @@ hentaiHeader
       , ( "Server", "Genetic Lifeform and Distributed Open Server 1.6.4" )
       , ( "X-Content-Type-Options", "nosniff" )
       ]
-
-data HathException = GracefulShutdown | UnrecoverableError SomeException | HotReload
-    deriving ( Show )
-
-instance Exception HathException
 
 data MkClientProxy t
     = MkClientProxy
