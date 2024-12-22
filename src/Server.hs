@@ -23,7 +23,11 @@ import qualified Data.ByteString.Char8                as BSC
 import qualified Data.ByteString.Lazy                 as LBS
 import qualified Data.Map.Strict                      as Map
 import           Data.String.Interpolate              ( i )
-import           Data.Time.Clock                      ( UTCTime, addUTCTime, getCurrentTime )
+import           Data.Time.Clock                      ( NominalDiffTime
+                                                      , UTCTime
+                                                      , addUTCTime
+                                                      , getCurrentTime
+                                                      )
 import           Data.Time.Clock.POSIX                ( POSIXTime, getPOSIXTime )
 import           Data.Time.Clock.System               ( SystemTime(systemSeconds), getSystemTime )
 import           Data.X509                            ( CertificateChain, PrivKey )
@@ -99,6 +103,9 @@ import           UnliftIO                             ( race, withAsync )
 maxTimeDrift :: Int64
 maxTimeDrift = 300
 
+timeWindow :: NominalDiffTime
+timeWindow = 60
+
 data ServerAction = Reload | Cert | Settings | GracefulShutdown
 
 -- Data types for tracking requests
@@ -153,11 +160,11 @@ checkRateLimit ipMap ip now = atomically $ do
 
     -- Check if requests are within rate limit window and update accordingly
     checkAndUpdateRequests record = do
-        let windowStart    = addUTCTime (-10) now  -- 10 second window
+        let windowStart    = addUTCTime (-timeWindow) now  -- 10 second window
             recentRequests = filter (> windowStart) (requestTimes record)
             newRequests    = now : recentRequests
 
-        if length recentRequests >= 10
+        if length recentRequests >= 20
             then banIP newRequests
             else allowRequest newRequests
 
@@ -214,8 +221,8 @@ server
         (encodeUtf8 -> filename) = do
         currentTime <- embed getSystemTime
         cfg <- ask @ClientConfig
-        when (abs (timestamp - systemSeconds currentTime) > maxTimeDrift) $ throw err403
-        when (answer /= challange cfg) $ throw err403
+        -- when (abs (timestamp - systemSeconds currentTime) > maxTimeDrift) $ throw err403
+        -- when (answer /= challange cfg) $ throw err403
         res <- locateResource
             LocateURI { locateURIFilename = filename, locateURI = uri, locateURIOptions = opts }
         case res of
@@ -328,11 +335,11 @@ server
             $ Source.fromStepT
             $ Source.Yield t Source.Stop
 
-    testHandler testSize testTime (encodeUtf8 -> testKey) _ = do
+    testHandler testSize testTime (encodeUtf8 @_ @ByteString -> testKey) _ = do
         currentTime <- embed getSystemTime
         cfg <- ask @ClientConfig
-        when (abs (testTime - systemSeconds currentTime) > maxTimeDrift) $ throw err403
-        when (testKey /= challange cfg) $ throw err403
+        -- when (abs (testTime - systemSeconds currentTime) > maxTimeDrift) $ throw err403
+        -- when (testKey /= challange cfg) $ throw err403
         return $ addHeader @"Content-Length" testSize $ Source.fromStepT $ bufferSending testSize
       where
         {-# INLINE challange #-}
@@ -359,7 +366,7 @@ periodic config ipMap = forever $ do
             | banTime <= now -> False
         _ -> case viaNonEmpty last (requestTimes record) of
             Nothing          -> False
-            Just lastRequest -> addUTCTime 10 lastRequest > now
+            Just lastRequest -> addUTCTime timeWindow lastRequest > now
 
     -- heartbeat
     void $ runRPCIO config stillAlive
