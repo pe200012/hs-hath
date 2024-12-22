@@ -3,13 +3,15 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Server ( startServer ) where
+module Server ( startServer, ServerAction(..) ) where
 
 import           API                                  ( API
                                                       , ServerCommand(..)
                                                       , WithDynamicContentType(WithDynamicContentType)
                                                       , api
                                                       , runEHentaiAPI
+                                                      , runEHentaiAPIIO
+                                                      , stopListening
                                                       )
 
 import           Control.Concurrent                   ( forkIO, threadDelay )
@@ -94,7 +96,7 @@ import           UnliftIO                             ( race )
 maxTimeDrift :: Int64
 maxTimeDrift = 300
 
-data ServerAction = Reload | Cert | Settings
+data ServerAction = Reload | Cert | Settings | GracefulShutdown
 
 -- Data types for tracking requests
 data IPRecord
@@ -383,12 +385,16 @@ makeApplication config settings action conn = do
         . runLocate
         . runRPC
 
-startServer :: ClientConfig -> HathSettings -> ( CertificateChain, PrivKey ) -> Int -> IO ()
-startServer config settings certs port = do
-    chan <- newEmptyMVar
+startServer :: ClientConfig
+            -> HathSettings
+            -> ( CertificateChain, PrivKey )
+            -> MVar ServerAction
+            -> Int
+            -> IO ()
+startServer config settings certs chan port = do
     withConnection "./cache.db" $ \conn -> do
         initializeDB conn
-        loop config settings chan certs conn
+        loop config settings certs conn
   where
     refreshSettings (retries :: Int) = runGenesisIO config fetchSettings >>= \case
         Right (Right newSetings) -> return newSetings
@@ -406,7 +412,7 @@ startServer config settings certs port = do
             threadDelay (1000000 * 2 ^ retries)
             refreshCerts (retries + 1)
 
-    loop cfg set chan cets conn = do
+    loop cfg set cets conn = do
         app <- makeApplication cfg set chan conn
         result <- race (takeMVar chan)
             $ runTLS
@@ -415,11 +421,14 @@ startServer config settings certs port = do
             $ logStdoutDev
             $ logStdout app
         case result of
-            Left Reload   -> exitSuccess
-            Left Cert     -> do
+            Left GracefulShutdown -> do
+                void $ runEHentaiAPIIO cfg stopListening
+                exitSuccess
+            Left Reload -> exitSuccess
+            Left Cert -> do
                 newCerts <- refreshCerts 0
-                loop cfg set chan newCerts conn
+                loop cfg set newCerts conn
             Left Settings -> do
                 newSettings <- refreshSettings 0
-                loop cfg newSettings chan cets conn
-            Right _       -> error "Server terminated unexpectedly"
+                loop cfg newSettings certs conn
+            Right _ -> error "Server terminated unexpectedly"

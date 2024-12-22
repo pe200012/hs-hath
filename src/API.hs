@@ -30,6 +30,7 @@ module API
     , downloadGalleryFile
     , reportFailures
     , fetchResource
+    , runEHentaiAPIIO
     ) where
 
 import           Crypto.Store.PKCS12      ( readP12FileFromMemory
@@ -59,8 +60,8 @@ import           Network.HTTP.Client      ( Request(responseTimeout, host, reque
 import           Network.HTTP.Simple      ( httpLbs )
 
 import           Polysemy
-import           Polysemy.Error           ( Error, throw )
-import           Polysemy.Reader          ( Reader, ask )
+import           Polysemy.Error           ( Error, errorToIOFinal, throw )
+import           Polysemy.Reader          ( Reader, ask, runReader )
 import           Polysemy.State           ( State, modify, runState )
 
 import           Relude                   hiding ( Reader
@@ -224,6 +225,13 @@ data EHentaiAPI m a where
     EhGallery :: RPCParams -> EHentaiAPI m ByteString
 
 makeSem ''EHentaiAPI
+
+runEHentaiAPIIO
+    :: ClientConfig
+    -> Sem '[ EHentaiAPI, Reader ClientConfig, Error ClientError, Embed IO, Final IO ] a
+    -> IO (Either ClientError a)
+runEHentaiAPIIO cfg
+    = runFinal . embedToFinal . errorToIOFinal @ClientError . runReader cfg . runEHentaiAPI
 
 runEHentaiAPI :: forall a r. Members '[ Embed IO, Error ClientError, Reader ClientConfig ] r
               => Sem (EHentaiAPI ': r) a
