@@ -366,21 +366,9 @@ periodic config ipMap = forever $ do
     threadDelay (1000000 * 60)
 
 notifyStart :: ClientConfig -> HathSettings -> IO ()
-notifyStart config settings = do
-    mgr <- newManager tlsManagerSettings
-    phi mgr
-    psi
+notifyStart config _ = psi
   where
-    phi mgr = do
-        putStrLn "Starting server..."
-        req <- parseRequest $ "https://localhost:" <> show (clientPort settings) <> "/robots.txt"
-        res <- httpLbs req mgr
-        unless (responseBody res == "User-agent: *\nDisallow: /") $ do
-            putStrLn "Server is not ready yet"
-            threadDelay 1000000
-            phi mgr
-
-    psi     = do
+    psi = do
         putStrLn "Trying to notify start..."
         runRPCIO config startListening >>= \case
             Right (Right True) -> return ()
