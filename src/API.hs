@@ -298,7 +298,7 @@ stopListening = do
     res <- ehRPC emptyRPCParams { act = Just "client_stop" }
     case parseRPCResponse res of
         Left _  -> return False
-        Right x -> return $ statusCode x == "OK"
+        Right _ -> return True
 
 login :: Members '[ EHentaiAPI, Error RPCError ] r => Sem r HathSettings
 login = do
