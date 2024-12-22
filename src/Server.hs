@@ -377,8 +377,7 @@ periodic config ipMap = forever $ do
     threadDelay (1000000 * 60)
 
 notifyStart :: ClientConfig -> HathSettings -> IO ()
--- notifyStart config _ = psi
-notifyStart config _ = pure ()
+notifyStart config _ = psi
   where
     psi = do
         putStrLn "Trying to notify start..."
@@ -451,8 +450,7 @@ startServer config settings certs chan port = do
                  { tlsCredentials = Just (Credentials [ cets ]), onInsecure = AllowInsecure })
                 (setPort port defaultSettings)
             $ logStdoutDev
-            $ logStdout
-            $ app
+            $ logStdout app
         case result of
             Left GracefulShutdown -> do
                 let phi = flip unless phi . fromRight False =<< runEHentaiAPIIO cfg stopListening
@@ -468,7 +466,7 @@ startServer config settings certs chan port = do
             Right _ -> error "Server terminated unexpectedly"
 
 normalizeAcceptMiddleware :: Middleware
-normalizeAcceptMiddleware app req = app (traceShowId (req { requestHeaders = normalizedHeaders }))
+normalizeAcceptMiddleware app req = app req { requestHeaders = normalizedHeaders }
   where
     normalizedHeaders = map normalizeHeader (requestHeaders req)
 
