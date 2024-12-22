@@ -41,9 +41,9 @@ data RPC m a where
     -- | Heartbeat
     StillAlive :: RPC m ()
     -- | Notify server that client is ready to start a session
-    ClientStart :: RPC m ()
+    ClientStart :: RPC m Bool
     -- | Notify server that client is stopping a session
-    ClientStop :: RPC m ()
+    ClientStop :: RPC m Bool
     -- | Login to remote server
     ClientLogin :: RPC m HathSettings
     -- | Check if there is a gallery task to download
@@ -62,8 +62,8 @@ runRPC :: forall a r. Members '[ Embed IO, Error RPCError, Reader ClientConfig, 
 runRPC = interpret $ \case
     ServerStat -> checkServerStatus
     StillAlive -> heartbeat
-    ClientStart -> void startListening
-    ClientStop -> void stopListening
+    ClientStart -> startListening
+    ClientStop -> stopListening
     ClientLogin -> login
     CheckGalleryTask -> nextGalleryTask
     NotifyGalleryCompletion metadata -> completeGalleryTask metadata

@@ -14,7 +14,7 @@ import           API                                  ( API
                                                       , stopListening
                                                       )
 
-import           Control.Concurrent                   ( forkIO, threadDelay )
+import           Control.Concurrent                   ( ThreadId, forkIO, threadDelay, throwTo )
 import           Control.Exception                    ( try )
 
 import qualified Data.ByteString                      as BS
@@ -97,9 +97,6 @@ maxTimeDrift :: Int64
 maxTimeDrift = 300
 
 data ServerAction = Reload | Cert | Settings | GracefulShutdown
-    deriving ( Show )
-
-instance Exception ServerAction
 
 -- Data types for tracking requests
 data IPRecord
@@ -425,7 +422,8 @@ startServer config settings certs chan port = do
             $ logStdout app
         case result of
             Left GracefulShutdown -> do
-                void $ runEHentaiAPIIO cfg stopListening
+                let phi = flip unless phi . fromRight False =<< runEHentaiAPIIO cfg stopListening
+                phi
                 exitSuccess
             Left Reload -> exitSuccess
             Left Cert -> do

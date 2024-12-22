@@ -18,15 +18,8 @@ main :: IO ()
 main = do
     config <- readClientConfig "./client-login"
     chan <- newEmptyMVar
-    myId <- myThreadId
-    void $ installHandler sigINT (Catch $ do
-                                      putMVar chan GracefulShutdown
-                                      threadDelay 1000000
-                                      throwTo myId GracefulShutdown) Nothing
-    void $ installHandler sigTERM (Catch $ do
-                                       putMVar chan GracefulShutdown
-                                       threadDelay 1000000
-                                       throwTo myId GracefulShutdown) Nothing
+    void $ installHandler sigINT (Catch $ putMVar chan GracefulShutdown) Nothing
+    void $ installHandler sigTERM (Catch $ putMVar chan GracefulShutdown) Nothing
     runRPCIO config serverStat >>= \case
         Right (Right True) -> runRPCIO config clientLogin >>= \case
             Right (Right settings) -> runGenesisIO config fetchCertificate >>= \case
