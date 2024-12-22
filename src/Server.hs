@@ -58,6 +58,7 @@ import           Network.TLS                          ( Credentials(Credentials)
 import           Network.Wai                          ( Middleware
                                                       , Request(requestMethod)
                                                       , Response
+                                                      , rawPathInfo
                                                       , remoteHost
                                                       , requestHeaders
                                                       , responseLBS
@@ -108,7 +109,10 @@ maxTimeDrift :: Int64
 maxTimeDrift = 300
 
 timeWindow :: NominalDiffTime
-timeWindow = 60
+timeWindow = 10
+
+maxRequests :: Int
+maxRequests = 5
 
 data ServerAction = Reload | Cert | Settings | GracefulShutdown
 
@@ -134,16 +138,18 @@ getIP _ = Nothing
 
 -- Create a new rate limiting middleware
 rateLimitMiddleware :: TVar IPMap -> Middleware
-rateLimitMiddleware ipMap app req k = do
-    now <- getCurrentTime
-    let sockAddr = remoteHost req
-    case getIP sockAddr of
-        Nothing -> app req k  -- If we can't get IP, just allow the request
-        Just ip -> do
-            allowed <- checkRateLimit ipMap ip now
-            if allowed
-                then app req k
-                else k tooManyRequestsResponse
+rateLimitMiddleware ipMap app req k
+    | "/h/" `BS.isPrefixOf` rawPathInfo req = do
+        now <- getCurrentTime
+        let sockAddr = remoteHost req
+        case getIP sockAddr of
+            Nothing -> app req k  -- If we can't get IP, just allow the request
+            Just ip -> do
+                allowed <- checkRateLimit ipMap ip now
+                if allowed
+                    then app req k
+                    else k tooManyRequestsResponse
+    | otherwise = app req k  -- Skip rate limiting for non-resource paths
 
 -- Check if request is allowed and update rate limit state
 checkRateLimit :: TVar IPMap -> IP -> UTCTime -> IO Bool
@@ -168,7 +174,7 @@ checkRateLimit ipMap ip now = atomically $ do
             recentRequests = filter (> windowStart) (requestTimes record)
             newRequests    = now : recentRequests
 
-        if length recentRequests >= 20
+        if length recentRequests >= maxRequests
             then banIP newRequests
             else allowRequest newRequests
 
@@ -214,8 +220,8 @@ server
   where
     rootHandler = return NoContent
 
-    faviconHandler = do
-        throw $ err301 { errHeaders = [ ( "Location", "https://e-hentai.org/favicon.ico" ) ] }
+    faviconHandler
+        = throw $ err301 { errHeaders = [ ( "Location", "https://e-hentai.org/favicon.ico" ) ] }
 
     robotsHandler = return "User-agent: *\nDisallow: /"
 
@@ -392,8 +398,9 @@ notifyStart config _ = psi
 makeApplication
     :: ClientConfig -> HathSettings -> MVar ServerAction -> TVar IPMap -> Connection -> Application
 makeApplication config settings action ipMap conn
-    -- = rateLimitMiddleware ipMap $ serve api (hoistServer api interpretServer server)
-    = normalizeAcceptMiddleware $ serve api (hoistServer api interpretServer server)
+    = rateLimitMiddleware ipMap
+    $ normalizeAcceptMiddleware
+    $ serve api (hoistServer api interpretServer server)
   where
     interpretServer :: Sem _ a -> Handler a
     interpretServer
@@ -466,7 +473,7 @@ startServer config settings certs chan port = do
             Right _ -> error "Server terminated unexpectedly"
 
 normalizeAcceptMiddleware :: Middleware
-normalizeAcceptMiddleware app req = app req { requestHeaders = normalizedHeaders }
+normalizeAcceptMiddleware app req = app (traceShowId (req { requestHeaders = normalizedHeaders }))
   where
     normalizedHeaders = map normalizeHeader (requestHeaders req)
 
