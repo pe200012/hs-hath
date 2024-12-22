@@ -70,7 +70,7 @@ import           Polysemy                             ( Embed
 import           Polysemy.Error                       ( Error, errorToIOFinal, mapError, throw )
 import           Polysemy.Reader                      ( Reader, ask, runReader )
 
-import           RPC                                  ( RPC, runRPC )
+import           RPC                                  ( RPC, runRPC, runRPCIO, stillAlive )
 
 import           Relude                               hiding ( Reader, ask, get, runReader )
 
@@ -154,7 +154,7 @@ checkRateLimit ipMap ip now = atomically $ do
             recentRequests = filter (> windowStart) (requestTimes record)
             newRequests    = now : recentRequests
 
-        if length recentRequests >= 4
+        if length recentRequests >= 10
             then banIP newRequests
             else allowRequest newRequests
 
@@ -364,6 +364,11 @@ makeApplication config settings action conn = do
             _ -> case viaNonEmpty last (requestTimes record) of
                 Nothing          -> False
                 Just lastRequest -> addUTCTime 10 lastRequest > now
+
+    -- heartbeat
+    void $ forkIO $ forever $ do
+        threadDelay (1000000 * 30)
+        void $ runRPCIO config stillAlive
 
     pure $ rateLimitMiddleware ipMap $ serve api (hoistServer api interpretServer server)
   where
