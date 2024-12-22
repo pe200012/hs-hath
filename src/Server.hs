@@ -91,7 +91,7 @@ import           Types                                ( ClientConfig
 
 import           URLParam                             ( lookupParam, parseURLParams )
 
-import           UnliftIO                             ( race )
+import           UnliftIO                             ( race, withAsync )
 
 maxTimeDrift :: Int64
 maxTimeDrift = 300
@@ -348,28 +348,28 @@ server
 
     status444 = mkStatus 444 "No Response"
 
--- Create the WAI application with rate limiting
-makeApplication
-    :: ClientConfig -> HathSettings -> MVar ServerAction -> Connection -> IO Application
-makeApplication config settings action conn = do
-    ipMap <- newTVarIO Map.empty
-
-    -- Start cleanup thread
-    void $ forkIO $ forever $ do
-        threadDelay (60 * 1000000)
-        now <- getCurrentTime
-        atomically $ modifyTVar' ipMap $ Map.filter $ \record -> case bannedUntil record of
-            Just banTime
-                | banTime <= now -> False
-            _ -> case viaNonEmpty last (requestTimes record) of
-                Nothing          -> False
-                Just lastRequest -> addUTCTime 10 lastRequest > now
+periodic config ipMap = forever $ do
+    -- ipmap cleanup
+    now <- getCurrentTime
+    atomically $ modifyTVar' ipMap $ Map.filter $ \record -> case bannedUntil record of
+        Just banTime
+            | banTime <= now -> False
+        _ -> case viaNonEmpty last (requestTimes record) of
+            Nothing          -> False
+            Just lastRequest -> addUTCTime 10 lastRequest > now
 
     -- heartbeat
-    void $ forkIO $ forever $ do
-        threadDelay (1000000 * 30)
-        void $ runRPCIO config stillAlive
+    void $ runRPCIO config stillAlive
+    threadDelay (1000000 * 60)
 
+-- Create the WAI application with rate limiting
+makeApplication :: ClientConfig
+                -> HathSettings
+                -> MVar ServerAction
+                -> TVar IPMap
+                -> Connection
+                -> IO Application
+makeApplication config settings action ipMap conn = do
     pure $ rateLimitMiddleware ipMap $ serve api (hoistServer api interpretServer server)
   where
     interpretServer :: Sem _ a -> Handler a
@@ -418,8 +418,9 @@ startServer config settings certs chan port = do
             refreshCerts (retries + 1)
 
     loop cfg set cets conn = do
-        app <- makeApplication cfg set chan conn
-        result <- race (takeMVar chan)
+        ipMap <- newTVarIO Map.empty
+        app <- makeApplication cfg set chan ipMap conn
+        result <- withAsync (periodic cfg ipMap) $ \_ -> race (takeMVar chan)
             $ runTLS
                 (defaultTlsSettings { tlsCredentials = Just (Credentials [ cets ]) })
                 (setPort port defaultSettings)
