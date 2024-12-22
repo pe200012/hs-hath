@@ -75,6 +75,7 @@ library
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-conduit ==2.3.*
+    , http-media ==0.8.*
     , http-types ==0.12.*
     , memory ==0.18.*
     , monad-control ==1.0.*
@@ -149,6 +150,7 @@ executable hs-hath
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-conduit ==2.3.*
+    , http-media ==0.8.*
     , http-types ==0.12.*
     , memory ==0.18.*
     , monad-control ==1.0.*
@@ -225,6 +227,7 @@ test-suite hs-hath-test
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-conduit ==2.3.*
+    , http-media ==0.8.*
     , http-types ==0.12.*
     , memory ==0.18.*
     , monad-control ==1.0.*

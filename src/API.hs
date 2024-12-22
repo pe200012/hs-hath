@@ -57,6 +57,7 @@ import           Network.HTTP.Client      ( Request(responseTimeout, host, reque
                                           , parseRequest
                                           , responseTimeoutMicro
                                           )
+import           Network.HTTP.Media       ( (//), (/:) )
 import           Network.HTTP.Simple      ( httpLbs )
 
 import           Polysemy
@@ -150,7 +151,9 @@ instance MimeRender SpeedTest ByteString where
     mimeRender _ = LBS.fromStrict
 
 instance Accept SpeedTest where
-    contentType _ = "text/html, image/gif, image/jpeg, *; q=.2, */*; q=.2"
+    contentTypes _
+        = "text" // "html" /: ( "charset", "iso-8859-1" )
+        :| [ "image" // "gif", "image" // "jpeg", "*" // "*" /: ( "q", ".2" ) ]
 
 -- floskell-disable
 -- API type definitions

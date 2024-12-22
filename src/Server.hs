@@ -21,6 +21,8 @@ import           Control.Exception                    ( try )
 import qualified Data.ByteString                      as BS
 import qualified Data.ByteString.Char8                as BSC
 import qualified Data.ByteString.Lazy                 as LBS
+import           Data.Char                            ( isDigit, isSpace )
+import           Data.List                            ( nub )
 import qualified Data.Map.Strict                      as Map
 import           Data.String.Interpolate              ( i )
 import           Data.Time.Clock                      ( NominalDiffTime
@@ -50,13 +52,14 @@ import           Network.HTTP.Client                  ( brReadSome
                                                       )
 import           Network.HTTP.Client.TLS              ( tlsManagerSettings )
 import           Network.HTTP.Simple                  ( getResponseBody )
-import           Network.HTTP.Types                   ( mkStatus, status200 )
+import           Network.HTTP.Types                   ( hAccept, mkStatus, status200 )
 import           Network.Socket                       ( HostAddress, HostAddress6, SockAddr(..) )
 import           Network.TLS                          ( Credentials(Credentials) )
 import           Network.Wai                          ( Middleware
                                                       , Request(requestMethod)
                                                       , Response
                                                       , remoteHost
+                                                      , requestHeaders
                                                       , responseLBS
                                                       )
 import qualified Network.Wai.Handler.Warp             as Warp
@@ -391,7 +394,7 @@ makeApplication
     :: ClientConfig -> HathSettings -> MVar ServerAction -> TVar IPMap -> Connection -> Application
 makeApplication config settings action ipMap conn
     -- = rateLimitMiddleware ipMap $ serve api (hoistServer api interpretServer server)
-    = serve api (hoistServer api interpretServer server)
+    = normalizeAcceptMiddleware $ serve api (hoistServer api interpretServer server)
   where
     interpretServer :: Sem _ a -> Handler a
     interpretServer
@@ -448,7 +451,8 @@ startServer config settings certs chan port = do
                  { tlsCredentials = Just (Credentials [ cets ]), onInsecure = AllowInsecure })
                 (setPort port defaultSettings)
             $ logStdoutDev
-            $ logStdout app
+            $ logStdout
+            $ app
         case result of
             Left GracefulShutdown -> do
                 let phi = flip unless phi . fromRight False =<< runEHentaiAPIIO cfg stopListening
@@ -462,3 +466,31 @@ startServer config settings certs chan port = do
                 newSettings <- refreshSettings 0
                 loop cfg newSettings certs conn
             Right _ -> error "Server terminated unexpectedly"
+
+normalizeAcceptMiddleware :: Middleware
+normalizeAcceptMiddleware app req = app (traceShowId (req { requestHeaders = normalizedHeaders }))
+  where
+    normalizedHeaders = map normalizeHeader (requestHeaders req)
+
+    normalizeHeader ( name, value )
+        | name == hAccept = ( name, normalizeAcceptHeader value )
+        | otherwise = ( name, value )
+
+    normalizeAcceptHeader
+        = BSC.intercalate ", " . nub . map (normalizeQuality . normalizeAsterisk) . parseAccept
+
+    parseAccept = BSC.split ',' . BSC.filter (not . isSpace)
+
+    normalizeAsterisk t = case BSC.stripPrefix "*" t of
+        Nothing -> t
+        Just t' -> case BSC.stripPrefix "/*" t' of
+            Just _  -> t
+            Nothing -> "*/*" <> t'
+
+    normalizeQuality mediaType = case BSC.split ';' mediaType of
+        [ t ]    -> t  -- No q parameter
+        [ t, q ] -> case BSC.stripPrefix "q=." q of
+            Just rest
+                | BSC.all isDigit rest -> t <> ";q=0." <> rest  -- Fix q=.x format
+            _         -> t <> ";" <> q  -- Keep other q values as is
+        _        -> mediaType  -- Unexpected format, leave it unchanged
