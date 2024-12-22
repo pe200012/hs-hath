@@ -11,6 +11,7 @@ import           API                                  ( API
                                                       , api
                                                       , runEHentaiAPI
                                                       , runEHentaiAPIIO
+                                                      , startListening
                                                       , stopListening
                                                       )
 
@@ -364,19 +365,29 @@ periodic config ipMap = forever $ do
     void $ runRPCIO config stillAlive
     threadDelay (1000000 * 60)
 
-notifyStart :: HathSettings -> IO ()
-notifyStart settings = do
+notifyStart :: ClientConfig -> HathSettings -> IO ()
+notifyStart config settings = do
     mgr <- newManager tlsManagerSettings
-    putStrLn "Starting server..."
     phi mgr
+    psi
   where
     phi mgr = do
+        putStrLn "Starting server..."
         req <- parseRequest $ "https://localhost:" <> show (clientPort settings) <> "/robots.txt"
         res <- httpLbs req mgr
         unless (responseBody res == "User-agent: *\nDisallow: /") $ do
             putStrLn "Server is not ready yet"
             threadDelay 1000000
             phi mgr
+
+    psi     = do
+        putStrLn "Trying to notify start..."
+        runRPCIO config startListening >>= \case
+            Right (Right True) -> return ()
+            e -> do
+                putStrLn $ "Failed to start listening: " <> show e
+                threadDelay 1000000
+                psi
 
 -- Create the WAI application with rate limiting
 makeApplication :: ClientConfig
@@ -436,8 +447,8 @@ startServer config settings certs chan port = do
     loop cfg set cets conn = do
         ipMap <- newTVarIO Map.empty
         app <- makeApplication cfg set chan ipMap conn
-        result <- withAsync (periodic cfg ipMap) $ \_ -> withAsync (notifyStart set) $ \_ -> race
-            (takeMVar chan)
+        result <- withAsync (periodic cfg ipMap) $ \_ -> withAsync (notifyStart cfg set)
+            $ \_ -> race (takeMVar chan)
             $ runTLS
                 (defaultTlsSettings { tlsCredentials = Just (Credentials [ cets ]) })
                 (setPort port defaultSettings)
