@@ -27,13 +27,16 @@ source-repository head
 
 library
   exposed-modules:
+      API
       Database
+      Genesis
+      Hash
+      Locate
       RPC
-      RPCAction
       Server
+      SpeedTest
       Types
       URLParam
-      Utils
   other-modules:
       Paths_hs_hath
   hs-source-dirs:
@@ -79,11 +82,16 @@ library
     , mtl ==2.3.*
     , network ==3.1.*
     , optparse-applicative ==0.18.*
+    , placeholder
     , polysemy >=1.9 && <2.0
     , polysemy-zoo ==0.8.*
+    , random ==1.2.*
     , relude ==1.2.*
     , safe-exceptions ==0.1.*
-    , scotty ==0.22.*
+    , servant >=0.20.2 && <0.21
+    , servant-client >=0.20.2 && <0.21
+    , servant-client-core >=0.20.2 && <0.21
+    , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , stm ==2.5.*
     , string-interpolate ==0.3.*
@@ -148,11 +156,16 @@ executable hs-hath
     , mtl ==2.3.*
     , network ==3.1.*
     , optparse-applicative ==0.18.*
+    , placeholder
     , polysemy >=1.9 && <2.0
     , polysemy-zoo ==0.8.*
+    , random ==1.2.*
     , relude ==1.2.*
     , safe-exceptions ==0.1.*
-    , scotty ==0.22.*
+    , servant >=0.20.2 && <0.21
+    , servant-client >=0.20.2 && <0.21
+    , servant-client-core >=0.20.2 && <0.21
+    , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , stm ==2.5.*
     , string-interpolate ==0.3.*
@@ -219,11 +232,16 @@ test-suite hs-hath-test
     , mtl ==2.3.*
     , network ==3.1.*
     , optparse-applicative ==0.18.*
+    , placeholder
     , polysemy >=1.9 && <2.0
     , polysemy-zoo ==0.8.*
+    , random ==1.2.*
     , relude ==1.2.*
     , safe-exceptions ==0.1.*
-    , scotty ==0.22.*
+    , servant >=0.20.2 && <0.21
+    , servant-client >=0.20.2 && <0.21
+    , servant-client-core >=0.20.2 && <0.21
+    , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , stm ==2.5.*
     , string-interpolate ==0.3.*

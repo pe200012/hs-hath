@@ -39,6 +39,10 @@ dependencies:
   - hex-text
   - safe-exceptions >= 0.1 && < 0.2
   - string-interpolate >= 0.3 && < 0.4
+  - servant >= 0.20.2 && < 0.21
+  - servant-server >= 0.20.2 && < 0.21
+  - servant-client >= 0.20.2 && < 0.21
+  - servant-client-core >= 0.20.2 && < 0.21
   - http-client >= 0.7 && < 0.8
   - http-client-tls >= 0.3 && < 0.4
   - http-conduit >= 2.3 && < 2.4
@@ -49,6 +53,7 @@ dependencies:
   - mtl >= 2.3 && < 2.4
   - memory >= 0.18 && < 0.19
   - optparse-applicative >= 0.18 && < 0.19
+  - placeholder
   - polysemy >= 1.9 && < 2.0
   - polysemy-zoo >= 0.8 && < 0.9
   - filepath >= 1.4 && < 1.5
@@ -58,7 +63,7 @@ dependencies:
   - tls >= 2.0 && < 2.1
   - tls-session-manager >= 0.0.5 && < 0.1
   - relude >= 1.2 && < 1.3
-  - scotty >= 0.22 && < 0.23
+  - random >= 1.2 && < 1.3
   - stm >= 2.5 && < 2.6
   - unix >= 2.8 && < 2.9
   - unliftio >= 0.2 && < 0.3

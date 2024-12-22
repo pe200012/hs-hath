@@ -33,6 +33,11 @@ extra-deps:
   - http-semantics-0.0.1
   - network-control-0.1.0
   - polysemy-zoo-0.8.2.0
+  - placeholder-0
+  - servant-0.20.2
+  - servant-client-0.20.2
+  - servant-client-core-0.20.2
+  - servant-server-0.20.2
 
 allow-newer: true
 allow-newer-deps:

@@ -207,6 +207,41 @@ packages:
       size: 2904
   original:
     hackage: polysemy-zoo-0.8.2.0
+- completed:
+    hackage: placeholder-0@sha256:dfb801d5121b8f277288b24b47a869f173f94323eb2e85c060ab6aa60fb61a6c,1270
+    pantry-tree:
+      sha256: e83adedb943563daf59925ebdd5ccea3660ef617fd754940fb30941bd3269f56
+      size: 330
+  original:
+    hackage: placeholder-0
+- completed:
+    hackage: servant-0.20.2@sha256:a4613dc1caa40d1b8db7aff00417dc2d651a8d73a90add3d934218b1778df35c,5371
+    pantry-tree:
+      sha256: 23364c969c171541475d270a7cf0d20ee59b4b88058deafef80b0070416670f0
+      size: 2944
+  original:
+    hackage: servant-0.20.2
+- completed:
+    hackage: servant-client-0.20.2@sha256:7c38f21ce3e22fa260cd9b944bb8b9b230e7e6cbc8e8b94a6d45780547dbaa4c,5611
+    pantry-tree:
+      sha256: cb8f81a513eb88381866793c7a3de862e4ffb0adbbc6700bb04ade43da0d19db
+      size: 1506
+  original:
+    hackage: servant-client-0.20.2
+- completed:
+    hackage: servant-client-core-0.20.2@sha256:665b1c2641f75f8e457e9f0d11ba12ea36409781b611c71dee3a4a80ea1bbb49,4411
+    pantry-tree:
+      sha256: f2b74dbbd660b3e254ff937d2624b2bec3988329c6a5b2c33ccea8cd7ea481de
+      size: 1446
+  original:
+    hackage: servant-client-core-0.20.2
+- completed:
+    hackage: servant-server-0.20.2@sha256:5a2d11959256fed8f4918f02f55cb597b61cc92191a672cd2d2228fadd5ee0ec,6226
+    pantry-tree:
+      sha256: 234c87e0a70ab6b15df75b526b344715584693be4a5c1b373ecfaaebc9c4127b
+      size: 2615
+  original:
+    hackage: servant-server-0.20.2
 snapshots:
 - completed:
     sha256: 87da71cb0ae9ee1ea1bf51a8eb9812f39f779be76abc0a3c926defd8afda05d1

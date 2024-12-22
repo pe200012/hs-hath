@@ -2,30 +2,21 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Database
-    ( FileRecord(..)
-    , Cache
-    , initializeDB
-    , runCachePure
-    , runCache
-    , lookupFile
-    , storeFile
-    ) where
+module Database ( FileRecord(..), initializeDB, runCache, runCachePure ) where
 
 import qualified Data.ByteString         as BS
-import qualified Data.List               as List
 import           Data.String.Interpolate ( i )
 
 import           Database.SQLite.Simple
 
 import           Polysemy
-import           Polysemy.Reader
-import           Polysemy.State
+import           Polysemy.KVStore        ( KVStore(..), runKVStorePurely )
 
-import           Relude                  hiding ( Reader, State, ask, evalState, get, modify )
+import           Relude                  hiding ( Reader, State, ask, evalState, get, modify, put )
+
+import           Types                   ( FileURI )
 
 data FileRecord
     = FileRecord { fileRecordLRUCounter :: {-# UNPACK #-} !Int64
@@ -40,18 +31,10 @@ instance FromRow FileRecord
 
 instance ToRow FileRecord
 
-data Cache m a where
-    -- | Lookup file by ID
-    LookupFile :: Text -> Cache m (Maybe FileRecord)
-    -- | Store a new file record
-    StoreFile :: FileRecord -> Cache m ()
-
-makeSem ''Cache
-
 -- | Initialize database with required schema
 initializeDB :: Connection -> IO ()
-initializeDB conn
-    = execute_
+initializeDB conn = do
+    execute_
         conn
         [i|CREATE TABLE IF NOT EXISTS files (
         lru_counter INTEGER NOT NULL DEFAULT 0,
@@ -60,22 +43,18 @@ initializeDB conn
         file_name TEXT,
         bytes BLOB NOT NULL
     ) strict|]
-
--- | Run the cache with a pure state
---
--- we forget about the LRU counter and filename here
-runCachePure :: [ ( Text, FileRecord ) ] -> Sem (Cache ': r) a -> Sem r a
-runCachePure records
-    = evalState records
-    . reinterpret (\case
-                       LookupFile fid   -> List.lookup fid <$> get
-                       StoreFile record -> modify (( fileRecordFileId record, record ) :))
+    execute_ conn "pragma journal_mode=WAL"
+    execute_ conn "pragma synchronous=normal"
+    execute_ conn "pragma temp_store=memory"
+    execute_ conn "pragma cache_size=100000"
+    execute_ conn "pragma mmap_size=65536"
 
 -- | Run the cache with SQLite
-runCache :: Members '[ Embed IO, Reader Connection ] r => Sem (Cache ': r) a -> Sem r a
-runCache = interpret $ \case
-    LookupFile fid   -> do
-        conn <- ask
+runCache
+    :: Members '[ Embed IO ] r => Connection -> Sem (KVStore FileURI FileRecord ': r) a -> Sem r a
+runCache conn = interpret $ \case
+    LookupKV uri -> do
+        let fid = show @Text uri
         embed
             $ execute
                 conn
@@ -88,8 +67,7 @@ runCache = interpret $ \case
                 (Only fid)
         return $ listToMaybe results
 
-    StoreFile record -> do
-        conn <- ask
+    UpdateKV _ (Just record) -> do
         embed
             $ execute
                 conn
@@ -97,3 +75,11 @@ runCache = interpret $ \case
                     (lru_counter, s4, file_id, file_name, bytes)
                     VALUES (?, ?, ?, ?, ?)|]
                 record
+
+    UpdateKV uri Nothing -> let
+        fid = show @ByteString uri
+        in 
+            embed $ execute conn "DELETE FROM files WHERE file_id = ?" (Only fid)
+
+runCachePure :: Map FileURI FileRecord -> Sem (KVStore FileURI FileRecord ': r) a -> Sem r a
+runCachePure initial = fmap snd . runKVStorePurely initial

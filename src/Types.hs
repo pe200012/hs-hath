@@ -10,42 +10,58 @@ module Types
     , HathException(..)
     , HathSettings(..)
     , GalleryFile(..)
-    , HathM(..)
-    , GlobalContext(..)
+    , RPCError(..)
     , ClientConfig
     , ClientProxy
     , FileURI(..)
+    , RPCResponse(..)
+      -- * Globals
+    , hentaiHeader
       -- * Default values
     , defaultHathSettings
+    , defaultClientConfig
+    , emptyFileURI
+    , emptyMetadata
       -- * Parsing
+    , parseSettings
     , parseMetadata
     , readClientConfig
-      -- * HathM handler
-    , runHath
+    , parseFileURI
+    , parseRPCResponse
+    , parseRPCResponse'
+      -- * Selectors
+    , getPayload
     ) where
 
-import           Colog                   ( HasLog(..), LogAction, Message, richMessageAction )
-
-import           Control.Monad.Catch     ( MonadThrow )
-
 import qualified Data.ByteString.Char8   as BS
-import qualified Data.ByteString.Lazy    as LBS
 import qualified Data.ByteString.Short   as SBS
+import qualified Data.HashSet            as HashSet
 import           Data.String.Interpolate ( i )
 import qualified Data.Text.Encoding      as TE
 import           Data.Tuple.Extra        ( both )
 
-import           Database.SQLite.Simple  ( Connection )
-
 import           Dhall                   ( FromDhall(..), ToDhall(..), auto, input )
 
-import           Network.TLS             ( Credential )
+import           Network.HTTP.Types      ( HeaderName )
+
+import           Polysemy                ( Member, Sem )
+import           Polysemy.Error          ( Error )
+import qualified Polysemy.Error          as Error
 
 import           Prelude                 ( show )
 
 import           Relude
 
-import           UnliftIO                ( MonadUnliftIO )
+{-# SPECIALISE hentaiHeader :: [ ( HeaderName, Text ) ] #-}
+{-# SPECIALISE hentaiHeader :: [ ( HeaderName, ByteString ) ] #-}
+hentaiHeader :: IsString a => [ ( HeaderName, a ) ]
+hentaiHeader
+    = [ ( "Connection", "close" )
+      , ( "User-Agent", "Hentai@Home 176" )
+      , ( "Cache-Control", "public, max-age=31536000" )
+      , ( "Server", "Genetic Lifeform and Distributed Open Server 1.6.4" )
+      , ( "X-Content-Type-Options", "nosniff" )
+      ]
 
 data HathException = GracefulShutdown | UnrecoverableError SomeException | HotReload
     deriving ( Show )
@@ -78,6 +94,11 @@ instance ToDhall t => ToDhall (MkClientConfig t)
 type ClientConfig = MkClientConfig ShortByteString
 
 type ClientProxy = MkClientProxy ShortByteString
+
+defaultClientConfig :: ClientConfig
+defaultClientConfig
+    = MkClientConfig
+    { clientId = "", key = "", version = "", proxy = Nothing, downloadDir = "", cachePath = "" }
 
 readClientConfig :: Text -> IO ClientConfig
 readClientConfig path = do
@@ -125,61 +146,21 @@ defaultHathSettings
     , staticRanges       = mempty
     }
 
-data GlobalContext m msg
-    = GlobalContext
-    { clientConfig    :: {-# UNPACK #-} !ClientConfig
-    , hathSettings    :: {-# UNPACK #-} !(IORef HathSettings)
-    , shutdownRequest :: {-# UNPACK #-} !(MVar HathException)
-    , logAction       :: !(LogAction m msg)
-    , database        :: {-# UNPACK #-} !Connection
-    , credential      :: {-# UNPACK #-} !(IORef Credential)
-    , galleryTask     :: {-# UNPACK #-} !(MVar ())
-    }
-
-instance HasLog (GlobalContext m msg) msg m where
-    getLogAction = logAction
-
-    {-# INLINE getLogAction #-}
-
-    setLogAction l s = s { logAction = l }
-
-    {-# INLINE setLogAction #-}
-
-instance Monad m => MonadReader (GlobalContext (HathM m) Message) (HathM m) where
-    ask = HathM ask
-
-    {-# INLINE ask #-}
-
-    local f (HathM m) = HathM (local f m)
-
-    {-# INLINE local #-}
-
-newtype HathM m a = HathM { runHathM :: ReaderT (GlobalContext (HathM m) Message) m a }
-    deriving newtype ( Functor, Applicative, Monad, MonadThrow, MonadIO, MonadUnliftIO )
-
-runHath :: MonadIO m
-        => ClientConfig
-        -> IORef HathSettings
-        -> Connection
-        -> MVar HathException
-        -> IORef Credential
-        -> MVar ()
-        -> HathM m a
-        -> m a
-runHath cfg hRef conn refreshCert credRef queue m = do
-    runReaderT
-        (runHathM m)
-        (GlobalContext
-         { clientConfig    = cfg
-         , hathSettings    = hRef
-         , shutdownRequest = refreshCert
-         , logAction       = richMessageAction
-         , database        = conn
-         , credential      = credRef
-         , galleryTask     = queue
-         })
-
-{-# INLINE runHath #-}
+parseSettings :: [ ByteString ] -> HathSettings
+parseSettings
+    = foldl' (\s kv -> let
+                  ( k, rest ) = BS.span (/= '=') kv
+                  v           = BS.drop 1 rest
+                  in 
+                      case ( k, readMaybe @Int64 (BS.unpack v) ) of
+                          ( "host", _ ) -> s { clientHost = SBS.toShort v }
+                          ( "port", Just p ) -> s { clientPort = fromIntegral p }
+                          ( "throttle_bytes", Just bytes ) -> s { throttleBytes = bytes }
+                          ( "disklimit_bytes", Just bytes ) -> s { diskLimitBytes = bytes }
+                          ( "diskremaining_bytes", Just bytes ) -> s { diskRemainingBytes = bytes }
+                          ( "static_ranges", _ ) -> s
+                              { staticRanges = HashSet.fromList (SBS.toShort <$> BS.split ';' v) }
+                          _ -> s) defaultHathSettings
 
 data GalleryFile
     = GalleryFile { galleryFilePage  :: {-# UNPACK #-} !Int
@@ -189,15 +170,16 @@ data GalleryFile
                   , galleryFileHash  :: {-# UNPACK #-} !ByteString
                   , galleryFileExt   :: {-# UNPACK #-} !ByteString
                   }
+    deriving ( Eq )
 
 data GalleryMetadata
-    = GalleryMetadata
-    { galleryID        :: {-# UNPACK #-} !Int
-    , galleryFileCount :: {-# UNPACK #-} !Int
-    , galleryMinXRes   :: {-# UNPACK #-} !ByteString
-    , galleryTitle     :: {-# UNPACK #-} !ByteString
-    , galleryFileList  :: {-# UNPACK #-} ![ GalleryFile ]
-    }
+    = GalleryMetadata { galleryID        :: {-# UNPACK #-} !Int
+                      , galleryFileCount :: {-# UNPACK #-} !Int
+                      , galleryMinXRes   :: {-# UNPACK #-} !ByteString
+                      , galleryTitle     :: {-# UNPACK #-} !ByteString
+                      , galleryFileList  :: {-# UNPACK #-} ![ GalleryFile ]
+                      }
+    deriving ( Eq )
 
 emptyMetadata :: GalleryMetadata
 emptyMetadata
@@ -211,8 +193,8 @@ emptyMetadata
 
 {-# NOINLINE emptyMetadata #-}
 
-parseMetadata :: LBS.ByteString -> GalleryMetadata
-parseMetadata (LBS.toStrict -> bytes) = foldl' go emptyMetadata (BS.lines bytes)
+parseMetadata :: ByteString -> GalleryMetadata
+parseMetadata bytes = foldl' go emptyMetadata (BS.lines bytes)
   where
     go metadata line = case BS.words line of
         [] -> metadata
@@ -249,7 +231,55 @@ data FileURI
               , fileYRes :: {-# UNPACK #-} !Int
               , fileExt  :: {-# UNPACK #-} !ByteString
               }
+    deriving ( Ord, Eq )
 
 instance Show FileURI where
     show (FileURI { fileHash, fileSize, fileXRes, fileYRes, fileExt })
         = [i|#{fileHash}-#{fileSize}-#{fileXRes}-#{fileYRes}-#{fileExt}|]
+
+emptyFileURI :: FileURI
+emptyFileURI = FileURI { fileHash = "", fileSize = 0, fileXRes = 0, fileYRes = 0, fileExt = "" }
+
+parseFileURI :: ByteString -> FileURI
+parseFileURI bytes = case BS.split '-' bytes of
+    [ hash, size, xres, yres, ext ] -> FileURI
+        { fileHash = hash
+        , fileSize = conv size
+        , fileXRes = conv xres
+        , fileYRes = conv yres
+        , fileExt  = ext
+        }
+    _ -> emptyFileURI
+  where
+    conv = maybe 0 fst . BS.readInt
+
+data RPCResponse = RPCResponse { statusCode :: !ByteString, payload :: ![ ByteString ] }
+    deriving ( Show, Eq, Generic )
+
+data RPCError
+    = EmptyResponse
+    | RequestFailure Text  -- Contains the error status code
+    | CertificateFailure Text
+    deriving ( Show, Eq, Generic )
+
+instance Exception RPCError
+
+{-# INLINE parseRPCResponse #-}
+-- | Parse an RPC response from a lazy ByteString
+-- The first line is the status code, followed by the payload lines
+parseRPCResponse :: ByteString -> Either RPCError RPCResponse
+parseRPCResponse bytes = case BS.lines bytes of
+    [] -> Left EmptyResponse
+    status : rest -> Right $ RPCResponse { statusCode = status, payload = rest }
+
+{-# INLINE getPayload #-}
+-- | Get the payload if the response was successful
+getPayload :: RPCResponse -> Either RPCError [ ByteString ]
+getPayload response
+    | statusCode response == "OK" = Right $ payload response
+    | otherwise = Left $ RequestFailure $ decodeUtf8 $ statusCode response
+
+{-# INLINE parseRPCResponse' #-}
+-- | Parse RPC responses effectfully
+parseRPCResponse' :: Member (Error RPCError) r => ByteString -> Sem r [ ByteString ]
+parseRPCResponse' bytes = Error.fromEither (getPayload =<< parseRPCResponse bytes)
