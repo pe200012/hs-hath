@@ -23,6 +23,7 @@ data Genesis m a where
 
 makeSem ''Genesis
 
+{-# INLINE runGenesis #-}
 runGenesis :: Members '[ Embed IO, Error RPCError, Reader ClientConfig, EHentaiAPI ] r
            => Sem (Genesis ': r) a
            -> Sem r a
@@ -30,6 +31,7 @@ runGenesis = interpret $ \case
     FetchSettings    -> getSettings
     FetchCertificate -> downloadCertificates
 
+{-# INLINE runGenesisIO #-}
 runGenesisIO
     :: ClientConfig
     -> Sem

@@ -76,6 +76,7 @@ runRPC = interpret $ \case
             Just content -> phi metadata (( x, content ) : acc) xs
             Nothing      -> phi metadata acc xs
 
+{-# INLINE runRPCIO #-}
 runRPCIO :: ClientConfig
          -> Sem
              '[ RPC

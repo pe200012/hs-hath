@@ -23,7 +23,7 @@ data FileRecord
                  , fileRecordS4         :: {-# UNPACK #-} !Text
                  , fileRecordFileId     :: {-# UNPACK #-} !Text
                  , fileRecordFileName   :: {-# UNPACK #-} !(Maybe Text)
-                 , fileRecordBytes      :: {-# UNPACK #-} !BS.ByteString
+                 , fileRecordBytes      :: !BS.ByteString
                  }
     deriving ( Show, Generic, Eq )
 
@@ -31,6 +31,7 @@ instance FromRow FileRecord
 
 instance ToRow FileRecord
 
+{-# INLINE initializeDB #-}
 -- | Initialize database with required schema
 initializeDB :: Connection -> IO ()
 initializeDB conn = do
@@ -81,5 +82,6 @@ runCache conn = interpret $ \case
         in 
             embed $ execute conn "DELETE FROM files WHERE file_id = ?" (Only fid)
 
+{-# INLINE runCachePure #-}
 runCachePure :: Map FileURI FileRecord -> Sem (KVStore FileURI FileRecord ': r) a -> Sem r a
 runCachePure initial = fmap snd . runKVStorePurely initial

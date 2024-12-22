@@ -115,6 +115,7 @@ data ServerCommand
 
 -- Custom type conversion for ServerCommand
 instance FromHttpApiData ServerCommand where
+    {-# INLINE parseUrlPiece #-}
     parseUrlPiece = \case
         "still_alive" -> Right StillAlive
         "threaded_proxy_test" -> Right ThreadedProxyTest
@@ -128,9 +129,11 @@ data DynCT
     deriving ( Typeable )
 
 instance MimeRender DynCT ByteString where
+    {-# INLINE mimeRender #-}
     mimeRender _ = LBS.fromStrict
 
 instance Accept DynCT where
+    {-# INLINE contentType #-}
     contentType _ = ""
 
 data WithDynamicContentType
@@ -138,9 +141,11 @@ data WithDynamicContentType
     { contentType :: {-# UNPACK #-} !ByteString, content :: {-# UNPACK #-} !ByteString }
 
 instance MimeRender DynCT WithDynamicContentType where
+    {-# INLINE mimeRender #-}
     mimeRender _ = LBS.fromStrict . content
 
 instance AllCTRender '[ DynCT ] WithDynamicContentType where
+    {-# INLINE handleAcceptH #-}
     handleAcceptH _ _ (WithDynamicContentType ct content)
         = Just ( LBS.fromStrict ct, LBS.fromStrict content )
 
@@ -148,9 +153,11 @@ data SpeedTest
     deriving ( Typeable )
 
 instance MimeRender SpeedTest ByteString where
+    {-# INLINE mimeRender #-}
     mimeRender _ = LBS.fromStrict
 
 instance Accept SpeedTest where
+    {-# INLINE contentTypes #-}
     contentTypes _
         = "text" // "html" /: ( "charset", "iso-8859-1" )
         :| [ "image" // "gif", "image" // "jpeg", "*" // "*" /: ( "q", ".2" ) ]
@@ -197,6 +204,7 @@ type EHAPI =
 -- floskell-enable
 
 instance MimeUnrender PlainText ByteString where
+    {-# INLINE mimeUnrender #-}
     mimeUnrender _ = mimeUnrender (Proxy @OctetStream)
 
 data RPCParams
@@ -230,6 +238,7 @@ data EHentaiAPI m a where
 
 makeSem ''EHentaiAPI
 
+{-# INLINE runEHentaiAPIIO #-}
 runEHentaiAPIIO
     :: ClientConfig
     -> Sem '[ EHentaiAPI, Reader ClientConfig, Error ClientError, Embed IO, Final IO ] a
@@ -237,6 +246,7 @@ runEHentaiAPIIO
 runEHentaiAPIIO cfg
     = runFinal . embedToFinal . errorToIOFinal @ClientError . runReader cfg . runEHentaiAPI
 
+{-# INLINE runEHentaiAPI #-}
 runEHentaiAPI :: forall a r. Members '[ Embed IO, Error ClientError, Reader ClientConfig ] r
               => Sem (EHentaiAPI ': r) a
               -> Sem r a
@@ -279,6 +289,7 @@ runEHentaiAPI m = do
             in 
                 hash [i|hentai@home-#{act'}-#{add'}-#{clientId'}-#{time}-#{key'}|]
 
+{-# INLINE checkServerStatus #-}
 checkServerStatus :: Member EHentaiAPI r => Sem r Bool
 checkServerStatus = do
     res <- ehRPC emptyRPCParams { act = Just "server_stat" }
@@ -286,9 +297,11 @@ checkServerStatus = do
         Left _  -> return False
         Right _ -> return True
 
+{-# INLINE heartbeat #-}
 heartbeat :: Member EHentaiAPI r => Sem r ()
 heartbeat = void $ ehRPC emptyRPCParams { act = Just "still_alive" }
 
+{-# INLINE startListening #-}
 startListening :: Member EHentaiAPI r => Sem r Bool
 startListening = do
     res <- ehRPC emptyRPCParams { act = Just "client_start" }
@@ -296,6 +309,7 @@ startListening = do
         Left _  -> return False
         Right x -> return $ statusCode x == "OK"
 
+{-# INLINE stopListening #-}
 stopListening :: Member EHentaiAPI r => Sem r Bool
 stopListening = do
     res <- ehRPC emptyRPCParams { act = Just "client_stop" }
@@ -303,6 +317,7 @@ stopListening = do
         Left _  -> return False
         Right _ -> return True
 
+{-# INLINE login #-}
 login :: Members '[ EHentaiAPI, Error RPCError ] r => Sem r HathSettings
 login = do
     x <- ehRPC emptyRPCParams { act = Just "client_login" }
@@ -325,11 +340,13 @@ downloadCertificates = do
             ( _, pkcs12 ) <- recoverAuthenticated passcode p12
             recover (toProtectionPassword passcode) (toCredential pkcs12)
 
+{-# INLINE getSettings #-}
 getSettings :: Members '[ EHentaiAPI, Error RPCError ] r => Sem r HathSettings
 getSettings = do
     x <- ehRPC emptyRPCParams { act = Just "client_settings" }
     parseSettings <$> parseRPCResponse' x
 
+{-# INLINE nextGalleryTask #-}
 nextGalleryTask :: Members '[ EHentaiAPI ] r => Sem r (Maybe GalleryMetadata)
 nextGalleryTask = do
     m <- parseMetadata <$> ehGallery emptyRPCParams { act = Just "fetchqueue" }
@@ -337,6 +354,7 @@ nextGalleryTask = do
         then return Nothing
         else return $ Just m
 
+{-# INLINE completeGalleryTask #-}
 completeGalleryTask :: Members '[ EHentaiAPI ] r => GalleryMetadata -> Sem r ()
 completeGalleryTask metadata
     = void
@@ -387,6 +405,7 @@ downloadGalleryFile metadata file = do
                 then operate retries -- we did not get a valid URL, might be a network error
                 else asum <$> traverse (download . BSC.unpack) urls
 
+{-# INLINE reportFailures #-}
 reportFailures :: Members '[ EHentaiAPI ] r => [ Text ] -> Sem r ()
 reportFailures reports
     = void $ ehRPC emptyRPCParams { act = Just "dlfails", add = Just $ T.intercalate ";" reports }

@@ -118,13 +118,13 @@ data ServerAction = Reload | Cert | Settings | GracefulShutdown
 
 -- Data types for tracking requests
 data IPRecord
-    = IPRecord { requestTimes :: [ UTCTime ]  -- Times of recent requests
-               , bannedUntil  :: Maybe UTCTime  -- When the ban expires
+    = IPRecord { requestTimes :: {-# UNPACK #-} ![ UTCTime ]  -- Times of recent requests
+               , bannedUntil  :: {-# UNPACK #-} !(Maybe UTCTime)  -- When the ban expires
                }
     deriving ( Show )
 
 -- Change the Map key from SockAddr to a custom IP type
-data IP = IPv4 HostAddress | IPv6 HostAddress6
+data IP = IPv4 {-# UNPACK #-} !HostAddress | IPv6 {-# UNPACK #-} !HostAddress6
     deriving ( Eq, Ord, Show )
 
 type IPMap = Map.Map IP IPRecord
@@ -231,8 +231,8 @@ server
         (encodeUtf8 -> filename) = do
         currentTime <- embed getSystemTime
         cfg <- ask @ClientConfig
-        -- when (abs (timestamp - systemSeconds currentTime) > maxTimeDrift) $ throw err403
-        -- when (answer /= challange cfg) $ throw err403
+        when (abs (timestamp - systemSeconds currentTime) > maxTimeDrift) $ throw err403
+        when (answer /= challange cfg) $ throw err403
         res <- locateResource
             LocateURI { locateURIFilename = filename, locateURI = uri, locateURIOptions = opts }
         case res of
@@ -348,8 +348,8 @@ server
     testHandler testSize testTime (encodeUtf8 @_ @ByteString -> testKey) _ = do
         currentTime <- embed getSystemTime
         cfg <- ask @ClientConfig
-        -- when (abs (testTime - systemSeconds currentTime) > maxTimeDrift) $ throw err403
-        -- when (testKey /= challange cfg) $ throw err403
+        when (abs (testTime - systemSeconds currentTime) > maxTimeDrift) $ throw err403
+        when (testKey /= challange cfg) $ throw err403
         return $ addHeader @"Content-Length" testSize $ Source.fromStepT $ bufferSending testSize
       where
         {-# INLINE challange #-}

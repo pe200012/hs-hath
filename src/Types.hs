@@ -247,13 +247,14 @@ parseFileURI bytes = case BS.split '-' bytes of
   where
     conv = maybe 0 fst . BS.readInt
 
-data RPCResponse = RPCResponse { statusCode :: !ByteString, payload :: ![ ByteString ] }
+data RPCResponse
+    = RPCResponse { statusCode :: {-# UNPACK #-} !ByteString, payload :: ![ ByteString ] }
     deriving ( Show, Eq, Generic )
 
 data RPCError
     = EmptyResponse
-    | RequestFailure Text  -- Contains the error status code
-    | CertificateFailure Text
+    | RequestFailure {-# UNPACK #-} !Text  -- Contains the error status code
+    | CertificateFailure {-# UNPACK #-} !Text
     deriving ( Show, Eq, Generic )
 
 instance Exception RPCError
