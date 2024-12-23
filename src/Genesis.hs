@@ -5,15 +5,16 @@ module Genesis ( Genesis(..), fetchSettings, fetchCertificate, runGenesis, runGe
 
 import           API
 
-import           Data.X509       ( CertificateChain, PrivKey )
+import           Data.X509          ( CertificateChain, PrivKey )
 
 import           Polysemy
-import           Polysemy.Error  ( Error, errorToIOFinal )
-import           Polysemy.Reader ( Reader, runReader )
+import           Polysemy.Error     ( Error, errorToIOFinal )
+import           Polysemy.Operators
+import           Polysemy.Reader    ( Reader, runReader )
 
-import           Relude          hiding ( Reader, runReader )
+import           Relude             hiding ( Reader, runReader )
 
-import           Servant.Client  ( ClientError )
+import           Servant.Client     ( ClientError )
 
 import           Types
 
@@ -25,26 +26,23 @@ makeSem ''Genesis
 
 {-# INLINE runGenesis #-}
 runGenesis :: Members '[ Embed IO, Error RPCError, Reader ClientConfig, EHentaiAPI ] r
-           => Sem (Genesis ': r) a
+           => Genesis : r @> a
            -> Sem r a
 runGenesis = interpret $ \case
     FetchSettings    -> getSettings
     FetchCertificate -> downloadCertificates
 
 {-# INLINE runGenesisIO #-}
-runGenesisIO
-    :: ClientConfig
-    -> Sem
-        '[ Genesis
-         , EHentaiAPI
-         , Reader ClientConfig
-         , Error ClientError
-         , Error RPCError
-         , Embed IO
-         , Final IO
-         ]
-        a
-    -> IO (Either RPCError (Either ClientError a))
+runGenesisIO :: ClientConfig
+             -> [ Genesis
+                , EHentaiAPI
+                , Reader ClientConfig
+                , Error ClientError
+                , Error RPCError
+                , Embed IO
+                , Final IO
+                ] @> a
+             -> IO (Either RPCError (Either ClientError a))
 runGenesisIO cfg
     = runFinal
     . embedToFinal @IO

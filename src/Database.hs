@@ -13,6 +13,7 @@ import           Database.SQLite.Simple
 
 import           Polysemy
 import           Polysemy.KVStore        ( KVStore(..), runKVStorePurely )
+import           Polysemy.Operators
 
 import           Relude                  hiding ( Reader, State, ask, evalState, get, modify, put )
 
@@ -83,5 +84,5 @@ runCache conn = interpret $ \case
             embed $ execute conn "DELETE FROM files WHERE file_id = ?" (Only fid)
 
 {-# INLINE runCachePure #-}
-runCachePure :: Map FileURI FileRecord -> Sem (KVStore FileURI FileRecord ': r) a -> Sem r a
+runCachePure :: Map FileURI FileRecord -> KVStore FileURI FileRecord : r @> a -> r @> a
 runCachePure initial = fmap snd . runKVStorePurely initial

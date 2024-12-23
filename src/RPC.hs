@@ -23,22 +23,23 @@ module RPC
     , runRPCIO
     ) where
 
-import           API             hiding ( StillAlive )
+import           API                hiding ( StillAlive )
 
-import           Colog           ( Message, Severity(Info), richMessageAction )
-import           Colog.Polysemy  ( Log, runLogAction )
+import           Colog              ( Message, Severity(Info), richMessageAction )
+import           Colog.Polysemy     ( Log, runLogAction )
 
 import           Polysemy
-import           Polysemy.Error  ( Error, errorToIOFinal )
-import           Polysemy.Reader ( Reader, runReader )
+import           Polysemy.Error     ( Error, errorToIOFinal )
+import           Polysemy.Operators
+import           Polysemy.Reader    ( Reader, runReader )
 
-import           Relude          hiding ( Reader, ask, runReader )
+import           Relude             hiding ( Reader, ask, runReader )
 
-import           Servant.Client  ( ClientError )
+import           Servant.Client     ( ClientError )
 
 import           Types
 
-import           Utils           ( log )
+import           Utils              ( log )
 
 data RPC m a where
     -- | Test if remote server is running
@@ -63,7 +64,7 @@ makeSem ''RPC
 
 runRPC :: forall a r.
        Members '[ Embed IO, Error RPCError, Reader ClientConfig, EHentaiAPI, Log Message ] r
-       => Sem (RPC ': r) a
+       => RPC : r @> a
        -> Sem r a
 runRPC = interpret $ \case
     ServerStat -> do
@@ -90,17 +91,15 @@ runRPC = interpret $ \case
 
 {-# INLINE runRPCIO #-}
 runRPCIO :: ClientConfig
-         -> Sem
-             '[ RPC
-              , EHentaiAPI
-              , Log Message
-              , Reader ClientConfig
-              , Embed IO
-              , Error ClientError
-              , Error RPCError
-              , Final IO
-              ]
-             a
+         -> [ RPC
+            , EHentaiAPI
+            , Log Message
+            , Reader ClientConfig
+            , Embed IO
+            , Error ClientError
+            , Error RPCError
+            , Final IO
+            ] @> a
          -> IO (Either RPCError (Either ClientError a))
 runRPCIO cfg
     = runFinal

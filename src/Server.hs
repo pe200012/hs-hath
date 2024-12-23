@@ -427,10 +427,9 @@ startServer :: ClientConfig
             -> MVar ServerAction
             -> Int
             -> IO ()
-startServer config settings certs chan port = do
-    withConnection "./cache.db" $ \conn -> do
-        initializeDB conn
-        loop config settings certs conn
+startServer config settings certs chan port = withConnection "./cache.db" $ \conn -> do
+    initializeDB conn
+    loop config settings certs conn
   where
     refreshSettings (retries :: Int) = runGenesisIO config fetchSettings >>= \case
         Right (Right newSetings) -> return newSetings

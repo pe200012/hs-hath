@@ -3,26 +3,29 @@
 
 module Locate ( LocateURI(..), Locate(..), locateResource, runLocate ) where
 
-import           API                   ( EHentaiAPI, fetchResource )
+import           API                     ( EHentaiAPI, fetchResource )
 
-import qualified Data.ByteString.Short as SBS
-import qualified Data.HashSet          as HashSet
-import qualified Data.Map              as Map
+import           Colog                   ( Message, Severity(Info, Warning) )
+import           Colog.Polysemy          ( Log )
 
-import           Database              ( FileRecord(..) )
+import qualified Data.ByteString.Short   as SBS
+import qualified Data.HashSet            as HashSet
+import qualified Data.Map                as Map
+import           Data.String.Interpolate ( i )
+
+import           Database                ( FileRecord(..) )
 
 import           Polysemy
-import           Polysemy.Error        ( Error )
-import           Polysemy.KVStore      ( KVStore, lookupKV, updateKV )
-import           Polysemy.Reader       ( Reader, ask )
+import           Polysemy.Error          ( Error )
+import           Polysemy.KVStore        ( KVStore, lookupKV, updateKV )
+import           Polysemy.Operators
+import           Polysemy.Reader         ( Reader, ask )
 
-import           Relude                hiding ( Reader, ask )
+import           Relude                  hiding ( Reader, ask )
 
 import           Types
-import Colog (Message, Severity (Info, Warning))
-import Colog.Polysemy (Log)
-import Data.String.Interpolate (i)
-import Utils (log)
+
+import           Utils                   ( log )
 
 data LocateURI
     = LocateURI { locateURIFilename :: !ByteString
@@ -46,7 +49,7 @@ runLocate :: Members
                , Log Message
                ]
               r
-          => Sem (Locate ': r) a
+          => Locate : r @> a
           -> Sem r a
 runLocate = interpret $ \case
     LocateResource uri -> do
@@ -59,22 +62,23 @@ runLocate = interpret $ \case
                 Nothing     -> case ( Map.lookup "fileindex" (locateURIOptions uri)
                                     , Map.lookup "xres" (locateURIOptions uri)
                                     ) of
-                    ( Just fileIndex, Just xres ) -> log Info [i|Fetching resource: #{fileURI}|] >> fetchResource fileURI ( fileIndex, xres ) >>= \case
-                        Just content -> do
-                            updateKV
-                                fileURI
-                                (Just
-                                 $ FileRecord
-                                 { fileRecordLRUCounter = 1
-                                 , fileRecordS4         = decodeUtf8 s4
-                                 , fileRecordFileId     = show fileURI
-                                 , fileRecordFileName   = Just $ decodeUtf8 $ locateURIFilename uri
-                                 , fileRecordBytes      = content
-                                 })
-                            pure $ Just content
-                        Nothing      -> do
-                            log Warning [i|Failed to fetch resource, sorry for you|]
-                            pure Nothing
+                    ( Just fileIndex, Just xres ) -> log Info [i|Fetching resource: #{fileURI}|]
+                        >> fetchResource fileURI ( fileIndex, xres )
+                        >>= \case
+                            Just content -> do
+                                updateKV fileURI
+                                    $ Just
+                                    $ FileRecord { fileRecordLRUCounter = 1
+                                                 , fileRecordS4         = decodeUtf8 s4
+                                                 , fileRecordFileId     = show fileURI
+                                                 , fileRecordFileName
+                                                       = Just $ decodeUtf8 $ locateURIFilename uri
+                                                 , fileRecordBytes      = content
+                                                 }
+                                pure $ Just content
+                            Nothing      -> do
+                                log Warning [i|Failed to fetch resource, sorry for you|]
+                                pure Nothing
                     _ -> do
                         log Info [i|Not enough information to fetch resource: #{fileURI}|]
                         pure Nothing

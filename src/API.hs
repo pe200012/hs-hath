@@ -62,6 +62,7 @@ import           Network.HTTP.Simple      ( httpLbs )
 
 import           Polysemy
 import           Polysemy.Error           ( Error, errorToIOFinal, throw )
+import           Polysemy.Operators
 import           Polysemy.Reader          ( Reader, ask, runReader )
 import           Polysemy.State           ( State, modify, runState )
 
@@ -238,17 +239,16 @@ data EHentaiAPI m a where
 makeSem ''EHentaiAPI
 
 {-# INLINE runEHentaiAPIIO #-}
-runEHentaiAPIIO
-    :: ClientConfig
-    -> Sem '[ EHentaiAPI, Reader ClientConfig, Error ClientError, Embed IO, Final IO ] a
-    -> IO (Either ClientError a)
+runEHentaiAPIIO :: ClientConfig
+                -> [ EHentaiAPI, Reader ClientConfig, Error ClientError, Embed IO, Final IO ] @> a
+                -> IO (Either ClientError a)
 runEHentaiAPIIO cfg
     = runFinal . embedToFinal . errorToIOFinal @ClientError . runReader cfg . runEHentaiAPI
 
 {-# INLINE runEHentaiAPI #-}
-runEHentaiAPI :: forall a r. Members '[ Embed IO, Error ClientError, Reader ClientConfig ] r
-              => Sem (EHentaiAPI ': r) a
-              -> Sem r a
+runEHentaiAPI :: forall a r. Members [ Embed IO, Error ClientError, Reader ClientConfig ] r
+              => EHentaiAPI : r @> a
+              -> r @> a
 runEHentaiAPI m = do
     cfg <- ask @ClientConfig
     manager <- embed $ newManager defaultManagerSettings
@@ -289,7 +289,8 @@ runEHentaiAPI m = do
                 hash [i|hentai@home-#{act'}-#{add'}-#{clientId'}-#{time}-#{key'}|]
 
 {-# INLINE checkServerStatus #-}
-checkServerStatus :: Member EHentaiAPI r => Sem r Bool
+-- checkServerStatus :: Member EHentaiAPI r => Sem r Bool
+checkServerStatus :: Members '[ EHentaiAPI, Error RPCError ] r => Sem r Bool
 checkServerStatus = do
     res <- ehRPC emptyRPCParams { act = Just "server_stat" }
     case parseRPCResponse res of
