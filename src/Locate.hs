@@ -50,7 +50,7 @@ runLocate :: Members
                ]
               r
           => Locate : r @> a
-          -> Sem r a
+          -> r @> a
 runLocate = interpret $ \case
     LocateResource uri -> do
         settings <- ask @HathSettings

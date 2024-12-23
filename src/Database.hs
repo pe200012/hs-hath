@@ -52,8 +52,7 @@ initializeDB conn = do
     execute_ conn "pragma mmap_size=65536"
 
 -- | Run the cache with SQLite
-runCache
-    :: Members '[ Embed IO ] r => Connection -> Sem (KVStore FileURI FileRecord ': r) a -> Sem r a
+runCache :: Members '[ Embed IO ] r => Connection -> KVStore FileURI FileRecord : r @> a -> Sem r a
 runCache conn = interpret $ \case
     LookupKV uri -> do
         let fid = show @Text uri
