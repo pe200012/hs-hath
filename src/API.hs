@@ -290,7 +290,7 @@ runEHentaiAPI m = do
 
 {-# INLINE checkServerStatus #-}
 -- checkServerStatus :: Member EHentaiAPI r => Sem r Bool
-checkServerStatus :: Members '[ EHentaiAPI, Error RPCError ] r => Sem r Bool
+checkServerStatus :: [ EHentaiAPI, Error RPCError ] >@> Bool
 checkServerStatus = do
     res <- ehRPC emptyRPCParams { act = Just "server_stat" }
     case parseRPCResponse res of
@@ -298,11 +298,11 @@ checkServerStatus = do
         Right _ -> return True
 
 {-# INLINE heartbeat #-}
-heartbeat :: Member EHentaiAPI r => Sem r ()
+heartbeat :: EHentaiAPI -@> ()
 heartbeat = void $ ehRPC emptyRPCParams { act = Just "still_alive" }
 
 {-# INLINE startListening #-}
-startListening :: Member EHentaiAPI r => Sem r Bool
+startListening :: EHentaiAPI -@> Bool
 startListening = do
     res <- ehRPC emptyRPCParams { act = Just "client_start" }
     case parseRPCResponse res of
@@ -310,7 +310,7 @@ startListening = do
         Right x -> return $ statusCode x == "OK"
 
 {-# INLINE stopListening #-}
-stopListening :: Member EHentaiAPI r => Sem r Bool
+stopListening :: EHentaiAPI -@> Bool
 stopListening = do
     res <- ehRPC emptyRPCParams { act = Just "client_stop" }
     case parseRPCResponse res of
@@ -318,13 +318,13 @@ stopListening = do
         Right _ -> return True
 
 {-# INLINE login #-}
-login :: Members '[ EHentaiAPI, Error RPCError ] r => Sem r HathSettings
+login :: [ EHentaiAPI, Error RPCError ] >@> HathSettings
 login = do
     x <- ehRPC emptyRPCParams { act = Just "client_login" }
     parseSettings <$> parseRPCResponse' x
 
-downloadCertificates :: Members '[ EHentaiAPI, Error RPCError, Reader ClientConfig ] r
-                     => Sem r ( CertificateChain, PrivKey )
+downloadCertificates
+    :: [ EHentaiAPI, Error RPCError, Reader ClientConfig ] >@> ( CertificateChain, PrivKey )
 downloadCertificates = do
     bytes <- ehRPC emptyRPCParams { act = Just "get_cert" }
     cfg <- ask @ClientConfig
@@ -341,13 +341,13 @@ downloadCertificates = do
             recover (toProtectionPassword passcode) (toCredential pkcs12)
 
 {-# INLINE getSettings #-}
-getSettings :: Members '[ EHentaiAPI, Error RPCError ] r => Sem r HathSettings
+getSettings :: [ EHentaiAPI, Error RPCError ] >@> HathSettings
 getSettings = do
     x <- ehRPC emptyRPCParams { act = Just "client_settings" }
     parseSettings <$> parseRPCResponse' x
 
 {-# INLINE nextGalleryTask #-}
-nextGalleryTask :: Members '[ EHentaiAPI ] r => Sem r (Maybe GalleryMetadata)
+nextGalleryTask :: EHentaiAPI -@> Maybe GalleryMetadata
 nextGalleryTask = do
     m <- parseMetadata <$> ehGallery emptyRPCParams { act = Just "fetchqueue" }
     if m == emptyMetadata
@@ -355,7 +355,7 @@ nextGalleryTask = do
         else return $ Just m
 
 {-# INLINE completeGalleryTask #-}
-completeGalleryTask :: Members '[ EHentaiAPI ] r => GalleryMetadata -> Sem r ()
+completeGalleryTask :: GalleryMetadata -> EHentaiAPI -@> ()
 completeGalleryTask metadata
     = void
     $ ehGallery
@@ -364,19 +364,17 @@ completeGalleryTask metadata
                        }
 
 downloadGalleryFile
-    :: forall r. Members '[ EHentaiAPI, Reader ClientConfig, Error RPCError, Embed IO ] r
-    => GalleryMetadata
+    :: GalleryMetadata
     -> GalleryFile
-    -> Sem r (Maybe ByteString)
+    -> [ EHentaiAPI, Reader ClientConfig, Error RPCError, Embed IO ] >@> Maybe ByteString
 downloadGalleryFile metadata file = do
-    ( failures, maybeContent ) <- runState [] (operate 0)
+    ( failures, maybeContent ) <- runState @[ Text ] [] (operate 0)
     case maybeContent of
         Just content -> return $ Just content
         Nothing      -> do
             reportFailures failures
             return Nothing
   where
-    download :: String -> Sem (State [ Text ] ': r) (Maybe ByteString)
     download url = case parseRequest url of
         Nothing  -> pure Nothing
         Just req -> do
@@ -389,8 +387,7 @@ downloadGalleryFile metadata file = do
                     pure Nothing
                 else return $ Just bytes
 
-    operate :: Word8 -> Sem (State [ Text ] ': r) (Maybe ByteString)
-    operate retries
+    operate (retries :: Int)
         | retries > 3 = return Nothing
         | otherwise = do
             urls <- parseRPCResponse'
@@ -406,14 +403,13 @@ downloadGalleryFile metadata file = do
                 else asum <$> traverse (download . BSC.unpack) urls
 
 {-# INLINE reportFailures #-}
-reportFailures :: Members '[ EHentaiAPI ] r => [ Text ] -> Sem r ()
+reportFailures :: [ Text ] -> EHentaiAPI -@> ()
 reportFailures reports
     = void $ ehRPC emptyRPCParams { act = Just "dlfails", add = Just $ T.intercalate ";" reports }
 
-fetchResource :: Members '[ EHentaiAPI, Reader ClientConfig, Error RPCError, Embed IO ] r
-              => FileURI
+fetchResource :: FileURI
               -> ( ByteString, ByteString )
-              -> Sem r (Maybe ByteString)
+              -> [ EHentaiAPI, Reader ClientConfig, Error RPCError, Embed IO ] >@> Maybe ByteString
 fetchResource fileURI ( fileIndex, xres ) = do
     urls <- parseRPCResponse'
         =<< ehRPC
