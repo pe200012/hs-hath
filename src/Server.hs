@@ -432,30 +432,44 @@ startServer config settings certs chan port
         initializeDB conn
         loop config settings certs conn
   where
-    refreshSettings (retries :: Int) = runGenesisIO config fetchSettings >>= \case
-        Right (Right newSetings) -> return newSetings
-        e -> do
-            putStrLn $ "Failed to refresh settings: " <> show e
-            putStrLn $ "Retrying in " <> show (2 ^ retries :: Int) <> " seconds"
-            threadDelay (1000000 * 2 ^ retries)
-            refreshSettings (retries + 1)
+    refreshSettings set = phi 0
+      where
+        phi (retries :: Int) = runGenesisIO config fetchSettings >>= \case
+            Right (Right newSetings) -> return newSetings
+            e -> do
+                putStrLn $ "Failed to refresh settings: " <> show e
+                if retries > 3
+                    then do
+                        putStrLn "Giving up"
+                        return set
+                    else do
+                        putStrLn $ "Retrying in " <> show (2 ^ retries :: Int) <> " seconds"
+                        threadDelay (1000000 * 2 ^ retries)
+                        phi (retries + 1)
 
-    refreshCerts (retries :: Int) = runGenesisIO config fetchCertificate >>= \case
-        Right (Right newCerts) -> return newCerts
-        e -> do
-            putStrLn $ "Failed to refresh certs: " <> show e
-            putStrLn $ "Retrying in " <> show (2 ^ retries :: Int) <> " seconds"
-            threadDelay (1000000 * 2 ^ retries)
-            refreshCerts (retries + 1)
+    refreshCerts c = phi 0
+      where
+        phi (retries :: Int) = runGenesisIO config fetchCertificate >>= \case
+            Right (Right newCerts) -> return newCerts
+            e -> do
+                putStrLn $ "Failed to refresh certs: " <> show e
+                if retries > 3
+                    then do
+                        putStrLn "Giving up"
+                        return c
+                    else do
+                        putStrLn $ "Retrying in " <> show (2 ^ retries :: Int) <> " seconds"
+                        threadDelay (1000000 * 2 ^ retries)
+                        phi (retries + 1)
 
-    loop cfg set cets conn = do
+    loop cfg set c conn = do
         ipMap <- newTVarIO Map.empty
         let app = makeApplication cfg set chan ipMap conn
         result <- withAsync (periodic cfg ipMap) $ \_ -> withAsync (notifyStart cfg set)
             $ \_ -> race (takeMVar chan)
             $ runTLS
                 (defaultTlsSettings
-                 { tlsCredentials = Just (Credentials [ cets ]), onInsecure = AllowInsecure })
+                 { tlsCredentials = Just (Credentials [ c ]), onInsecure = AllowInsecure })
                 (setPort port defaultSettings)
             $ logStdoutDev
             $ logStdout app
@@ -466,10 +480,10 @@ startServer config settings certs chan port
                 exitSuccess
             Left Reload -> exitSuccess
             Left Cert -> do
-                newCerts <- refreshCerts 0
+                newCerts <- refreshCerts c
                 loop cfg set newCerts conn
             Left Settings -> do
-                newSettings <- refreshSettings 0
+                newSettings <- refreshSettings set
                 loop cfg newSettings certs conn
             Right _ -> error "Server terminated unexpectedly"
 
