@@ -19,6 +19,10 @@ import           Polysemy.Reader       ( Reader, ask )
 import           Relude                hiding ( Reader, ask )
 
 import           Types
+import Colog (Message, Severity (Info, Warning))
+import Colog.Polysemy (Log)
+import Data.String.Interpolate (i)
+import Utils (log)
 
 data LocateURI
     = LocateURI { locateURIFilename :: !ByteString
@@ -39,6 +43,7 @@ runLocate :: Members
                , Reader ClientConfig
                , EHentaiAPI
                , Embed IO
+               , Log Message
                ]
               r
           => Sem (Locate ': r) a
@@ -54,7 +59,7 @@ runLocate = interpret $ \case
                 Nothing     -> case ( Map.lookup "fileindex" (locateURIOptions uri)
                                     , Map.lookup "xres" (locateURIOptions uri)
                                     ) of
-                    ( Just fileIndex, Just xres ) -> fetchResource fileURI ( fileIndex, xres ) >>= \case
+                    ( Just fileIndex, Just xres ) -> log Info [i|Fetching resource: #{fileURI}|] >> fetchResource fileURI ( fileIndex, xres ) >>= \case
                         Just content -> do
                             updateKV
                                 fileURI
@@ -67,8 +72,14 @@ runLocate = interpret $ \case
                                  , fileRecordBytes      = content
                                  })
                             pure $ Just content
-                        Nothing      -> pure Nothing
-                    _ -> pure Nothing
-            else pure Nothing
+                        Nothing      -> do
+                            log Warning [i|Failed to fetch resource, sorry for you|]
+                            pure Nothing
+                    _ -> do
+                        log Info [i|Not enough information to fetch resource: #{fileURI}|]
+                        pure Nothing
+            else do
+                log Info [i|Resource not in our ranges, rejecting: #{s4}|]
+                pure Nothing
 
 

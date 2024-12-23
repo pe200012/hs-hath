@@ -15,6 +15,12 @@ import           API                                  ( API
                                                       , stopListening
                                                       )
 
+import           Colog                                ( Message
+                                                      , Severity(Info)
+                                                      , richMessageAction
+                                                      )
+import           Colog.Polysemy                       ( Log, runLogAction )
+
 import           Control.Concurrent                   ( ThreadId, forkIO, threadDelay, throwTo )
 import           Control.Exception                    ( try )
 
@@ -52,7 +58,7 @@ import           Network.HTTP.Client                  ( brReadSome
                                                       )
 import           Network.HTTP.Client.TLS              ( tlsManagerSettings )
 import           Network.HTTP.Simple                  ( getResponseBody )
-import           Network.HTTP.Types                   ( hAccept, mkStatus, status200 )
+import           Network.HTTP.Types                   ( hAccept, mkStatus, status200, status404 )
 import           Network.Socket                       ( HostAddress, HostAddress6, SockAddr(..) )
 import           Network.TLS                          ( Credentials(Credentials) )
 import           Network.Wai                          ( Middleware
@@ -104,6 +110,8 @@ import           Types                                ( ClientConfig
 import           URLParam                             ( lookupParam, parseURLParams )
 
 import           UnliftIO                             ( race, withAsync )
+
+import           Utils                                ( log )
 
 maxTimeDrift :: Int64
 maxTimeDrift = 300
@@ -206,20 +214,18 @@ server :: Members
             , RPC
             , Locate
             , Reader (MVar ServerAction)
+            , Log Message
             ]
            r
        => ServerT API (Sem r)
 server
-    = rootHandler
-    :<|> faviconHandler
+    = faviconHandler
     :<|> robotsHandler
     :<|> resourceHandler
     :<|> serverCmdHandler
     :<|> testHandler
     :<|> Tagged rawHandler
   where
-    rootHandler = return NoContent
-
     faviconHandler
         = throw $ err301 { errHeaders = [ ( "Location", "https://e-hentai.org/favicon.ico" ) ] }
 
@@ -307,6 +313,7 @@ server
                 $ Source.fromStepT
                 $ bufferSending testSize
         RefreshSettings   -> do
+            log Info "Refreshing settings"
             chan <- ask @(MVar ServerAction)
             void $ embed $ forkIO $ do
                 threadDelay (1000000 * 2)
@@ -314,6 +321,7 @@ server
             plainText ""
         StartDownloader   -> plainText ""
         RefreshCerts      -> do
+            log Info "Refreshing certificates"
             chan <- ask @(MVar ServerAction)
             void $ embed $ forkIO $ do
                 threadDelay (1000000 * 2)
@@ -363,10 +371,7 @@ server
         -- Handle HEAD requests with 200 OK and empty body
         "HEAD" -> k $ responseLBS status200 hentaiHeader ""
 
-        -- All other methods/paths get 444 No Response
-        _      -> k $ responseLBS status444 [] ""
-
-    status444 = mkStatus 444 "No Response"
+        _      -> k $ responseLBS status404 [] ""
 
 periodic config ipMap = forever $ do
     -- ipmap cleanup
@@ -385,14 +390,9 @@ periodic config ipMap = forever $ do
 notifyStart :: ClientConfig -> HathSettings -> IO ()
 notifyStart config _ = psi
   where
-    psi = do
-        putStrLn "Trying to notify start..."
-        runRPCIO config startListening >>= \case
-            Right (Right True) -> return ()
-            e -> do
-                putStrLn $ "Failed to start listening: " <> show e
-                threadDelay 1000000
-                psi
+    psi = runRPCIO config startListening >>= \case
+        Right (Right True) -> return ()
+        _ -> threadDelay 1000000 >> psi
 
 -- Create the WAI application with rate limiting
 makeApplication
@@ -415,6 +415,7 @@ makeApplication config settings action ipMap conn
         . runReader settings
         . runReader config
         . runReader action
+        . runLogAction @IO @Message richMessageAction
         . runEHentaiAPI
         . runCache conn
         . runLocate
@@ -481,21 +482,3 @@ normalizeAcceptMiddleware app req = app req { requestHeaders = normalizedHeaders
         | name == hAccept = ( name, "*/*" )
         | otherwise = ( name, value )
 
--- normalizeAcceptHeader
---     = BSC.intercalate ", " . nub . map (normalizeQuality . normalizeAsterisk) . parseAccept
-
--- parseAccept = BSC.split ',' . BSC.filter (not . isSpace)
-
--- normalizeAsterisk t = case BSC.stripPrefix "*" t of
---     Nothing -> t
---     Just t' -> case BSC.stripPrefix "/*" t' of
---         Just _  -> t
---         Nothing -> "*/*" <> t'
-
--- normalizeQuality mediaType = case BSC.split ';' mediaType of
---     [ t ]    -> t  -- No q parameter
---     [ t, q ] -> case BSC.stripPrefix "q=." q of
---         Just rest
---             | BSC.all isDigit rest -> t <> ";q=0." <> rest  -- Fix q=.x format
---         _         -> t <> ";" <> q  -- Keep other q values as is
---     _        -> mediaType  -- Unexpected format, leave it unchanged

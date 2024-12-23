@@ -165,8 +165,7 @@ instance Accept SpeedTest where
 -- floskell-disable
 -- API type definitions
 type API
-    = Get '[PlainText] NoContent
-    :<|> "favicon.ico" :> Get '[PlainText] NoContent
+    =    "favicon.ico" :> Get '[PlainText] NoContent
     :<|> "robots.txt" :> Get '[PlainText] Text
     :<|> "h"
         :> Capture "info" Text

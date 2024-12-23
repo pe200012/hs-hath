@@ -25,6 +25,9 @@ module RPC
 
 import           API             hiding ( StillAlive )
 
+import           Colog           ( Message, Severity(Info), richMessageAction )
+import           Colog.Polysemy  ( Log, runLogAction )
+
 import           Polysemy
 import           Polysemy.Error  ( Error, errorToIOFinal )
 import           Polysemy.Reader ( Reader, runReader )
@@ -34,6 +37,8 @@ import           Relude          hiding ( Reader, ask, runReader )
 import           Servant.Client  ( ClientError )
 
 import           Types
+
+import           Utils           ( log )
 
 data RPC m a where
     -- | Test if remote server is running
@@ -56,18 +61,25 @@ data RPC m a where
 
 makeSem ''RPC
 
-runRPC :: forall a r. Members '[ Embed IO, Error RPCError, Reader ClientConfig, EHentaiAPI ] r
+runRPC :: forall a r.
+       Members '[ Embed IO, Error RPCError, Reader ClientConfig, EHentaiAPI, Log Message ] r
        => Sem (RPC ': r) a
        -> Sem r a
 runRPC = interpret $ \case
-    ServerStat -> checkServerStatus
-    StillAlive -> heartbeat
-    ClientStart -> startListening
-    ClientStop -> stopListening
-    ClientLogin -> login
-    CheckGalleryTask -> nextGalleryTask
-    NotifyGalleryCompletion metadata -> completeGalleryTask metadata
-    FetchGalleryFile ( metadata, files ) -> phi metadata [] files
+    ServerStat -> do
+        b <- checkServerStatus
+        log Info $ "Server availablity: " <> show b
+        return b
+    StillAlive -> log Info "Tell server that client is still alive" >> heartbeat
+    ClientStart -> log Info "Trying to start a session" >> startListening
+    ClientStop -> log Info "Stopping a session" >> stopListening
+    ClientLogin -> log Info "Logging in" >> login
+    CheckGalleryTask -> log Info "Checking for a gallery task" >> nextGalleryTask
+    NotifyGalleryCompletion
+        metadata -> log Info "Notifying server that a gallery task has been completed"
+        >> completeGalleryTask metadata
+    FetchGalleryFile
+        ( metadata, files ) -> log Info "Fetching gallery files" >> phi metadata [] files
   where
     phi _ acc [] = pure acc
     phi metadata acc (x : xs) = do
@@ -81,6 +93,7 @@ runRPCIO :: ClientConfig
          -> Sem
              '[ RPC
               , EHentaiAPI
+              , Log Message
               , Reader ClientConfig
               , Embed IO
               , Error ClientError
@@ -95,6 +108,7 @@ runRPCIO cfg
     . errorToIOFinal @ClientError
     . embedToFinal @IO
     . runReader cfg
+    . runLogAction @IO richMessageAction
     . runEHentaiAPI
     . runRPC
 
