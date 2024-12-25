@@ -89,11 +89,11 @@ import           Servant.Client           ( BaseUrl(BaseUrl)
 import           Servant.Client.Core      ( addHeader )
 
 import           Types                    ( ClientConfig
+                                          , ClientConfig(..)
                                           , FileURI(..)
                                           , GalleryFile(..)
                                           , GalleryMetadata(galleryMinXRes, galleryID)
                                           , HathSettings
-                                          , MkClientConfig(..)
                                           , RPCError(CertificateFailure)
                                           , RPCResponse(statusCode)
                                           , emptyMetadata
@@ -260,9 +260,9 @@ runEHentaiAPI m = do
                 (runClientM
                      (ehAPIM
                           params { acttime     = Just (show currentTime)
-                                 , clientbuild = Just (decodeUtf8 $ version cfg)
+                                 , clientbuild = Just (version cfg)
                                  , actkey      = Just $ makeKey params cfg currentTime
-                                 , cid         = Just (decodeUtf8 $ clientId cfg)
+                                 , cid         = Just (clientId cfg)
                                  })
                      (mkClientEnv manager (BaseUrl Http "rpc.hentaiathome.net" 80 endpoint))
                      { makeClientRequest = \baseUrl req -> do
@@ -283,8 +283,8 @@ runEHentaiAPI m = do
         = let
             act'      = fromMaybe "" (act params)
             add'      = fromMaybe "" (add params)
-            clientId' = SBS.fromShort $ clientId cfg
-            key'      = SBS.fromShort $ key cfg
+            clientId' = clientId cfg
+            key'      = key cfg
             in 
                 hash [i|hentai@home-#{act'}-#{add'}-#{clientId'}-#{time}-#{key'}|]
 
@@ -330,7 +330,7 @@ downloadCertificates = do
     cfg <- ask @ClientConfig
     fromPkcs12 cfg bytes
   where
-    fromPkcs12 (SBS.fromShort . key -> passcode) bytes = case maybeCred of
+    fromPkcs12 (encodeUtf8 . key -> passcode) bytes = case maybeCred of
         Left err       -> throw $ CertificateFailure $ show err
         Right Nothing  -> throw $ CertificateFailure "no credential"
         Right (Just c) -> pure c
@@ -419,7 +419,7 @@ fetchResource fileURI ( fileIndex, xres ) = do
     asum
         <$> traverse
             (download
-                 [i|#{clientId cfg}-#{hash @ByteString (SBS.fromShort(key cfg) <> show fileURI)}|]
+                 [i|#{clientId cfg}-#{hash @ByteString $ encodeUtf8 (key cfg) <> show fileURI}|]
              . BSC.unpack)
             urls
   where

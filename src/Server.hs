@@ -31,6 +31,7 @@ import           Data.Char                            ( isDigit, isSpace )
 import           Data.List                            ( nub )
 import qualified Data.Map.Strict                      as Map
 import           Data.String.Interpolate              ( i )
+import qualified Data.Text                            as Text
 import           Data.Time.Clock                      ( NominalDiffTime
                                                       , UTCTime
                                                       , addUTCTime
@@ -99,9 +100,9 @@ import qualified Servant.Types.SourceT                as Source
 import           SpeedTest                            ( bufferSending )
 
 import           Types                                ( ClientConfig
+                                                      , ClientConfig(..)
                                                       , FileURI(fileExt)
                                                       , HathSettings(..)
-                                                      , MkClientConfig(..)
                                                       , RPCError
                                                       , hentaiHeader
                                                       , parseFileURI
@@ -179,7 +180,7 @@ checkRateLimit ipMap ip now = atomically $ do
     -- Check if requests are within rate limit window and update accordingly
     checkAndUpdateRequests record = do
         let windowStart    = addUTCTime (-timeWindow) now
-            recentRequests = filter (> windowStart) (requestTimes record)
+            recentRequests = takeWhile (> windowStart) (requestTimes record)
             newRequests    = now : recentRequests
 
         if length recentRequests >= maxRequests
@@ -335,7 +336,7 @@ server
                     return $ truncate $ realToFrac @POSIXTime @Double $ 1000 * (end - start)
                 phi n br = do
                     s <- LBS.length <$> brReadSome br 1024
-                    phi (n - s) br
+                    phi (max 0 (n - s)) br
             try @SomeException (withResponse req mgr (phi testSize . getResponseBody)) >>= \case
                 Left _  -> return Nothing
                 Right v -> return $ Just v
@@ -421,14 +422,10 @@ makeApplication config settings action ipMap conn
         . runLocate
         . runRPC
 
-startServer :: ClientConfig
-            -> HathSettings
-            -> ( CertificateChain, PrivKey )
-            -> MVar ServerAction
-            -> Int
-            -> IO ()
-startServer config settings certs chan port
-    = withConnection (decodeUtf8 $ cachePath config) $ \conn -> do
+startServer
+    :: ClientConfig -> HathSettings -> ( CertificateChain, PrivKey ) -> MVar ServerAction -> IO ()
+startServer config settings certs chan
+    = withConnection (Text.unpack $ cachePath config) $ \conn -> do
         initializeDB conn
         loop config settings certs conn
   where
@@ -470,7 +467,7 @@ startServer config settings certs chan port
             $ runTLS
                 (defaultTlsSettings
                  { tlsCredentials = Just (Credentials [ c ]), onInsecure = AllowInsecure })
-                (setPort port defaultSettings)
+                (setPort (clientPort set) defaultSettings)
             $ logStdoutDev
             $ logStdout app
         case result of

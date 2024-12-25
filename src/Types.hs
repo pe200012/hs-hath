@@ -4,14 +4,12 @@
 
 module Types
     (  -- * Types
-      MkClientProxy(..)
-    , MkClientConfig(..)
+      ClientProxy(..)
+    , ClientConfig(..)
     , GalleryMetadata(..)
     , HathSettings(..)
     , GalleryFile(..)
     , RPCError(..)
-    , ClientConfig
-    , ClientProxy
     , FileURI(..)
     , RPCResponse(..)
       -- * Globals
@@ -36,8 +34,6 @@ import qualified Data.ByteString.Char8   as BS
 import qualified Data.ByteString.Short   as SBS
 import qualified Data.HashSet            as HashSet
 import           Data.String.Interpolate ( i )
-import qualified Data.Text.Encoding      as TE
-import           Data.Tuple.Extra        ( both )
 
 import           Dhall                   ( FromDhall(..), ToDhall(..), auto, input )
 
@@ -62,49 +58,38 @@ hentaiHeader
       , ( "X-Content-Type-Options", "nosniff" )
       ]
 
-data MkClientProxy t
-    = MkClientProxy
-    { host :: !t, port :: {-# UNPACK #-} !Integer, auth :: {-# UNPACK #-} !(Maybe ( t, t )) }
+data ClientProxy
+    = ClientProxy { host :: {-# UNPACK #-} !Text
+                  , port :: {-# UNPACK #-} !Integer
+                  , auth :: {-# UNPACK #-} !(Maybe ( Text, Text ))
+                  }
     deriving ( Show, Generic )
 
-data MkClientConfig t
-    = MkClientConfig { clientId    :: !t
-                     , key         :: !t
-                     , version     :: !t
-                     , proxy       :: {-# UNPACK #-} !(Maybe (MkClientProxy t))
-                     , downloadDir :: !t
-                     , cachePath   :: !t
-                     }
+data ClientConfig
+    = ClientConfig { clientId    :: {-# UNPACK #-} !Text
+                   , key         :: {-# UNPACK #-} !Text
+                   , version     :: {-# UNPACK #-} !Text
+                   , proxy       :: {-# UNPACK #-} !(Maybe ClientProxy)
+                   , downloadDir :: {-# UNPACK #-} !Text
+                   , cachePath   :: {-# UNPACK #-} !Text
+                   }
     deriving ( Show, Generic )
 
-instance FromDhall t => FromDhall (MkClientProxy t)
+instance FromDhall ClientProxy
 
-instance FromDhall t => FromDhall (MkClientConfig t)
+instance FromDhall ClientConfig
 
-instance ToDhall t => ToDhall (MkClientProxy t)
+instance ToDhall ClientProxy
 
-instance ToDhall t => ToDhall (MkClientConfig t)
-
-type ClientConfig = MkClientConfig ShortByteString
-
-type ClientProxy = MkClientProxy ShortByteString
+instance ToDhall ClientConfig
 
 defaultClientConfig :: ClientConfig
 defaultClientConfig
-    = MkClientConfig
+    = ClientConfig
     { clientId = "", key = "", version = "", proxy = Nothing, downloadDir = "", cachePath = "" }
 
 readClientConfig :: Text -> IO ClientConfig
-readClientConfig path = do
-    MkClientConfig { clientId, key, version, proxy, downloadDir, cachePath } <- input auto path
-    pure
-        MkClientConfig
-        { clientId = t2bs clientId, key = t2bs key, version = t2bs version, proxy = case proxy of
-              Just (MkClientProxy { host, port, auth }) -> Just
-                  (MkClientProxy { host = t2bs host, port = port, auth = fmap (both t2bs) auth })
-              Nothing -> Nothing, downloadDir = t2bs downloadDir, cachePath = t2bs cachePath }
-  where
-    t2bs = SBS.toShort . TE.encodeUtf8
+readClientConfig = input auto
 
 data HathSettings
     = HathSettings
