@@ -1,62 +1,37 @@
-
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-
 module Main ( main ) where
 
-import           Colog              ( logError, logInfo, richMessageAction, usingLoggerT )
+import           Genesis      ( fetchCertificate, runGenesisIO )
 
-import           Control.Concurrent ( forkIO, myThreadId, threadDelay, throwTo )
-import           Control.Exception  ( SomeException, catch )
-import           Control.Monad      ( forever, void, when )
+import           RPC
 
-import           Data.IORef         ( newIORef )
+import           Relude       hiding ( runReader )
 
-import qualified Dhall
+import           Server       ( ServerAction(GracefulShutdown), startServer )
 
-import           Network.HTTP.Types ( status200 )
-
-import           Prelude            hiding ( log )
-
-import           Query
-
-import           Server
-
-import           System.Exit        ( exitFailure )
-import           System.Posix       ( Handler(Catch), installHandler, sigINT, sigTERM )
+import           System.Posix ( Handler(Catch), installHandler, sigINT, sigTERM )
 
 import           Types
 
-hathMain :: IO ()
-hathMain = do
-    config <- unmarshallClientConfig <$> Dhall.input Dhall.auto "./client-login"
-    res <- usingLoggerT richMessageAction serverStatus
-    when (res /= status200) $ do
-        usingLoggerT richMessageAction $ logError "Server status request failed"
-        exitFailure
-    clientLogin config
-    sts <- usingLoggerT richMessageAction $ Query.hathSettings config
-    hSets <- newIORef sts
-    usingLoggerT richMessageAction $ logInfo "Starting server"
-    myId <- myThreadId
-    serverId <- forkIO $ runHTTPServer hSets config
-    void $ installHandler sigINT (Catch $ do
-                                      usingLoggerT richMessageAction $ clientStop config
-                                      throwTo serverId GracefulShutdown
-                                      throwTo myId GracefulShutdown) Nothing
-    void $ installHandler sigTERM (Catch $ do
-                                       usingLoggerT richMessageAction $ clientStop config
-                                       throwTo serverId GracefulShutdown
-                                       throwTo myId GracefulShutdown) Nothing
-    usingLoggerT richMessageAction $ clientStart config
-    forever $ do
-        threadDelay (60 * periodSeconds)
-        heartBeat config `catch` (\(e :: SomeException) -> print e)
-  where
-    periodSeconds = 1000000
-
 main :: IO ()
 main = do
-    usingLoggerT richMessageAction $ logInfo "Starting Hentai@Home server"
-    hathMain
+    config <- readClientConfig "./client-login"
+    chan <- newEmptyMVar
+    void $ installHandler sigINT (Catch $ putMVar chan GracefulShutdown) Nothing
+    void $ installHandler sigTERM (Catch $ putMVar chan GracefulShutdown) Nothing
+    runRPCIO config serverStat >>= \case
+        Right (Right True) -> runRPCIO config clientLogin >>= \case
+            Right (Right settings) -> runGenesisIO config fetchCertificate >>= \case
+                Right (Right certs) -> startServer config settings certs chan
+                e -> do
+                    print e
+                    putStrLn "Unable to fetch certs, exiting..."
+                    exitFailure
+            e -> do
+                print e
+                putStrLn "Unable to login, exiting..."
+                exitFailure
+        e -> do
+            print e
+            putStrLn "RPC is not available, exiting..."
+            exitFailure
+

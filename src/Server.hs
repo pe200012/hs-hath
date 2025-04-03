@@ -1,403 +1,521 @@
-
 {-# LANGUAGE DataKinds #-}
 
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE TypeOperators #-}
 
-{-# LANGUAGE MonoLocalBinds #-}
-{-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE RecursiveDo #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE ViewPatterns #-}
+module Server ( startServer, ServerAction(..) ) where
 
-module Server ( module Server ) where
-
-import           Cache                                ( HathFile(..), parseHathFile, verifyCache )
+import           API                                  ( API
+                                                      , ServerCommand(..)
+                                                      , WithDynamicContentType(WithDynamicContentType)
+                                                      , api
+                                                      , fetchBlacklist
+                                                      , runEHentaiAPI
+                                                      , runEHentaiAPIIO
+                                                      , startListening
+                                                      , stopListening
+                                                      )
 
 import           Colog                                ( Message
-                                                      , WithLog
-                                                      , logError
-                                                      , logInfo
+                                                      , Severity(Info)
                                                       , richMessageAction
-                                                      , usingLoggerT
                                                       )
+import           Colog.Polysemy                       ( Log, runLogAction )
 
-import           Control.Concurrent                   ( MVar
-                                                      , forkIO
-                                                      , newEmptyMVar
-                                                      , putMVar
-                                                      , takeMVar
-                                                      , threadDelay
-                                                      )
-import           Control.Concurrent.Async             ( race )
-import qualified Control.Concurrent.Async             as Async
-import           Control.Exception                    ( SomeException )
-import           Control.Monad                        ( forever
-                                                      , replicateM
-                                                      , replicateM_
-                                                      , void
-                                                      , when
-                                                      )
-import           Control.Monad.Catch                  ( MonadThrow )
-import           Control.Monad.IO.Class               ( MonadIO(liftIO) )
-import           Control.Monad.Reader                 ( asks )
-import           Control.Monad.Trans                  ( lift )
+import           Control.Concurrent                   ( ThreadId, forkIO, threadDelay, throwTo )
+import           Control.Concurrent.STM.TVar          ( modifyTVar' )
+import           Control.Concurrent.Suspend           ( mDelay )
+import           Control.Concurrent.Timer             ( repeatedTimer, stopTimer )
+import           Control.Exception                    ( try )
 
-import           Data.ByteString                      ( ByteString )
-import           Data.ByteString.Base64               ( encodeBase64' )
-import           Data.ByteString.Builder              ( byteString )
-import qualified Data.ByteString.Char8                as BS
-import qualified Data.ByteString.Lazy.Char8           as LBS
+import qualified Data.ByteString                      as BS
+import qualified Data.ByteString.Char8                as BSC
+import qualified Data.ByteString.Lazy                 as LBS
+import           Data.Char                            ( isDigit, isSpace )
 import qualified Data.HashMap.Strict                  as HashMap
-import           Data.IORef                           ( IORef
-                                                      , modifyIORef
-                                                      , newIORef
-                                                      , readIORef
-                                                      , writeIORef
-                                                      )
-import           Data.Int                             ( Int64 )
-import           Data.Map                             ( Map )
-import qualified Data.Map                             as Map
-import           Data.Maybe                           ( fromMaybe )
+import           Data.List                            ( nub )
+import qualified Data.Map.Strict                      as Map
 import           Data.String.Interpolate              ( i )
 import qualified Data.Text                            as Text
+import           Data.Time.Clock                      ( NominalDiffTime
+                                                      , UTCTime
+                                                      , addUTCTime
+                                                      , getCurrentTime
+                                                      )
 import           Data.Time.Clock.POSIX                ( POSIXTime, getPOSIXTime )
 import           Data.Time.Clock.System               ( SystemTime(systemSeconds), getSystemTime )
+import           Data.X509                            ( CertificateChain, PrivKey )
 
-import           Database.SQLite.Simple               ( withConnection )
-import qualified Database.SQLite.Simple               as SQLite
+import           Database                             ( initializeDB, runCache )
+import           Database.SQLite.Simple               ( Connection, withConnection )
 
-import           Network.HTTP.Client                  ( Proxy(Proxy)
-                                                      , Request(..)
-                                                      , brReadSome
+import           Genesis
+
+import           Hash                                 ( hash )
+
+import           Locate
+
+import           Network.HTTP.Client                  ( brReadSome
+                                                      , httpLbs
                                                       , newManager
+                                                      , parseRequest
+                                                      , responseBody
                                                       , withResponse
                                                       )
 import           Network.HTTP.Client.TLS              ( tlsManagerSettings )
 import           Network.HTTP.Simple                  ( getResponseBody )
-import           Network.HTTP.Types                   ( status200
-                                                      , status301
-                                                      , status403
-                                                      , status404
-                                                      , status418
+import           Network.HTTP.Types                   ( hAccept, mkStatus, status200, status404 )
+import           Network.Socket                       ( HostAddress, HostAddress6, SockAddr(..) )
+import           Network.TLS                          ( Credentials(Credentials) )
+import           Network.Wai                          ( Middleware
+                                                      , Request(requestMethod)
+                                                      , Response
+                                                      , rawPathInfo
+                                                      , remoteHost
+                                                      , requestHeaders
+                                                      , responseLBS
                                                       )
-import           Network.TLS                          ( Credential
-                                                      , Credentials(Credentials)
-                                                      , Version(..)
-                                                      )
-import           Network.TLS.Extra.Cipher             ( ciphersuite_default )
-import           Network.Wai                          ( Application )
+import qualified Network.Wai.Handler.Warp             as Warp
 import           Network.Wai.Handler.Warp             ( defaultSettings, setPort )
-import           Network.Wai.Handler.WarpTLS          ( TLSSettings(..), runTLS )
-import           Network.Wai.Handler.WarpTLS.Internal ( defaultTlsSettings )
-import           Network.Wai.Middleware.RequestLogger ( logStdoutDev )
+import           Network.Wai.Handler.WarpTLS          ( OnInsecure(AllowInsecure)
+                                                      , TLSSettings(..)
+                                                      , defaultTlsSettings
+                                                      , runTLS
+                                                      )
+import           Network.Wai.Middleware.RequestLogger ( logStdout, logStdoutDev )
 
-import           Prelude                              hiding ( log )
+import           Polysemy                             ( Embed
+                                                      , Members
+                                                      , Sem
+                                                      , embed
+                                                      , embedToFinal
+                                                      , runFinal
+                                                      )
+import           Polysemy.Error                       ( Error, errorToIOFinal, mapError, throw )
+import           Polysemy.Reader                      ( Reader, ask, runReader )
 
-import           Query
+import           RPC                                  ( RPC, runRPC, runRPCIO, stillAlive )
 
-import           Resource
+import           Relude                               hiding ( Reader, ask, get, runReader )
 
-import           System.Random                        ( randomIO, randomRIO )
+import           Servant
+import           Servant.Client                       ( ClientError )
+import qualified Servant.Types.SourceT                as Source
 
-import           Types
+import           SpeedTest                            ( bufferSending )
 
-import           UnliftIO                             ( Handler(Handler)
-                                                      , atomically
-                                                      , modifyTVar'
-                                                      , newTVarIO
-                                                      , readTVarIO
-                                                      , try
+import           Types                                ( ClientConfig
+                                                      , ClientConfig(..)
+                                                      , FileURI(fileExt)
+                                                      , HathSettings(..)
+                                                      , RPCError
+                                                      , hentaiHeader
+                                                      , parseFileURI
                                                       )
 
-import           Utils
+import           URLParam                             ( lookupParam, parseURLParams )
 
-import           Web.Scotty.Trans                     ( pathParam )
-import           Web.Scotty.Trans.Strict              ( ActionT
-                                                      , Options(..)
-                                                      , defaultHandler
-                                                      , file
-                                                      , get
-                                                      , header
-                                                      , headers
-                                                      , notFound
-                                                      , raw
-                                                      , scottyAppT
-                                                      , setHeader
-                                                      , status
-                                                      , stream
-                                                      , text
-                                                      )
+import           UnliftIO                             ( race, withAsync )
 
-handleRPCCommand :: ( MonadIO m, WithLog (Singleton (HathM m) Message) Message (HathM m) )
-                 => ByteString
-                 -> ByteString
-                 -> ActionT (HathM m) ()
-handleRPCCommand "still_alive" _ = text "I feel FANTASTIC and I'm still alive"
-handleRPCCommand "refresh_settings" _ = do
-    lift $ logInfo "Refreshing settings"
-    cfg <- lift $ asks clientConfig
-    newSts <- lift $ Query.hathSettings cfg
-    stRef <- lift $ asks Types.hathSettings
-    liftIO $ writeIORef stRef newSts
-    text ""
-handleRPCCommand "refresh_certs" _ = do
-    lift $ logInfo "Refreshing certificates"
-    cfg <- lift $ asks clientConfig
-    cred <- lift $ liftA2 fromPkcs12 (asks clientConfig) (hathCertificate cfg)
-    text ""
-    shutdown <- lift $ asks Types.refreshCertificate
-    liftIO $ putMVar shutdown (RefreshCert cred)
-handleRPCCommand "threaded_proxy_test" additional = do
-    lift $ logInfo "Starting threaded speed test"
-    testSpeed (parseOptions additional)
-handleRPCCommand "speed_test" additional = do
-    lift $ logInfo "Starting speed test"
-    sendTestData testSize
-  where
-    opts     = parseOptions additional
-
-    testSize = maybe 1000000 fst (BS.readInt =<< Map.lookup "testsize" opts)
-handleRPCCommand _ _ = text "INVALID_COMMAND"
-
-handleResourceRequest :: ( MonadIO m, MonadThrow m )
-                      => ByteString
-                      -> HathFile
-                      -> Map ByteString ByteString
-                      -> ActionT (HathM m) ()
-handleResourceRequest filename fileid opts = lift (locateResource filename fileid opts) >>= \case
-    Nothing    -> status status404
-    Just bytes -> do
-        setHeader "Content-Type" mime
-        setHeader "Content-Disposition" [i|inline; filename="#{filename}"|]
-        raw $ LBS.fromChunks $ pure bytes
-  where
-    mime = case fileType fileid of
-        "jpg" -> "image/jpeg"
-        "png" -> "image/png"
-        "gif" -> "image/gif"
-        "mp4" -> "video/mp4"
-        "wbm" -> "video/webm"
-        "wbp" -> "video/webp"
-        "avf" -> "video/avif"
-        "jxl" -> "image/jxl"
-        _     -> "application/octet-stream"
-
-sendTestData :: MonadIO m => Int -> ActionT (HathM m) ()
-sendTestData testSize = do
-    setHeader "Content-Type" "text/html; charset=iso-8859-1"
-    setHeader "Content-Length" [i|#{testSize}|]
-    preallocate <- liftIO $ BS.pack <$> replicateM (2 * tcpPacketSize) randomIO
-    stream $ \sender flushing -> do
-        replicateM_ loopTimes $ do
-            startingFrom <- randomRIO ( 0, tcpPacketSize - 1 )
-            sender $ byteString (BS.take tcpPacketSize $ BS.drop startingFrom preallocate)
-        sender $ byteString $ BS.take rest preallocate
-        flushing
-  where
-    ( loopTimes, rest ) = testSize `divMod` tcpPacketSize
-
-tcpPacketSize :: Int
-tcpPacketSize = 1460
-
-testSpeed :: ( MonadIO m, WithLog (Singleton (HathM m) Message) Message (HathM m) )
-          => Map ByteString ByteString
-          -> ActionT (HathM m) ()
-testSpeed opts = case testArgs of
-    Nothing -> text "Invalid test arguments"
-    Just ( url, count, siz ) -> do
-        lift $ logInfo [i|Starting speed test with #{count} requests|]
-        pxy <- asks (clientProxy . clientConfig)
-        mgr <- liftIO $ newManager tlsManagerSettings
-        successCount <- liftIO $ newTVarIO (0 :: Int)
-        time <- liftIO $ Async.replicateConcurrently count $ do
-            k <- randomRIO @Int ( 0, 1000000 )
-            startTime <- getPOSIXTime
-            void $ try @IO @SomeException $ do
-                pullTestData siz mgr $ setReqProxy pxy [i|#{url}/#{k}|]
-                atomically (modifyTVar' successCount (+ 1))
-            endTime <- getPOSIXTime
-            return (endTime - startTime)
-        success <- liftIO $ readTVarIO successCount
-        let totalTime = realToFrac @POSIXTime @Double $ 1000 * sum time
-        lift $ logInfo [i|Speed test completed in #{totalTime}ms, #{success} requests|]
-        text [i|OK:#{success}-#{truncate totalTime :: Int}|]
-  where
-    pullTestData siz mgr req = withResponse req mgr (void . flip brReadSome siz . getResponseBody)
-
-    setReqProxy pxy r
-        = r
-        { proxy = (\(ClientProxy h p _)
-                   -> Proxy h p) <$> pxy, requestHeaders = case proxyAuth =<< pxy of
-              Nothing -> []
-              Just ( user, pass )
-                  -> [ ( "Proxy-authorization", [i|Basic #{encodeBase64' (user <> ":" <> pass)}|] )
-                     , ( "Connection", "close" )
-                     , ( "User-Agent", "Hentai@Home 161" )
-                     , ( "Cache-Control", "public, max-age=31536000" )
-                     , ( "Server", "Genetic Lifeform and Distributed Open Server 1.6.2" )
-                     , ( "Proxy-Connection", "Keep-Alive" )
-                     ] }
-
-    testArgs :: Maybe ( ByteString, Int, Int )
-    testArgs = do
-        hostname <- Map.lookup "hostname" opts
-        testPort <- Map.lookup "port" opts
-        let protocol = fromMaybe "http" $ Map.lookup "protocol" opts
-        ( testSize, _ ) <- BS.readInt =<< Map.lookup "testsize" opts
-        testTime <- Map.lookup "testtime" opts
-        ( testCount, _ ) <- BS.readInt =<< Map.lookup "testcount" opts
-        testKey <- Map.lookup "testkey" opts
-        return
-            ( [i|#{protocol}://#{hostname}:#{testPort}/t/#{testSize}/#{testTime}/#{testKey}|]
-            , testCount
-            , testSize
-            )
+import           Utils                                ( log )
 
 maxTimeDrift :: Int64
-maxTimeDrift = 300
+maxTimeDrift = 600
 
-runHTTPServer :: IORef HathSettings -> ClientConfig -> IO ()
-runHTTPServer hSets config = do
-    sts <- readIORef hSets
-    print sts
-    writeIORef hSets sts
-    cred <- usingLoggerT richMessageAction (fromPkcs12 config <$> hathCertificate config)
-    terminateRequest <- newEmptyMVar
-    credRef <- newIORef cred
-    flood <- newIORef (HashMap.empty @ByteString @Int)
-    void $ forkIO $ forever (threadDelay (5 * 60 * 1000000) >> writeIORef flood HashMap.empty)
-    withConnection "./cache.db" $ \conn -> do
-        SQLite.execute_ conn "pragma journal_mode=WAL"
-        SQLite.execute_ conn "pragma synchronous=normal"
-        SQLite.execute_ conn "pragma temp_store=memory"
-        SQLite.execute_ conn "pragma cache_size=100000"
-        runHath config hSets conn terminateRequest credRef verifyCache
-        app <- scottyAppT
-            (Options { verbose = 1, settings = setPort (clientPort sts) defaultSettings })
-            (runHath config hSets conn terminateRequest credRef)
-            $ do
-                defaultHandler $ Handler $ \(e :: SomeException) -> do
-                    reqHeader <- headers
-                    lift $ logError [i|Unhandled exception: #{e}, headers: #{reqHeader}|]
-                get "/" $ status status404
-                get "/favicon.ico" $ do
-                    status status301
-                    setHeader "Location" "https://e-hentai.org/favicon.ico"
-                    text ""
-                get "/robots.txt" $ do
-                    status status200
-                    text "User-agent: *\nDisallow: /"
-                get "/h/:info/:opts/:filename" $ do
-                    setCommonHeader
-                    info <- pathParam @ByteString "info"
-                    opts <- pathParam @ByteString "opts"
-                    filename <- pathParam @ByteString "filename"
-                    floodMap <- liftIO $ readIORef flood
-                    currentTime <- liftIO getSystemTime
-                    case parseHathFile info of
-                        Nothing -> do
-                            status status404
-                            text "Invalid or missing file info"
-                        Just f  -> let
-                            keystamp   = fromMaybe "" $ Map.lookup "keystamp" (parseOptions opts)
-                            floodCount = HashMap.lookupDefault 0 keystamp floodMap
-                            in
-                                if
-                                    | floodCount > 3 -> do
-                                        status status418
-                                        text "Hi there, you're flooding me"
-                                    | invalidKeystamp keystamp info currentTime (clientKey config)
-                                        -> do
-                                            status status403
-                                            text "Keystamp verification failed"
-                                    | otherwise -> do
-                                        when (keystamp /= "")
-                                            $ liftIO
-                                            $ modifyIORef flood
-                                            $ HashMap.alter (maybe (pure 0) (pure . succ)) keystamp
-                                        handleResourceRequest filename f (parseOptions opts)
-                get "/servercmd/:command/:additional/:time/:key" $ do
-                    setCommonHeader
-                    cmd <- pathParam @ByteString "command"
-                    add <- pathParam @ByteString "additional"
-                    key <- pathParam @ByteString "key"
-                    time <- pathParam @ByteString "time"
-                    if key
-                        /= hathHash
-                            [i|hentai@home-servercmd-#{cmd}-#{add}-#{clientID config}-#{time}-#{clientKey config}|]
-                        then status status403
-                        else handleRPCCommand cmd add
-                get "/t/:testsize/:testtime/:testkey/:nothing" $ do
-                    setCommonHeader
-                    testSize <- pathParam @Int "testsize"
-                    testTime <- pathParam @Int64 "testtime"
-                    testKey <- pathParam @ByteString "testkey"
-                    currentTime <- liftIO getSystemTime
-                    let cid  = clientID config
-                        ckey = clientKey config
-                    if
-                        | abs (systemSeconds currentTime - testTime)
-                          > maxTimeDrift -> status status403
-                        | testKey
-                          /= hathHash
-                              [i|hentai@home-speedtest-#{testSize}-#{testTime}-#{cid}-#{ckey}|]
-                            -> status status403
-                        | otherwise -> sendTestData testSize
-                notFound $ do
-                    status status403
-                    -- check if they accept gzip
-                    acceptGzip <- header "Accept-Encoding"
-                    when (maybe False (Text.isInfixOf "gzip") acceptGzip) $ do
-                        -- try to give them a "surprise"
-                        setCommonHeader
-                        lift $ logInfo "Sending 100G.gzip"
-                        status status200
-                        setHeader "Content-Encoding" "gzip"
-                        setHeader "Content-Type" "text/html"
-                        file "100G.gzip"
-        loop terminateRequest app credRef
+timeWindow :: NominalDiffTime
+timeWindow = 10
+
+maxRequests :: Int
+maxRequests = 5
+
+data ServerAction = Reload | Cert | Settings | GracefulShutdown
+
+-- Data types for tracking requests
+data IPRecord
+    = IPRecord { requestTimes :: {-# UNPACK #-} ![ UTCTime ]  -- Times of recent requests
+               , bannedUntil  :: {-# UNPACK #-} !(Maybe UTCTime)  -- When the ban expires
+               }
+    deriving ( Show )
+
+-- Change the Map key from SockAddr to a custom IP type
+data IP = IPv4 {-# UNPACK #-} !HostAddress | IPv6 {-# UNPACK #-} !HostAddress6
+    deriving ( Eq, Ord, Show, Generic )
+
+instance Hashable IP
+
+type IPMap = HashMap IP IPRecord
+
+{-# INLINE getIP #-}
+-- Helper function to extract just the IP from a SockAddr
+getIP :: SockAddr -> Maybe IP
+getIP (SockAddrInet _ ha) = Just $ IPv4 ha
+getIP (SockAddrInet6 _ _ ha _) = Just $ IPv6 ha
+getIP _ = Nothing
+
+-- Create a new rate limiting middleware
+rateLimitMiddleware :: TVar IPMap -> Middleware
+rateLimitMiddleware ipMap app req k
+    | "/h/" `BS.isPrefixOf` rawPathInfo req = do
+        now <- getCurrentTime
+        let sockAddr = remoteHost req
+        case getIP sockAddr of
+            Nothing -> app req k  -- If we can't get IP, just allow the request
+            Just ip -> do
+                allowed <- checkRateLimit ipMap ip now
+                if allowed
+                    then app req k
+                    else k tooManyRequestsResponse
+    | otherwise = app req k  -- Skip rate limiting for non-resource paths
+
+-- Check if request is allowed and update rate limit state
+checkRateLimit :: TVar IPMap -> IP -> UTCTime -> IO Bool
+checkRateLimit ipMap ip now = atomically $ do
+    m <- readTVar ipMap
+    maybe firstRequest existingRequest (HashMap.lookup ip m)
   where
-    invalidKeystamp :: ByteString -> ByteString -> SystemTime -> ByteString -> Bool
-    invalidKeystamp ks fileid currentTime ckey
-        = let
-            ( rawTime, rest ) = BS.span (/= '-') ks
-            keystampTime      = maybe 0 fst (BS.readInt rawTime)
-            keystamp          = BS.drop 1 rest
-            in
-                abs (systemSeconds currentTime - fromIntegral keystampTime) > 300
-                || keystamp
-                /= BS.take 10 (hathHash [i|#{keystampTime}-#{fileid}-#{ckey}-hotlinkthis|])
+    -- Handle first request from an IP by creating new record
+    firstRequest = do
+        modifyTVar' ipMap $ HashMap.insert ip (IPRecord [ now ] Nothing)
+        return True
 
-    setCommonHeader = do
-        setHeader "Connection" "close"
-        setHeader "User-Agent" "Hentai@Home 161"
-        setHeader "Cache-Control" "public, max-age=31536000"
-        setHeader "Server" "Server: Genetic Lifeform and Distributed Open Server 1.6.2"
-        setHeader "X-Content-Type-Options" "nosniff"
+    -- Check if IP is banned, otherwise check request count
+    existingRequest record = case bannedUntil record of
+        Just banTime
+            | banTime > now -> return False
+        _ -> checkAndUpdateRequests record
 
-    loop :: MVar RefreshCert -> Application -> IORef Credential -> IO ()
-    loop terminateRequest router credRef = do
-        cred <- readIORef credRef
-        cPort <- clientPort <$> readIORef hSets
-        res <- race
-            (runTLS
-                 (defaultTlsSettings { tlsCredentials     = Just (Credentials [ cred ])
-                                     , tlsAllowedVersions = [ TLS13, TLS12, TLS10, TLS11 ]
-                                     , tlsCiphers         = ciphersuite_default
-                                     })
-                 (setPort cPort defaultSettings)
-                 (logStdoutDev router))
-            (takeMVar terminateRequest)
+    -- Check if requests are within rate limit window and update accordingly
+    checkAndUpdateRequests record = do
+        let windowStart    = addUTCTime (-timeWindow) now
+            recentRequests = takeWhile (> windowStart) (requestTimes record)
+            newRequests    = now : recentRequests
+
+        if length recentRequests >= maxRequests
+            then banIP newRequests
+            else allowRequest newRequests
+
+    -- Ban IP for 10 minutes if too many requests
+    banIP newRequests = do
+        let banUntil = addUTCTime (10 * 60) now  -- 10 minute ban
+        modifyTVar' ipMap $ HashMap.insert ip (IPRecord newRequests (Just banUntil))
+        return False
+
+    -- Allow request and update record with new request time
+    allowRequest newRequests = do
+        modifyTVar' ipMap $ HashMap.insert ip (IPRecord newRequests Nothing)
+        return True
+
+{-# INLINE tooManyRequestsResponse #-}
+-- Standard 429 response
+tooManyRequestsResponse :: Response
+tooManyRequestsResponse
+    = responseLBS
+        (mkStatus 429 "Too Many Requests")
+        [ ( "Content-Type", "text/plain" ) ]
+        "Too Many Requests"
+
+-- Server implementation
+server :: Members
+           '[ Embed IO
+            , Error ServerError
+            , Reader ClientConfig
+            , RPC
+            , Locate
+            , Reader (MVar ServerAction)
+            , Log Message
+            ]
+           r
+       => ServerT API (Sem r)
+server
+    = faviconHandler
+    :<|> robotsHandler
+    :<|> resourceHandler
+    :<|> serverCmdHandler
+    :<|> testHandler
+    :<|> Tagged rawHandler
+  where
+    faviconHandler
+        = throw $ err301 { errHeaders = [ ( "Location", "https://e-hentai.org/favicon.ico" ) ] }
+
+    robotsHandler = return "User-agent: *\nDisallow: /"
+
+    resourceHandler
+        (encodeUtf8 -> fileid)
+        (parseURLParams . encodeUtf8 -> opts)
+        (encodeUtf8 -> filename) = do
+        currentTime <- embed getSystemTime
+        cfg <- ask @ClientConfig
+        when (abs (timestamp - systemSeconds currentTime) > maxTimeDrift)
+            $ throw
+                err403 { errBody = "Your time is out of sync. Please update your system time." }
+        when (answer /= challange cfg) $ throw err403 { errBody = "Invalid key." }
+        res <- locateResource
+            LocateURI { locateURIFilename = filename, locateURI = uri, locateURIOptions = opts }
         case res of
-            Left _ -> error "impossible"
-            Right (RefreshCert newCred) -> do
-                writeIORef credRef newCred
-                putStrLn "Restarting server with new credentials"
-                loop terminateRequest router credRef
+            Nothing -> throw err404
+            Just bs -> return
+                $ addHeader @"Content-Length" (BS.length bs)
+                $ WithDynamicContentType mimeType bs
+      where
+        mimeType = case fileExt uri of
+            "jpg" -> "image/jpeg"
+            "png" -> "image/png"
+            "gif" -> "image/gif"
+            "mp4" -> "video/mp4"
+            "wbm" -> "video/webm"
+            "wbp" -> "video/webp"
+            "avf" -> "video/avif"
+            "jxl" -> "image/jxl"
+            _     -> "application/octet-stream"
 
+        uri = parseFileURI fileid
 
+        ( timestamp :: Int64, answer )
+            = let
+                rs        = fromMaybe "" (Map.lookup "keystamp" opts)
+                ( t, rk ) = BSC.span (/= '-') rs
+                in 
+                    ( fromIntegral $ maybe 0 fst $ BSC.readInteger t, BS.tail rk )
+
+        {-# INLINE challange #-}
+        challange :: ClientConfig -> ByteString
+        challange cfg = BS.take 10 (hash [i|#{timestamp}-#{fileid}-#{key cfg}-hotlinkthis|])
+
+    serverCmdHandler command (parseURLParams . encodeUtf8 -> additional) time key = case command of
+        StillAlive        -> plainText "I feel FANTASTIC and I'm still alive"
+        ThreadedProxyTest -> let
+            args = do
+                hostname <- lookupParam "hostname" additional
+                protocol <- lookupParam "protocol" additional <|> return "http"
+                port <- lookupParam "port" additional
+                testSize <- readInt @Int64 =<< lookupParam "testsize" additional
+                testCount <- readInt =<< lookupParam "testcount" additional
+                testTime <- readInt @Int64 =<< lookupParam "testtime" additional
+                testKey <- lookupParam "testkey" additional
+                return
+                    ( testCount
+                    , testSize
+                    , [i|#{protocol}://#{hostname}:#{port}/t/#{testSize}/#{testTime}/#{testKey}/0|]
+                    )
+            in 
+                case args of
+                    Nothing -> throw err403
+                    Just ( testCount, testSize, url ) -> do
+                        mgr <- embed $ newManager tlsManagerSettings
+                        case parseRequest url of
+                            Nothing  -> throw err403
+                            Just req -> do
+                                results <- replicateM testCount $ embed $ runTest testSize req mgr
+                                let ( failed :: Int, millis :: Int64 )
+                                        = foldl' (\( f, t ) r -> case r of
+                                                      Nothing -> ( f + 1, t )
+                                                      Just v  -> ( f, t + v )) ( 0, 0 ) results
+                                plainText [i|OK:#{failed}-#{millis}|]
+        SpeedTest         -> let
+            testSize
+                = maybe
+                    1000000
+                    (fromIntegral . fst)
+                    (BSC.readInteger =<< lookupParam "testsize" additional)
+            in 
+                return
+                $ addHeader @"Content-Length" testSize
+                $ Source.fromStepT
+                $ bufferSending testSize
+        RefreshSettings   -> do
+            log Info "Refreshing settings"
+            chan <- ask @(MVar ServerAction)
+            void $ embed $ forkIO $ do
+                threadDelay (1000000 * 2)
+                putMVar chan Settings
+            plainText ""
+        StartDownloader   -> plainText ""
+        RefreshCerts      -> do
+            log Info "Refreshing certificates"
+            chan <- ask @(MVar ServerAction)
+            void $ embed $ forkIO $ do
+                threadDelay (1000000 * 2)
+                putMVar chan Cert
+            plainText ""
+      where
+        runTest testSize req mgr = do
+            start <- getPOSIXTime
+            let phi 0 _  = do
+                    end <- getPOSIXTime
+                    return $ truncate $ realToFrac @POSIXTime @Double $ 1000 * (end - start)
+                phi n br = do
+                    s <- LBS.length <$> brReadSome br 1024
+                    phi (max 0 (n - s)) br
+            try @SomeException (withResponse req mgr (phi testSize . getResponseBody)) >>= \case
+                Left _  -> return Nothing
+                Right v -> return $ Just v
+
+        {-# INLINE readInt #-}
+        {-# SPECIALISE readInt :: ByteString -> Maybe Int #-}
+        {-# SPECIALISE readInt :: ByteString -> Maybe Int64 #-}
+        readInt :: Num a => ByteString -> Maybe a
+        readInt = fmap (fromIntegral . fst) . BSC.readInteger
+
+        {-# INLINE plainText #-}
+        plainText t
+            = pure
+            $ addHeader @"Content-Length" (BS.length t)
+            $ Source.fromStepT
+            $ Source.Yield t Source.Stop
+
+    testHandler testSize testTime (encodeUtf8 @_ @ByteString -> testKey) _ = do
+        currentTime <- embed getSystemTime
+        cfg <- ask @ClientConfig
+        when (abs (testTime - systemSeconds currentTime) > maxTimeDrift) $ throw err403
+        when (testKey /= challange cfg) $ throw err403
+        return $ addHeader @"Content-Length" testSize $ Source.fromStepT $ bufferSending testSize
+      where
+        {-# INLINE challange #-}
+        challange :: ClientConfig -> ByteString
+        challange cfg
+            = hash
+                @ByteString
+                [i|hentai@home-speedtest-#{testSize}-#{testTime}-#{clientId cfg}-#{key cfg}|]
+
+    rawHandler req k = case requestMethod req of
+        -- Handle HEAD requests with 200 OK and empty body
+        "HEAD" -> k $ responseLBS status200 hentaiHeader ""
+
+        _      -> k $ responseLBS status404 [] ""
+
+tictok config ipMap = do
+    -- ipmap cleanup
+    cleanupHandle <- repeatedTimer
+        (do
+             now <- getCurrentTime
+             atomically $ do
+                 m <- readTVar ipMap
+                 let windowStart = addUTCTime (-timeWindow) now
+                 let filtered = HashMap.filter (\record -> case bannedUntil record of
+                                                    Just banTime
+                                                        | banTime > now -> True
+                                                    _ -> case requestTimes record of
+                                                        (t : _) -> t > windowStart
+                                                        []      -> False) m
+                 writeTVar ipMap filtered)
+        (mDelay 1)
+
+    -- heartbeat
+    heartbeatHandle <- repeatedTimer (void $ runRPCIO config stillAlive) (mDelay 1)
+
+    -- resource blacklist
+    blacklistHandle <- repeatedTimer (do
+                                          res <- runRPCIO config (fetchBlacklist 43200)
+                                          print res) (mDelay 36)
+
+    return $ \() -> do
+        stopTimer cleanupHandle
+        stopTimer heartbeatHandle
+        stopTimer blacklistHandle
+
+notifyStart :: ClientConfig -> HathSettings -> IO ()
+notifyStart config _ = psi
+  where
+    psi = runRPCIO config startListening >>= \case
+        Right (Right True) -> return ()
+        _ -> threadDelay 1000000 >> psi
+
+-- Create the WAI application with rate limiting
+makeApplication
+    :: ClientConfig -> HathSettings -> MVar ServerAction -> TVar IPMap -> Connection -> Application
+makeApplication config settings action ipMap conn
+    = rateLimitMiddleware ipMap
+    $ normalizeAcceptMiddleware
+    $ serve api (hoistServer api interpretServer server)
+  where
+    interpretServer :: Sem _ a -> Handler a
+    interpretServer
+        = Handler
+        . ExceptT
+        . runFinal
+        . embedToFinal @IO
+        . errorToIOFinal @ServerError
+        . mapError @RPCError (const err500)
+        . mapError @ClientError (const err500)
+        . mapError @SomeException (const err500)
+        . runReader settings
+        . runReader config
+        . runReader action
+        . runLogAction @IO @Message richMessageAction
+        . runEHentaiAPI
+        . runCache conn
+        . runLocate
+        . runRPC
+
+startServer
+    :: ClientConfig -> HathSettings -> ( CertificateChain, PrivKey ) -> MVar ServerAction -> IO ()
+startServer config settings certs chan = do
+    ipMap <- newTVarIO HashMap.empty
+    print =<< runRPCIO config (fetchBlacklist 259200)
+    withConnection (Text.unpack $ cachePath config) $ \conn -> do
+        initializeDB conn
+        void $ tictok config ipMap
+        loop config settings certs conn ipMap
+  where
+    refreshSettings set = phi 0
+      where
+        phi (retries :: Int) = runGenesisIO config fetchSettings >>= \case
+            Right (Right newSetings) -> return newSetings
+            e -> do
+                putStrLn $ "Failed to refresh settings: " <> show e
+                if retries > 3
+                    then do
+                        putStrLn "Giving up"
+                        return set
+                    else do
+                        putStrLn $ "Retrying in " <> show (2 ^ retries :: Int) <> " seconds"
+                        threadDelay (1000000 * 2 ^ retries)
+                        phi (retries + 1)
+
+    refreshCerts c = phi 0
+      where
+        phi (retries :: Int) = runGenesisIO config fetchCertificate >>= \case
+            Right (Right newCerts) -> return newCerts
+            e -> do
+                putStrLn $ "Failed to refresh certs: " <> show e
+                if retries > 3
+                    then do
+                        putStrLn "Giving up"
+                        return c
+                    else do
+                        putStrLn $ "Retrying in " <> show (2 ^ retries :: Int) <> " seconds"
+                        threadDelay (1000000 * 2 ^ retries)
+                        phi (retries + 1)
+
+    loop cfg set c conn ipMap = do
+        let app = makeApplication cfg set chan ipMap conn
+        result <- withAsync (notifyStart cfg set) $ \_ -> race (takeMVar chan)
+            $ runTLS
+                (defaultTlsSettings
+                 { tlsCredentials = Just (Credentials [ c ]), onInsecure = AllowInsecure })
+                (setPort (clientPort set) defaultSettings)
+            $ logStdoutDev
+            $ logStdout app
+        case result of
+            Left GracefulShutdown -> do
+                let phi = flip unless phi . fromRight False =<< runEHentaiAPIIO cfg stopListening
+                phi
+                exitSuccess
+            Left Reload -> exitSuccess
+            Left Cert -> do
+                newCerts <- refreshCerts c
+                loop cfg set newCerts conn ipMap
+            Left Settings -> do
+                newSettings <- refreshSettings set
+                loop cfg newSettings certs conn ipMap
+            Right _ -> error "Server terminated unexpectedly"
+
+normalizeAcceptMiddleware :: Middleware
+normalizeAcceptMiddleware app req = app req { requestHeaders = normalizedHeaders }
+  where
+    normalizedHeaders = map normalizeHeader (requestHeaders req)
+
+    normalizeHeader ( name, value )
+        | name == hAccept = ( name, "*/*" )
+        | otherwise = ( name, value )
 
