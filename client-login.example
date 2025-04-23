@@ -1,0 +1,25 @@
+let ClientProxy =
+      { host : Text
+      , port : Integer
+      , auth : Optional { _1 : Text, _2 : Text }
+      }
+
+let ClientConfig =
+      { Type =
+          { clientId : Text
+          , key : Text
+          , version : Text
+          , proxy : Optional ClientProxy
+          , downloadDir : Text
+          , cachePath : Text
+          }
+      , default = { version = "", proxy = None ClientProxy }
+      }
+
+in  ClientConfig::{
+    , clientId = "<YOURID>"
+    , key = "<YOURKEY>"
+    , version = "176"
+    , downloadDir = "./download"
+    , cachePath = "./cache"
+    }
