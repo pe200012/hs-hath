@@ -30,7 +30,7 @@ jobs:
         ghc-version: ${{ matrix.plan.ghc }}
         enable-stack: true
 
-    - uses: actions/cache@v2
+    - uses: actions/cache@v4
       ## Looks like caching in macOS causes weird failures in the steps later.
       if: runner.os != 'macOS'
       with:
