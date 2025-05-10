@@ -1,0 +1,5 @@
+packages: .
+
+package hs-hath
+
+allow-newer: polysemy-zoo:constraints
