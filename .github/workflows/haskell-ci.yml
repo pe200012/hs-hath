@@ -24,10 +24,9 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
-    - name: Setup SQLite environment
-      uses: ccorsi/setup-sqlite@v1.2.1 
-      with:
-        sqlite-version: 3.49.1
+    - name: sqlite3 install
+      run: |
+        sudo apt install libsqlite3-dev
 
     - uses: haskell-actions/setup@v2
       id: cabal-setup-haskell
