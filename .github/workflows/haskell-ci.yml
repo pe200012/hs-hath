@@ -26,6 +26,8 @@ jobs:
 
     - name: Setup SQLite environment
       uses: ccorsi/setup-sqlite@v1.2.1 
+      with:
+        sqlite-version: 3.49.1
 
     - uses: haskell-actions/setup@v2
       id: cabal-setup-haskell
