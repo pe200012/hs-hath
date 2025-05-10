@@ -1,4 +1,4 @@
-resolver: lts-22.28
+resolver: lts-22.43
 
 packages:
   - .
@@ -26,7 +26,6 @@ extra-deps:
   - tls-session-manager-0.0.5
   - crypto-token-0.1.1
   - warp-3.4.1
-  - auto-update-0.2.0
   - http2-5.2.2
   - time-manager-0.1.0
   - http-semantics-0.0.1
@@ -39,6 +38,7 @@ extra-deps:
   - servant-server-0.20.2
   - timers-0.2.0.4
   - suspend-0.2.0.0
+  - auto-update-0.2.6
 
 allow-newer: true
 allow-newer-deps:
@@ -47,3 +47,6 @@ allow-newer-deps:
 flags:
   cryptostore:
     use_crypton: True
+
+nix:
+  enable: false
