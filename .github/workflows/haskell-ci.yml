@@ -24,8 +24,9 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
-    - uses: actions/setup-sqlite@v1
-      
+    - name: Setup SQLite environment
+      uses: ccorsi/setup-sqlite@v1.2.1 
+
     - uses: haskell-actions/setup@v2
       id: cabal-setup-haskell
       with:
@@ -53,12 +54,14 @@ jobs:
       run: |
         stack install --system-ghc --local-bin-path ./bin/
     - name: Compress binaries
-      uses: svenstaro/upx-action@v2
+      uses: crazy-max/ghaction-upx@v3
       with:
+        version: latest
         files: |
           ./bin/*
+        args: -fq
     - name: Upload Binary
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: hs-hath-${{ matrix.os }}
         path: |
