@@ -48,11 +48,12 @@ initializeDB conn = do
     execute_ conn "pragma journal_mode=WAL"
     execute_ conn "pragma synchronous=normal"
     execute_ conn "pragma temp_store=memory"
-    execute_ conn "pragma cache_size=100000"
-    execute_ conn "pragma mmap_size=65536"
+
+    -- execute_ conn "pragma cache_size=100000"
+    -- execute_ conn "pragma mmap_size=65536"
 
 -- | Run the cache with SQLite
-runCache :: Members '[ Embed IO ] r => Connection -> KVStore FileURI FileRecord : r @> a -> Sem r a
+runCache :: Members '[ Embed IO ] r => Connection -> KVStore FileURI FileRecord : r @> a -> r @> a
 runCache conn = interpret $ \case
     LookupKV uri -> do
         let fid = show @Text uri
