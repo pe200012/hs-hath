@@ -65,7 +65,7 @@ makeSem ''RPC
 runRPC :: forall a r.
        Members '[ Embed IO, Error RPCError, Reader ClientConfig, EHentaiAPI, Log Message ] r
        => RPC : r @> a
-       -> Sem r a
+       -> r @> a
 runRPC = interpret $ \case
     ServerStat -> do
         b <- checkServerStatus
