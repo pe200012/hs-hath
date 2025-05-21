@@ -2,4 +2,7 @@ packages: .
 
 package hs-hath
 
-allow-newer: polysemy-zoo:constraints
+allow-newer:
+    polysemy-zoo:constraints
+  , polysemy-zoo:ghc-prim
+  , polysemy-zoo:base
