@@ -54,7 +54,7 @@ library
       ViewPatterns
       MultiParamTypeClasses
       GADTs
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2 -static -optl-static
   build-depends:
       async ==2.2.*
     , base >=4.7 && <5
@@ -131,7 +131,7 @@ executable hs-hath
       ViewPatterns
       MultiParamTypeClasses
       GADTs
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2 -threaded -rtsopts -with-rtsopts=-N -fpedantic-bottoms
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2 -static -optl-static -threaded -rtsopts -with-rtsopts=-N -fpedantic-bottoms
   build-depends:
       async ==2.2.*
     , base >=4.7 && <5
@@ -210,7 +210,7 @@ test-suite hs-hath-test
       ViewPatterns
       MultiParamTypeClasses
       GADTs
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2 -static -optl-static
   build-depends:
       async ==2.2.*
     , base >=4.7 && <5
