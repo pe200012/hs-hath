@@ -457,7 +457,14 @@ startServer config settings certs chan = do
         void $ tictok config ipMap
         loop config settings certs conn ipMap
   where
-    refreshSettings set = phi 0
+    gracefulShutdown :: IO a
+    gracefulShutdown
+        = let
+            phi = flip unless phi . fromRight False =<< runEHentaiAPIIO config stopListening
+            in 
+                phi >> exitSuccess
+
+    refreshSettings = phi 0
       where
         phi (retries :: Int) = runGenesisIO config fetchSettings >>= \case
             Right (Right newSetings) -> return newSetings
@@ -466,13 +473,13 @@ startServer config settings certs chan = do
                 if retries > 3
                     then do
                         putStrLn "Giving up"
-                        return set
+                        gracefulShutdown
                     else do
                         putStrLn $ "Retrying in " <> show (2 ^ retries :: Int) <> " seconds"
                         threadDelay (1000000 * 2 ^ retries)
                         phi (retries + 1)
 
-    refreshCerts c = phi 0
+    refreshCerts = phi 0
       where
         phi (retries :: Int) = runGenesisIO config fetchCertificate >>= \case
             Right (Right newCerts) -> return newCerts
@@ -481,7 +488,7 @@ startServer config settings certs chan = do
                 if retries > 3
                     then do
                         putStrLn "Giving up"
-                        return c
+                        gracefulShutdown
                     else do
                         putStrLn $ "Retrying in " <> show (2 ^ retries :: Int) <> " seconds"
                         threadDelay (1000000 * 2 ^ retries)
@@ -497,16 +504,13 @@ startServer config settings certs chan = do
             $ logStdoutDev
             $ logStdout app
         case result of
-            Left GracefulShutdown -> do
-                let phi = flip unless phi . fromRight False =<< runEHentaiAPIIO cfg stopListening
-                phi
-                exitSuccess
+            Left GracefulShutdown -> gracefulShutdown
             Left Reload -> exitSuccess
             Left Cert -> do
-                newCerts <- refreshCerts c
+                newCerts <- refreshCerts
                 loop cfg set newCerts conn ipMap
             Left Settings -> do
-                newSettings <- refreshSettings set
+                newSettings <- refreshSettings
                 loop cfg newSettings certs conn ipMap
             Right _ -> error "Server terminated unexpectedly"
 
