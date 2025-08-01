@@ -1,5 +1,7 @@
 module Main ( main ) where
 
+import           CLI          ( Options(..), applyOptionsToConfig, parseOptions )
+
 import           Genesis      ( fetchCertificate, runGenesisIO )
 
 import           RPC
@@ -14,7 +16,9 @@ import           Types
 
 main :: IO ()
 main = do
-    config <- readClientConfig "./client-login"
+    options <- parseOptions
+    baseConfig <- readClientConfig (toText $ optConfigPath options)
+    let config = applyOptionsToConfig options baseConfig
     chan <- newEmptyMVar
     void $ installHandler sigINT (Catch $ putMVar chan GracefulShutdown) Nothing
     void $ installHandler sigTERM (Catch $ putMVar chan GracefulShutdown) Nothing
