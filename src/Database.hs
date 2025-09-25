@@ -45,7 +45,7 @@ initializeDB conn = do
         file_name TEXT,
         bytes BLOB NOT NULL
     ) strict|]
-    execute_ conn "pragma journal_mode=WAL"
+    execute_ conn "pragma journal_mode=delete"
     execute_ conn "pragma synchronous=normal"
     execute_ conn "pragma temp_store=memory"
 
