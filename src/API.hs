@@ -12,6 +12,7 @@ module API
     , ServerCommand(..)
     , DynCT
     , WithDynamicContentType(..)
+    , StatsSnapshot(..)
       -- * EHentai RPC
     , EHentaiAPI(..)
     , ehRPC
@@ -87,6 +88,8 @@ import           Servant.Client           ( BaseUrl(BaseUrl)
                                           , runClientM
                                           )
 import           Servant.Client.Core      ( addHeader )
+
+import           Stats                    ( StatsSnapshot )
 
 import           Types                    ( ClientConfig
                                           , ClientConfig(..)
@@ -173,6 +176,7 @@ type API
         :> Capture "opts" Text
         :> Capture "filename" Text
         :> Get '[DynCT] (Headers '[Header "Content-Length" Int] WithDynamicContentType)
+    :<|> "stats" :> Get '[JSON] StatsSnapshot
     :<|> "servercmd"
         :> Capture "command" ServerCommand
         :> Capture "additional" Text

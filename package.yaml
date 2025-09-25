@@ -17,11 +17,12 @@ description: Please see the README on GitHub at <https://github.com/pe200012/hs-
 
 language: GHC2021
 
-tested-with: 
+tested-with:
   - GHC == 9.6.6
 
 dependencies:
   - base >= 4.7 && < 5
+  - aeson >= 2.1 && < 2.2
   - async >= 2.2 && < 2.3
   - base64 >= 1.0 && < 1.1
   - bytestring >= 0.11 && < 0.12
@@ -90,8 +91,8 @@ ghc-options:
   - -Wpartial-fields
   - -Wredundant-constraints
   - -O2
-  - -static
-  - -optl-static
+#  - -static
+#  - -optl-static
 
 default-extensions:
   - NoImplicitPrelude

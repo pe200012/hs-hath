@@ -104,6 +104,18 @@ import qualified Servant.Types.SourceT                as Source
 
 import           SpeedTest                            ( bufferSending )
 
+import           Stats                                ( Stats
+                                                      , StatsEnv(..)
+                                                      , StatsSnapshot(..)
+                                                      , addDownload
+                                                      , addUpload
+                                                      , incFetched
+                                                      , incServed
+                                                      , newStatsEnv
+                                                      , readSnapshot
+                                                      , runStats
+                                                      )
+
 import           Types                                ( ClientConfig
                                                       , ClientConfig(..)
                                                       , FileURI(fileExt)
@@ -222,6 +234,7 @@ server :: Members
             , RPC
             , Locate
             , Reader (MVar ServerAction)
+            , Stats
             , Log Message
             ]
            r
@@ -230,6 +243,7 @@ server
     = faviconHandler
     :<|> robotsHandler
     :<|> resourceHandler
+    :<|> statsHandler
     :<|> serverCmdHandler
     :<|> testHandler
     :<|> Tagged rawHandler
@@ -253,9 +267,12 @@ server
             LocateURI { locateURIFilename = filename, locateURI = uri, locateURIOptions = opts }
         case res of
             Nothing -> throw err404
-            Just bs -> return
-                $ addHeader @"Content-Length" (BS.length bs)
-                $ WithDynamicContentType mimeType bs
+            Just bs -> do
+                incServed
+                addUpload (BS.length bs)
+                return
+                    $ addHeader @"Content-Length" (BS.length bs)
+                    $ WithDynamicContentType mimeType bs
       where
         mimeType = case fileExt uri of
             "jpg" -> "image/jpeg"
@@ -363,6 +380,10 @@ server
             $ Source.fromStepT
             $ Source.Yield t Source.Stop
 
+    statsHandler = do
+        snapshot <- readSnapshot
+        pure snapshot
+
     testHandler testSize testTime (encodeUtf8 @_ @ByteString -> testKey) _ = do
         currentTime <- embed getSystemTime
         cfg <- ask @ClientConfig
@@ -421,9 +442,14 @@ notifyStart config _ = psi
         _ -> threadDelay 1000000 >> psi
 
 -- Create the WAI application with rate limiting
-makeApplication
-    :: ClientConfig -> HathSettings -> MVar ServerAction -> TVar IPMap -> Connection -> Application
-makeApplication config settings action ipMap conn
+makeApplication :: ClientConfig
+                -> HathSettings
+                -> MVar ServerAction
+                -> TVar IPMap
+                -> Connection
+                -> StatsEnv
+                -> Application
+makeApplication config settings action ipMap conn statsEnv
     = rateLimitMiddleware ipMap
     $ normalizeAcceptMiddleware
     $ serve api (hoistServer api interpretServer server)
@@ -441,9 +467,11 @@ makeApplication config settings action ipMap conn
         . runReader settings
         . runReader config
         . runReader action
+        . runReader statsEnv
         . runLogAction @IO @Message richMessageAction
         . runEHentaiAPI
         . runCache conn
+        . runStats
         . runLocate
         . runRPC
 
@@ -451,11 +479,12 @@ startServer
     :: ClientConfig -> HathSettings -> ( CertificateChain, PrivKey ) -> MVar ServerAction -> IO ()
 startServer config settings certs chan = do
     ipMap <- newTVarIO HashMap.empty
+    statsEnv <- newStatsEnv
     print =<< runRPCIO config (fetchBlacklist 259200)
     withConnection (Text.unpack $ cachePath config) $ \conn -> do
         initializeDB conn
         void $ tictok config ipMap
-        loop config settings certs conn ipMap
+        loop config settings certs conn ipMap statsEnv
   where
     gracefulShutdown :: IO a
     gracefulShutdown
@@ -494,8 +523,8 @@ startServer config settings certs chan = do
                         threadDelay (1000000 * 2 ^ retries)
                         phi (retries + 1)
 
-    loop cfg set c conn ipMap = do
-        let app = makeApplication cfg set chan ipMap conn
+    loop cfg set c conn ipMap statsEnv = do
+        let app = makeApplication cfg set chan ipMap conn statsEnv
         result <- withAsync (notifyStart cfg set) $ \_ -> race (takeMVar chan)
             $ runTLS
                 (defaultTlsSettings
@@ -508,10 +537,10 @@ startServer config settings certs chan = do
             Left Reload -> exitSuccess
             Left Cert -> do
                 newCerts <- refreshCerts
-                loop cfg set newCerts conn ipMap
+                loop cfg set newCerts conn ipMap statsEnv
             Left Settings -> do
                 newSettings <- refreshSettings
-                loop cfg newSettings certs conn ipMap
+                loop cfg newSettings certs conn ipMap statsEnv
             Right _ -> error "Server terminated unexpectedly"
 
 normalizeAcceptMiddleware :: Middleware

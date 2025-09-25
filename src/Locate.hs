@@ -9,6 +9,7 @@ import           Colog                   ( Message, Severity(Info, Warning) )
 import           Colog.Polysemy          ( Log )
 
 import qualified Data.ByteString.Short   as SBS
+import qualified Data.ByteString         as BS
 import qualified Data.HashSet            as HashSet
 import qualified Data.Map                as Map
 import           Data.String.Interpolate ( i )
@@ -26,6 +27,7 @@ import           Relude                  hiding ( Reader, ask )
 import           Types
 
 import           Utils                   ( log )
+import           Stats                   ( Stats, addDownload, incFetched )
 
 data LocateURI
     = LocateURI { locateURIFilename :: !ByteString
@@ -46,6 +48,7 @@ runLocate :: Members
                , Reader ClientConfig
                , EHentaiAPI
                , Embed IO
+               , Stats
                , Log Message
                ]
               r
@@ -68,6 +71,8 @@ runLocate = interpret $ \case
                         >> fetchResource fileURI ( fileIndex, xres )
                         >>= \case
                             Just content -> do
+                                incFetched
+                                addDownload (BS.length content)
                                 updateKV fileURI
                                     $ Just
                                     $ FileRecord { fileRecordLRUCounter = 1
