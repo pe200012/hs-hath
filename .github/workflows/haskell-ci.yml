@@ -9,12 +9,12 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         plan:
-          - ghc: '9.6.6'
-            resolver: 'lts-22.43'
+          - ghc: '9.6.7'
+            resolver: 'lts-22.44'
         ## include:
         ##   - os: macOS-latest
         ##     flags: '--flag greskell:-hint-test'
-            
+
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.plan.allow-fail == true }}
     env:
@@ -40,7 +40,7 @@ jobs:
       with:
         path: ~/.stack
         key: ${{ runner.os }}-stack-${{ hashFiles('stack.yaml') }}-${{ matrix.plan.resolver }}
-    
+
     - name: Configure
       run: |
         set -ex
