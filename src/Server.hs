@@ -3,7 +3,7 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Server ( startServer, ServerAction(..) ) where
+module Server ( startServer, ServerAction(..), makeApplication ) where
 
 import           API                                  ( API
                                                       , ServerCommand(..)

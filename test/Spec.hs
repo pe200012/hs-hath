@@ -1,48 +1,69 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeOperators #-}
 
-import qualified Data.ByteString as BS
-import           Data.Text       ( Text )
+import qualified Data.Map.Strict  as Map
+import           Data.Text        ( Text )
 
 import           Database
 
-import           Polysemy
+import           Integration      ( integrationSpecs )
 
-import           Relude
+import           Polysemy
+import           Polysemy.KVStore ( KVStore, lookupKV, updateKV )
+
+import           Relude           hiding ( Reader )
 
 import           Test.Hspec
 
+import           Types            ( FileURI, parseFileURI )
+
 main :: IO ()
 main = hspec $ do
-    describe "Cache effect" $ do
-        let sampleRecord
-                = FileRecord { fileRecordLRUCounter = 1
-                             , fileRecordS4         = "s4-value"
-                             , fileRecordFileId     = "test-id"
-                             , fileRecordFileName   = Just "test.txt"
-                             , fileRecordBytes      = "test content"
-                             }
+  cacheSpecs
+  integrationSpecs
 
-        describe "runCachePure" $ do
-            it "should store and retrieve a file record" $ do
-                let program = do
-                        storeFile sampleRecord
-                        lookupFile "test-id"
-                    result  = run $ runCachePure [] program
+-- | Helper to store a file record
+storeFile :: Member (KVStore FileURI FileRecord) r => FileRecord -> Sem r ()
+storeFile record = updateKV (parseFileURI $ encodeUtf8 $ fileRecordFileId record) (Just record)
 
-                result `shouldBe` Just sampleRecord
+-- | Helper to lookup a file by id
+lookupFile :: Member (KVStore FileURI FileRecord) r => Text -> Sem r (Maybe FileRecord)
+lookupFile fid = lookupKV (parseFileURI $ encodeUtf8 fid)
 
-            it "should return Nothing for non-existent file" $ do
-                let program = lookupFile "non-existent"
-                    result  = run $ runCachePure [] program
+cacheSpecs :: Spec
+cacheSpecs = describe "Cache effect" $ do
+  let sampleRecord
+        = FileRecord { fileRecordLRUCounter = 1
+                     , fileRecordS4         = "s4-value"
+                     , fileRecordFileId     = "test-id"
+                     , fileRecordFileName   = Just "test.txt"
+                     , fileRecordBytes      = "test content"
+                     }
 
-                result `shouldBe` Nothing
+  describe "runCachePure" $ do
+    it "should store and retrieve a file record" $ do
+      let program = do
+            storeFile sampleRecord
+            lookupFile "test-id"
+          result  = run $ runCachePure Map.empty program
 
-            it "should update existing record" $ do
-                let updatedRecord = sampleRecord { fileRecordBytes = "new content" }
-                    program       = do
-                        storeFile sampleRecord
-                        storeFile updatedRecord
-                        lookupFile "test-id"
-                    result        = run $ runCachePure [] program
+      result `shouldBe` Just sampleRecord
 
-                result `shouldBe` Just updatedRecord
+    it "should return Nothing for non-existent file" $ do
+      let program = lookupFile "non-existent"
+          result  = run $ runCachePure Map.empty program
+
+      result `shouldBe` Nothing
+
+    it "should update existing record" $ do
+      let updatedRecord = sampleRecord { fileRecordBytes = "new content" }
+          program       = do
+            storeFile sampleRecord
+            storeFile updatedRecord
+            lookupFile "test-id"
+          result        = run $ runCachePure Map.empty program
+
+      result `shouldBe` Just updatedRecord
+
+

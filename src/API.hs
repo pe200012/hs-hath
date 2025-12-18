@@ -258,8 +258,13 @@ runEHentaiAPI m = do
   manager <- embed $ newManager defaultManagerSettings
   currentTime <- embed (systemSeconds <$> getSystemTime)
   -- Internal: Override RPC host via HATH_RPC_HOST environment variable
+  -- Format: "host" or "host:port" (default port: 80)
   rpcHostOverride <- embed (lookupEnv "HATH_RPC_HOST" :: IO (Maybe String))
-  let rpcHostName = fromMaybe "rpc.hentaiathome.net" rpcHostOverride
+  let ( rpcHostName, rpcPort ) = case rpcHostOverride of
+        Nothing      -> ( "rpc.hentaiathome.net", 80 )
+        Just hostStr -> case break (== ':') hostStr of
+          ( h, ':' : p ) -> ( h, fromMaybe 80 (readMaybe p) )
+          ( h, _ )       -> ( h, 80 )
   let k :: RPCParams -> String -> Sem r ByteString
       k params endpoint
         = either throw pure
@@ -271,7 +276,7 @@ runEHentaiAPI m = do
                        , actkey      = Just $ makeKey params cfg currentTime
                        , cid         = Just (clientId cfg)
                        })
-             (mkClientEnv manager (BaseUrl Http rpcHostName 80 endpoint))
+             (mkClientEnv manager (BaseUrl Http rpcHostName rpcPort endpoint))
              { makeClientRequest = \baseUrl req -> do
                  servantReq <- defaultMakeClientRequest
                    baseUrl
