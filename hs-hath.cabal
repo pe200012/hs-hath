@@ -1,6 +1,6 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.38.0.
+-- This file has been generated from package.yaml by hpack version 0.38.1.
 --
 -- see: https://github.com/sol/hpack
 
@@ -30,6 +30,7 @@ source-repository head
 library
   exposed-modules:
       API
+      CLI
       Database
       Genesis
       Hash
@@ -37,6 +38,7 @@ library
       RPC
       Server
       SpeedTest
+      Stats
       Types
       URLParam
       Utils
@@ -54,9 +56,10 @@ library
       ViewPatterns
       MultiParamTypeClasses
       GADTs
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2 -static -optl-static
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2
   build-depends:
-      async ==2.2.*
+      aeson >=2.1 && <2.3
+    , async ==2.2.*
     , base >=4.7 && <5
     , base64 ==1.0.*
     , binary ==0.8.*
@@ -131,9 +134,10 @@ executable hs-hath
       ViewPatterns
       MultiParamTypeClasses
       GADTs
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2 -static -optl-static -threaded -rtsopts -with-rtsopts=-N -fpedantic-bottoms
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2 -threaded -rtsopts -with-rtsopts=-N -fpedantic-bottoms
   build-depends:
-      async ==2.2.*
+      aeson >=2.1 && <2.3
+    , async ==2.2.*
     , base >=4.7 && <5
     , base64 ==1.0.*
     , binary ==0.8.*
@@ -210,9 +214,10 @@ test-suite hs-hath-test
       ViewPatterns
       MultiParamTypeClasses
       GADTs
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2 -static -optl-static
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -O2
   build-depends:
-      async ==2.2.*
+      aeson >=2.1 && <2.3
+    , async ==2.2.*
     , base >=4.7 && <5
     , base64 ==1.0.*
     , binary ==0.8.*
