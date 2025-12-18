@@ -19,8 +19,8 @@ import           Servant.Client     ( ClientError )
 import           Types
 
 data Genesis m a where
-    FetchSettings :: Genesis m HathSettings
-    FetchCertificate :: Genesis m ( CertificateChain, PrivKey )
+  FetchSettings :: Genesis m HathSettings
+  FetchCertificate :: Genesis m ( CertificateChain, PrivKey )
 
 makeSem ''Genesis
 
@@ -29,25 +29,26 @@ runGenesis :: Members '[ Embed IO, Error RPCError, Reader ClientConfig, EHentaiA
            => Genesis : r @> a
            -> Sem r a
 runGenesis = interpret $ \case
-    FetchSettings    -> getSettings
-    FetchCertificate -> downloadCertificates
+  FetchSettings    -> getSettings
+  FetchCertificate -> downloadCertificates
 
 {-# INLINE runGenesisIO #-}
-runGenesisIO :: ClientConfig
-             -> [ Genesis
-                , EHentaiAPI
-                , Reader ClientConfig
-                , Error ClientError
-                , Error RPCError
-                , Embed IO
-                , Final IO
-                ] @> a
-             -> IO (Either RPCError (Either ClientError a))
+runGenesisIO
+  :: ClientConfig
+  -> [ Genesis
+     , EHentaiAPI
+     , Reader ClientConfig
+     , Error ClientError
+     , Error RPCError
+     , Embed IO
+     , Final IO
+     ] @> a
+  -> IO (Either RPCError (Either ClientError a))
 runGenesisIO cfg
-    = runFinal
-    . embedToFinal @IO
-    . errorToIOFinal @RPCError
-    . errorToIOFinal @ClientError
-    . runReader cfg
-    . runEHentaiAPI
-    . runGenesis
+  = runFinal
+  . embedToFinal @IO
+  . errorToIOFinal @RPCError
+  . errorToIOFinal @ClientError
+  . runReader cfg
+  . runEHentaiAPI
+  . runGenesis

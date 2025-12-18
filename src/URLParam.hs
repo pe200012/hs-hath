@@ -16,10 +16,10 @@ parseURLParams :: ByteString -> URLParams
 parseURLParams = foldl' insertPair Map.empty . BS.split ';'
   where
     insertPair acc pair = case BS.split '=' pair of
-        []           -> acc
-        [ key ]      -> Map.insert key mempty acc  -- Parameter without value becomes empty string
-        [ key, val ] -> Map.insert key val acc
-        key : val    -> error $ "Invalid URL parameter: " <> show key <> "=" <> show val
+      []           -> acc
+      [ key ]      -> Map.insert key mempty acc  -- Parameter without value becomes empty string
+      [ key, val ] -> Map.insert key val acc
+      key : val    -> error $ "Invalid URL parameter: " <> show key <> "=" <> show val
 
 {-# INLINE lookupParam #-}
 -- | Lookup a parameter value

@@ -14,4 +14,4 @@ import           Relude
 {-# INLINE log #-}
 log :: Severity -> Text -> Log Message -@> ()
 log sev msg
-    = withFrozenCallStack (Co.log Msg { msgSeverity = sev, msgStack = callStack, msgText = msg })
+  = withFrozenCallStack (Co.log Msg { msgSeverity = sev, msgStack = callStack, msgText = msg })
