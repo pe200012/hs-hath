@@ -10,9 +10,11 @@ import           Types               ( ClientConfig(..) )
 
 -- | Command line options
 data Options
-  = Options { optConfigPath  :: !FilePath      -- ^ Path to configuration file
-            , optDownloadDir :: !(Maybe Text)  -- ^ Override download directory
-            , optCachePath   :: !(Maybe Text)  -- ^ Override cache path
+  = Options { optConfigPath       :: !FilePath      -- ^ Path to configuration file
+            , optDownloadDir      :: !(Maybe Text)  -- ^ Override download directory
+            , optCachePath        :: !(Maybe Text)  -- ^ Override cache path
+            , optSkipStartupVerify :: !Bool         -- ^ Skip startup cache verification
+            , optSkipPeriodicVerify :: !Bool        -- ^ Skip periodic file verification
             }
   deriving ( Show )
 
@@ -45,6 +47,12 @@ optionsParser
         <> help "Override download directory from config"))
   <*> optional
     (strOption (long "cache-path" <> metavar "PATH" <> help "Override cache path from config"))
+  <*> switch
+    (long "skip-startup-verify"
+     <> help "Skip cache integrity verification at startup")
+  <*> switch
+    (long "disable-periodic-verification"
+     <> help "Disable periodic file verification during runtime")
 
 -- | Apply CLI options to client configuration
 applyOptionsToConfig :: Options -> ClientConfig -> ClientConfig

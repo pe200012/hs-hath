@@ -1,16 +1,23 @@
 module Main ( main ) where
 
-import           CLI          ( Options(..), applyOptionsToConfig, parseOptions )
+import           CLI               ( Options(..), applyOptionsToConfig, parseOptions )
 
-import           Genesis      ( fetchCertificate, runGenesisIO )
+import           Database          ( initializeDB )
+import           Database.SQLite.Simple ( withConnection )
+
+import           FileVerification  ( VerificationStats(..), verifyAllFiles )
+
+import           Genesis           ( fetchCertificate, runGenesisIO )
 
 import           RPC
 
-import           Relude       hiding ( runReader )
+import           Relude            hiding ( runReader )
 
-import           Server       ( ServerAction(GracefulShutdown), startServer )
+import           Server            ( ServerAction(GracefulShutdown), startServer )
 
-import           System.Posix ( Handler(Catch), installHandler, sigINT, sigTERM )
+import           System.Posix      ( Handler(Catch), installHandler, sigINT, sigTERM )
+
+import qualified Data.Text         as T
 
 import           Types
 
@@ -19,13 +26,30 @@ main = do
     options <- parseOptions
     baseConfig <- readClientConfig (toText $ optConfigPath options)
     let config = applyOptionsToConfig options baseConfig
+
+    -- Initialize database and run startup verification unless skipped
+    withConnection (T.unpack $ cachePath config) $ \conn -> do
+        initializeDB conn
+
+        -- Run full cache verification by default (skip with --skip-startup-verify)
+        unless (optSkipStartupVerify options) $ do
+            putStrLn "Verifying cache integrity (this may take a while)..."
+            stats <- verifyAllFiles conn
+            putStrLn $ "Verification complete:"
+            putStrLn $ "  Files verified: " <> show (verifiedCount stats)
+            putStrLn $ "  Corrupted files removed: " <> show (corruptedCount stats)
+            putStrLn $ "  Time elapsed: " <> show (verificationTime stats)
+            when (corruptedCount stats > 0) $
+                putStrLn $ "WARNING: " <> show (corruptedCount stats) <> " corrupted files were found and removed."
+
     chan <- newEmptyMVar
     void $ installHandler sigINT (Catch $ putMVar chan GracefulShutdown) Nothing
     void $ installHandler sigTERM (Catch $ putMVar chan GracefulShutdown) Nothing
+
     runRPCIO config serverStat >>= \case
         Right (Right True) -> runRPCIO config clientLogin >>= \case
             Right (Right settings) -> runGenesisIO config fetchCertificate >>= \case
-                Right (Right certs) -> startServer config settings certs chan
+                Right (Right certs) -> startServer config settings certs chan (optSkipPeriodicVerify options)
                 e -> do
                     print e
                     putStrLn "Unable to fetch certs, exiting..."

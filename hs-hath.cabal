@@ -32,6 +32,7 @@ library
       API
       CLI
       Database
+      FileVerification
       Genesis
       Hash
       Locate
@@ -201,6 +202,8 @@ test-suite hs-hath-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
+      Integration
+      MockRPC
       Paths_hs_hath
   hs-source-dirs:
       test
@@ -221,7 +224,7 @@ test-suite hs-hath-test
     , base >=4.7 && <5
     , base64 ==1.0.*
     , binary ==0.8.*
-    , bytestring ==0.11.*
+    , bytestring
     , co-log ==0.6.*
     , co-log-core ==0.3.*
     , co-log-polysemy >=0.0.1.5
@@ -239,11 +242,11 @@ test-suite hs-hath-test
     , hex-text
     , hs-hath
     , hspec
-    , http-client ==0.7.*
+    , http-client
     , http-client-tls ==0.3.*
     , http-conduit ==2.3.*
     , http-media ==0.8.*
-    , http-types ==0.12.*
+    , http-types
     , memory ==0.18.*
     , monad-control ==1.0.*
     , monad-loops ==0.4.*
@@ -260,10 +263,10 @@ test-suite hs-hath-test
     , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
-    , stm ==2.5.*
-    , string-interpolate ==0.3.*
+    , stm
+    , string-interpolate
     , suspend ==0.2.*
-    , text ==2.0.*
+    , text
     , time ==1.12.*
     , timers ==0.2.*
     , tls ==2.0.*
@@ -271,9 +274,9 @@ test-suite hs-hath-test
     , transformers ==0.6.*
     , unix ==2.8.*
     , unliftio ==0.2.*
-    , unordered-containers ==0.2.*
-    , wai ==3.2.*
+    , unordered-containers
+    , wai
     , wai-extra ==3.1.*
-    , warp ==3.4.*
+    , warp
     , warp-tls ==3.4.*
   default-language: GHC2021

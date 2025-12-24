@@ -17,15 +17,15 @@ import           API                                  ( API
                                                       )
 
 import           Colog                                ( Message
-                                                      , Severity(Info)
+                                                      , Severity(Info, Warning)
                                                       , richMessageAction
                                                       )
 import           Colog.Polysemy                       ( Log, runLogAction )
 
 import           Control.Concurrent                   ( ThreadId, forkIO, threadDelay, throwTo )
 import           Control.Concurrent.STM.TVar          ( modifyTVar' )
-import           Control.Concurrent.Suspend           ( mDelay )
-import           Control.Concurrent.Timer             ( repeatedTimer, stopTimer )
+import           Control.Concurrent.Suspend           ( mDelay, sDelay )
+import           Control.Concurrent.Timer             ( TimerIO, repeatedTimer, stopTimer )
 import           Control.Exception                    ( try )
 
 import qualified Data.ByteString                      as BS
@@ -45,6 +45,10 @@ import           Data.Time.Clock                      ( NominalDiffTime
 import           Data.Time.Clock.POSIX                ( POSIXTime, getPOSIXTime )
 import           Data.Time.Clock.System               ( SystemTime(systemSeconds), getSystemTime )
 import           Data.X509                            ( CertificateChain, PrivKey )
+
+import           FileVerification                     ( VerificationResult(..)
+                                                      , verifyRandomFile
+                                                      )
 
 import           Database                             ( initializeDB, runCache )
 import           Database.SQLite.Simple               ( Connection, withConnection )
@@ -398,7 +402,14 @@ server
 
       _      -> k $ responseLBS status404 [] ""
 
-tictok config ipMap = do
+-- | Set up periodic timers for various housekeeping tasks
+tictok :: ClientConfig
+       -> TVar IPMap
+       -> Connection
+       -> TVar (Maybe UTCTime)
+       -> Bool  -- ^ Skip file verification
+       -> IO (() -> IO ())
+tictok config ipMap conn lastVerifTime skipVerify = do
   -- ipmap cleanup
   cleanupHandle <- repeatedTimer
     (do
@@ -423,10 +434,21 @@ tictok config ipMap = do
                                       res <- runRPCIO config (fetchBlacklist 43200)
                                       print res) (mDelay 36)
 
+  -- file verification timer (every 2 seconds, if not disabled)
+  verificationHandle <- if skipVerify
+    then pure Nothing
+    else Just <$> repeatedTimer
+      (verifyRandomFile conn lastVerifTime >>= \case
+          Just (VerificationCorrupted fileId) ->
+            putStrLn $ "[Warning] Corrupted file detected and removed: " <> toString fileId
+          _ -> pure ())
+      (sDelay 2)
+
   return $ \() -> do
     stopTimer cleanupHandle
     stopTimer heartbeatHandle
     stopTimer blacklistHandle
+    mapM_ stopTimer verificationHandle
 
 notifyStart :: ClientConfig -> HathSettings -> IO ()
 notifyStart config _ = psi
@@ -470,14 +492,15 @@ makeApplication config settings action ipMap conn statsEnv
       . runRPC
 
 startServer
-  :: ClientConfig -> HathSettings -> ( CertificateChain, PrivKey ) -> MVar ServerAction -> IO ()
-startServer config settings certs chan = do
+  :: ClientConfig -> HathSettings -> ( CertificateChain, PrivKey ) -> MVar ServerAction -> Bool -> IO ()
+startServer config settings certs chan skipVerify = do
   ipMap <- newTVarIO HashMap.empty
   statsEnv <- newStatsEnv
+  lastVerifTime <- newTVarIO Nothing  -- TVar for tracking last verification time
   print =<< runRPCIO config (fetchBlacklist 259200)
   withConnection (Text.unpack $ cachePath config) $ \conn -> do
     initializeDB conn
-    void $ tictok config ipMap
+    void $ tictok config ipMap conn lastVerifTime skipVerify
     loop config settings certs conn ipMap statsEnv
   where
     gracefulShutdown :: IO a

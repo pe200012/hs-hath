@@ -127,3 +127,12 @@ tests:
     dependencies:
       - hs-hath
       - hspec
+      - warp
+      - http-types
+      - wai
+      - http-client
+      - stm
+      - unordered-containers
+      - string-interpolate
+      - text
+      - bytestring
