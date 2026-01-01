@@ -147,9 +147,10 @@ maxRequests = 5
 data ServerAction = Reload | Cert | Settings | GracefulShutdown
 
 -- Data types for tracking requests
+-- Note: Lists cannot be unpacked, so we use strict spine with explicit strictness
 data IPRecord
-  = IPRecord { requestTimes :: {-# UNPACK #-} ![ UTCTime ]  -- Times of recent requests
-             , bannedUntil  :: {-# UNPACK #-} !(Maybe UTCTime)  -- When the ban expires
+  = IPRecord { requestTimes :: ![UTCTime]       -- ^ Times of recent requests (strict spine)
+             , bannedUntil  :: !(Maybe UTCTime) -- ^ When the ban expires
              }
   deriving ( Show )
 

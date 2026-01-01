@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE BangPatterns #-}
 
 module FileVerification
   ( -- * Types
@@ -20,8 +21,6 @@ module FileVerification
   , verificationCooldownSeconds
   , minVerificationIntervalSeconds
   ) where
-
-import           Control.Monad         ( foldM )
 
 import           Data.Time.Clock       ( NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime )
 
@@ -122,41 +121,49 @@ runFileVerification conn lastVerifVar = interpret $ \case
 
   SetLastVerificationTime t -> embed @IO $ atomically $ writeTVar lastVerifVar (Just t)
 
--- | Verify all files in the database
+-- | Verify all files in the database using streaming to avoid loading all into memory
 verifyAllFiles :: Connection -> IO VerificationStats
 verifyAllFiles conn = do
   startTime <- getCurrentTime
-  -- Get all files from database
-  records <- query_ conn
-    "SELECT lru_counter, s4, file_id, file_name, bytes FROM files" :: IO [FileRecord]
-
-  -- Verify each file and collect results
-  ( stats, toDelete ) <- foldM verifyAndCollect ( mempty, [] ) records
-
+  
+  -- Use IORefs to accumulate results while streaming
+  statsRef <- newIORef $! VerificationStats 0 0 0 0 0
+  toDeleteRef <- newIORef ([] :: [Text])
+  
+  -- Stream files one at a time using fold_ to avoid loading all bytes into memory
+  fold_ conn
+    "SELECT lru_counter, s4, file_id, file_name, bytes FROM files"
+    ()
+    (\() record -> do
+      case verifyFile record of
+        VerificationOK -> 
+          modifyIORef' statsRef $ \s -> 
+            let !v = verifiedCount s + 1 
+            in s { verifiedCount = v }
+        VerificationCorrupted fileId -> do
+          modifyIORef' statsRef $ \s -> 
+            let !c = corruptedCount s + 1 
+            in s { corruptedCount = c }
+          modifyIORef' toDeleteRef (fileId :)
+        VerificationMissing fileId -> do
+          modifyIORef' statsRef $ \s -> 
+            let !m = missingCount s + 1 
+            in s { missingCount = m }
+          modifyIORef' toDeleteRef (fileId :))
+  
   -- Delete corrupted files
+  toDelete <- readIORef toDeleteRef
   forM_ toDelete $ \fileId ->
     execute conn "DELETE FROM files WHERE file_id = ?" (Only fileId)
-
+  
   endTime <- getCurrentTime
-  let elapsed = diffUTCTime endTime startTime
-
-  pure stats
+  let !elapsed = diffUTCTime endTime startTime
+  
+  stats <- readIORef statsRef
+  pure $! stats
     { deletedCount = length toDelete
     , verificationTime = elapsed
     }
-  where
-    verifyAndCollect ( stats, toDelete ) record =
-      case verifyFile record of
-        VerificationOK ->
-          pure ( stats { verifiedCount = verifiedCount stats + 1 }, toDelete )
-        VerificationCorrupted fileId ->
-          pure ( stats { corruptedCount = corruptedCount stats + 1 }
-               , fileId : toDelete
-               )
-        VerificationMissing fileId ->
-          pure ( stats { missingCount = missingCount stats + 1 }
-               , fileId : toDelete
-               )
 
 -- | Verify a random file from the cache
 -- Returns Nothing if verification is on cooldown or no files exist
@@ -181,14 +188,16 @@ verifyRandomFile conn lastVerifVar = do
           -- Update last verification time
           atomically $ writeTVar lastVerifVar (Just now)
 
-          let result = verifyFile record
+          -- Force evaluation of the result to ensure file bytes are processed
+          -- before the record goes out of scope
+          let !result = verifyFile record
 
           -- If corrupted, delete the file
           case result of
             VerificationCorrupted fileId -> do
               execute conn "DELETE FROM files WHERE file_id = ?" (Only fileId)
-              pure $ Just result
-            _ -> pure $ Just result
+              pure $! Just result
+            _ -> pure $! Just result
 
 -- | Run file verification in IO
 runFileVerificationIO :: Connection
