@@ -203,11 +203,14 @@ checkRateLimit ipMap ip now = atomically $ do
 
     -- Check if requests are within rate limit window and update accordingly
     checkAndUpdateRequests record = do
-      let windowStart    = addUTCTime (-timeWindow) now
-          recentRequests = takeWhile (> windowStart) (requestTimes record)
-          newRequests    = now : recentRequests
+      let windowStart = addUTCTime (-timeWindow) now
+          -- Use filter and force strict evaluation to avoid space leaks
+          -- The list spine and length are evaluated immediately, preventing thunk accumulation
+          !recentRequests = filter (> windowStart) (requestTimes record)
+          !len = length recentRequests
+          !newRequests = now : recentRequests
 
-      if length recentRequests >= maxRequests
+      if len >= maxRequests
         then banIP newRequests
         else allowRequest newRequests
 
