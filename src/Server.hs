@@ -3,7 +3,7 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Server ( startServer, ServerAction(..), makeApplication ) where
+module Server ( startServer, ServerAction(..), makeApplication, CacheRunner(..) ) where
 
 import           API                                  ( API
                                                       , ServerCommand(..)
@@ -26,7 +26,7 @@ import           Control.Concurrent                   ( ThreadId, forkIO, thread
 import           Control.Concurrent.STM.TVar          ( modifyTVar' )
 import           Control.Concurrent.Suspend           ( mDelay, sDelay )
 import           Control.Concurrent.Timer             ( TimerIO, repeatedTimer, stopTimer )
-import           Control.Exception                    ( try )
+import           Control.Exception                    ( finally, try )
 
 import qualified Data.ByteString                      as BS
 import qualified Data.ByteString.Char8                as BSC
@@ -524,8 +524,10 @@ startServer config settings certs chan skipVerify = do
       withConnection (Text.unpack $ cachePath config) $ \conn -> do
         initializeDB conn
         let cacheRunner = CacheRunner { runCacheWith = runCache conn }
-        void $ tictokSQLite config ipMap conn lastVerifTime skipVerify
-        loopSQLite config settings certs conn cacheRunner ipMap statsEnv
+        stopTictok <- tictokSQLite config ipMap conn lastVerifTime skipVerify
+        finally
+          (loopSQLite config settings certs conn cacheRunner ipMap statsEnv)
+          (stopTictok ())
     CacheBackendR2 -> do
       case r2Config config of
         Nothing -> error "cacheBackend=r2 but r2Config is missing"
