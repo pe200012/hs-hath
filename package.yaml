@@ -21,16 +21,16 @@ tested-with:
   - GHC == 9.6.6
 
 dependencies:
-  - base >= 4.7 && < 5
+  - base >= 4.7 && < 4.22
   - aeson >= 2.1 && < 2.3
   - async >= 2.2 && < 2.3
   - base64 >= 1.0 && < 1.1
-  - bytestring >= 0.11 && < 0.12
+  - bytestring >= 0.11 && < 0.13
   - binary >= 0.8 && < 0.9
   - co-log-core >= 0.3 && < 0.4
-  - co-log >= 0.6 && < 0.7
-  - co-log-polysemy >= 0.0.1.5
-  - containers >= 0.6 && < 0.7
+  - co-log >= 0.6 && < 0.8
+  - co-log-polysemy >= 0.0.1.5 && < 0.0.2
+  - containers >= 0.6 && < 0.8
   - cryptostore >= 0.3 && < 0.4
   - crypton >= 1.0 && < 1.1
   - crypton-connection >= 0.4 && < 0.5
@@ -39,9 +39,9 @@ dependencies:
   - directory >= 1.3 && < 1.4
   - dhall >= 1.42 && < 1.43
   - sqlite-simple >= 0.4 && < 0.5
-  - extra >= 1.7 && < 1.8
+  - extra >= 1.7 && < 1.9
   - exceptions >= 0.10 && < 0.11
-  - hex-text
+  - hex-text >= 0.1 && < 0.2
   - safe-exceptions >= 0.1 && < 0.2
   - string-interpolate >= 0.3 && < 0.4
   - servant >= 0.20.2 && < 0.21
@@ -55,19 +55,19 @@ dependencies:
   - http-media >= 0.8 && < 0.9
   - monad-control >= 1.0 && < 1.1
   - monad-loops >= 0.4 && < 0.5
-  - network >= 3.1 && < 3.2
+  - network >= 3.1 && < 3.3
   - mtl >= 2.3 && < 2.4
   - memory >= 0.18 && < 0.19
   - optparse-applicative >= 0.18 && < 0.19
-  - placeholder
-  - polysemy >= 1.9 && < 2.0
+  - placeholder >= 0 && < 1
+  - polysemy >= 1.9 && < 1.10
   - polysemy-zoo >= 0.8 && < 0.9
-  - filepath >= 1.4 && < 1.5
+  - filepath >= 1.4 && < 1.6
   - suspend >= 0.2 && < 0.3
-  - text >= 2.0 && < 2.1
-  - time >= 1.12 && < 1.13
+  - text >= 2.0 && < 2.2
+  - time >= 1.12 && < 1.15
   - transformers >= 0.6 && < 0.7
-  - tls >= 2.0 && < 2.1
+  - tls >= 2.0 && < 2.2
   - tls-session-manager >= 0.0.5 && < 0.1
   - timers >= 0.2 && < 0.3
   - relude >= 1.2 && < 1.3
@@ -126,13 +126,13 @@ tests:
     source-dirs: test
     dependencies:
       - hs-hath
-      - hspec
-      - warp
-      - http-types
-      - wai
-      - http-client
-      - stm
-      - unordered-containers
-      - string-interpolate
-      - text
-      - bytestring
+      - hspec >= 2.11 && < 2.12
+      - warp >= 3.4 && < 3.5
+      - http-types >= 0.12 && < 0.13
+      - wai >= 3.2 && < 3.3
+      - http-client >= 0.7 && < 0.8
+      - stm >= 2.5 && < 2.6
+      - unordered-containers >= 0.2 && < 0.3
+      - string-interpolate >= 0.3 && < 0.4
+      - text >= 2.0 && < 2.2
+      - bytestring >= 0.11 && < 0.13
