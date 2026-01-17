@@ -12,6 +12,8 @@ module Types
   , RPCError(..)
   , FileURI(..)
   , RPCResponse(..)
+  , CacheBackend(..)
+  , R2Config(..)
     -- * Globals
   , hentaiHeader
     -- * Default values
@@ -65,28 +67,59 @@ data ClientProxy
                 }
   deriving ( Show, Generic )
 
+instance FromDhall ClientProxy
+
+instance ToDhall ClientProxy
+
+-- | Cache backend selection
+data CacheBackend
+  = CacheBackendSQLite
+  | CacheBackendR2
+  deriving ( Show, Eq, Generic )
+
+instance FromDhall CacheBackend
+
+instance ToDhall CacheBackend
+
+-- | R2 configuration (endpoint and bucket from config, secrets from env)
+data R2Config
+  = R2Config { r2Endpoint :: {-# UNPACK #-} !Text
+             , r2Bucket   :: {-# UNPACK #-} !Text
+             }
+  deriving ( Show, Generic )
+
+instance FromDhall R2Config
+
+instance ToDhall R2Config
+
 data ClientConfig
-  = ClientConfig { clientId    :: {-# UNPACK #-} !Text
-                 , key         :: {-# UNPACK #-} !Text
-                 , version     :: {-# UNPACK #-} !Text
-                 , proxy       :: {-# UNPACK #-} !(Maybe ClientProxy)
-                 , downloadDir :: {-# UNPACK #-} !Text
-                 , cachePath   :: {-# UNPACK #-} !Text
+  = ClientConfig { clientId     :: {-# UNPACK #-} !Text
+                 , key          :: {-# UNPACK #-} !Text
+                 , version      :: {-# UNPACK #-} !Text
+                 , proxy        :: {-# UNPACK #-} !(Maybe ClientProxy)
+                 , downloadDir  :: {-# UNPACK #-} !Text
+                 , cachePath    :: {-# UNPACK #-} !Text
+                 , cacheBackend :: !CacheBackend
+                 , r2Config     :: !(Maybe R2Config)
                  }
   deriving ( Show, Generic )
 
-instance FromDhall ClientProxy
-
 instance FromDhall ClientConfig
-
-instance ToDhall ClientProxy
 
 instance ToDhall ClientConfig
 
 defaultClientConfig :: ClientConfig
 defaultClientConfig
   = ClientConfig
-  { clientId = "", key = "", version = "", proxy = Nothing, downloadDir = "", cachePath = "" }
+  { clientId     = ""
+  , key          = ""
+  , version      = ""
+  , proxy        = Nothing
+  , downloadDir  = ""
+  , cachePath    = ""
+  , cacheBackend = CacheBackendSQLite
+  , r2Config     = Nothing
+  }
 
 readClientConfig :: Text -> IO ClientConfig
 readClientConfig = input auto
@@ -240,6 +273,7 @@ data RPCError
   = EmptyResponse
   | RequestFailure {-# UNPACK #-} !Text  -- Contains the error status code
   | CertificateFailure {-# UNPACK #-} !Text
+  | R2WriteError {-# UNPACK #-} !Text    -- R2 storage write/delete failure
   deriving ( Show, Eq, Generic )
 
 instance Exception RPCError

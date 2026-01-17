@@ -50,7 +50,7 @@ import           FileVerification                     ( VerificationResult(..)
                                                       , verifyRandomFile
                                                       )
 
-import           Database                             ( initializeDB, runCache )
+import           Database                             ( FileRecord, initializeDB, runCache )
 import           Database.SQLite.Simple               ( Connection, withConnection )
 
 import           Genesis
@@ -58,6 +58,13 @@ import           Genesis
 import           Hash                                 ( hash )
 
 import           Locate
+
+import           Polysemy.KVStore                     ( KVStore )
+
+import           R2                                   ( R2Connection
+                                                      , mkR2Connection
+                                                      , runCacheR2
+                                                      )
 
 import           Network.HTTP.Client                  ( brReadSome
                                                       , httpLbs
@@ -120,10 +127,12 @@ import           Stats                                ( Stats
                                                       , runStats
                                                       )
 
-import           Types                                ( ClientConfig
+import           Types                                ( CacheBackend(..)
+                                                      , ClientConfig
                                                       , ClientConfig(..)
                                                       , FileURI(fileExt)
                                                       , HathSettings(..)
+                                                      , R2Config(..)
                                                       , RPCError
                                                       , hentaiHeader
                                                       , parseFileURI
@@ -461,15 +470,23 @@ notifyStart config _ = psi
       Right (Right True) -> return ()
       _ -> threadDelay 1000000 >> psi
 
+-- | Abstract cache runner - wraps the cache effect interpreter
+-- This allows us to switch between SQLite and R2 backends at runtime
+data CacheRunner = CacheRunner
+  { runCacheWith :: forall r a. Members '[Embed IO, Log Message, Error RPCError] r
+                 => Sem (KVStore FileURI FileRecord : r) a
+                 -> Sem r a
+  }
+
 -- Create the WAI application with rate limiting
 makeApplication :: ClientConfig
                 -> HathSettings
                 -> MVar ServerAction
                 -> TVar IPMap
-                -> Connection
+                -> CacheRunner
                 -> StatsEnv
                 -> Application
-makeApplication config settings action ipMap conn statsEnv
+makeApplication config settings action ipMap cacheRunner statsEnv
   = rateLimitMiddleware ipMap
   $ normalizeAcceptMiddleware
   $ serve api (hoistServer api interpretServer server)
@@ -490,7 +507,7 @@ makeApplication config settings action ipMap conn statsEnv
       . runReader statsEnv
       . runLogAction @IO @Message richMessageAction
       . runEHentaiAPI
-      . runCache conn
+      . runCacheWith cacheRunner
       . runStats
       . runLocate
       . runRPC
@@ -502,10 +519,23 @@ startServer config settings certs chan skipVerify = do
   statsEnv <- newStatsEnv
   lastVerifTime <- newTVarIO Nothing  -- TVar for tracking last verification time
   print =<< runRPCIO config (fetchBlacklist 259200)
-  withConnection (Text.unpack $ cachePath config) $ \conn -> do
-    initializeDB conn
-    void $ tictok config ipMap conn lastVerifTime skipVerify
-    loop config settings certs conn ipMap statsEnv
+  case cacheBackend config of
+    CacheBackendSQLite -> do
+      withConnection (Text.unpack $ cachePath config) $ \conn -> do
+        initializeDB conn
+        let cacheRunner = CacheRunner { runCacheWith = runCache conn }
+        void $ tictokSQLite config ipMap conn lastVerifTime skipVerify
+        loopSQLite config settings certs conn cacheRunner ipMap statsEnv
+    CacheBackendR2 -> do
+      case r2Config config of
+        Nothing -> error "cacheBackend=r2 but r2Config is missing"
+        Just r2Cfg -> do
+          r2ConnResult <- mkR2Connection r2Cfg
+          case r2ConnResult of
+            Left err -> error $ "Failed to initialize R2: " <> err
+            Right r2Conn -> do
+              let cacheRunner = CacheRunner { runCacheWith = runCacheR2 r2Conn }
+              loopR2 config settings certs cacheRunner ipMap statsEnv
   where
     gracefulShutdown :: IO a
     gracefulShutdown
@@ -544,8 +574,9 @@ startServer config settings certs chan skipVerify = do
                 threadDelay (1000000 * 2 ^ retries)
                 phi (retries + 1)
 
-    loop cfg set c conn ipMap statsEnv = do
-      let app = makeApplication cfg set chan ipMap conn statsEnv
+    -- SQLite loop - needs Connection for tictok
+    loopSQLite cfg set c conn cacheRunner ipMap statsEnv = do
+      let app = makeApplication cfg set chan ipMap cacheRunner statsEnv
       result <- withAsync (notifyStart cfg set) $ \_ -> race (takeMVar chan)
         $ runTLS
           (defaultTlsSettings
@@ -558,11 +589,36 @@ startServer config settings certs chan skipVerify = do
         Left Reload -> exitSuccess
         Left Cert -> do
           newCerts <- refreshCerts
-          loop cfg set newCerts conn ipMap statsEnv
+          loopSQLite cfg set newCerts conn cacheRunner ipMap statsEnv
         Left Settings -> do
           newSettings <- refreshSettings
-          loop cfg newSettings certs conn ipMap statsEnv
+          loopSQLite cfg newSettings certs conn cacheRunner ipMap statsEnv
         Right _ -> error "Server terminated unexpectedly"
+
+    -- R2 loop - no Connection needed
+    loopR2 cfg set c cacheRunner ipMap statsEnv = do
+      let app = makeApplication cfg set chan ipMap cacheRunner statsEnv
+      result <- withAsync (notifyStart cfg set) $ \_ -> race (takeMVar chan)
+        $ runTLS
+          (defaultTlsSettings
+           { tlsCredentials = Just (Credentials [ c ]), onInsecure = AllowInsecure })
+          (setPort (clientPort set) defaultSettings)
+        $ logStdoutDev
+        $ logStdout app
+      case result of
+        Left GracefulShutdown -> gracefulShutdown
+        Left Reload -> exitSuccess
+        Left Cert -> do
+          newCerts <- refreshCerts
+          loopR2 cfg set newCerts cacheRunner ipMap statsEnv
+        Left Settings -> do
+          newSettings <- refreshSettings
+          loopR2 cfg newSettings certs cacheRunner ipMap statsEnv
+        Right _ -> error "Server terminated unexpectedly"
+
+    -- tictok for SQLite backend (uses Connection)
+    tictokSQLite cfg ipMap conn lastVerifTime skipVerify' =
+      tictok cfg ipMap conn lastVerifTime skipVerify'
 
 normalizeAcceptMiddleware :: Middleware
 normalizeAcceptMiddleware app req = app req { requestHeaders = normalizedHeaders }

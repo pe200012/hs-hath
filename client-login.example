@@ -4,6 +4,10 @@ let ClientProxy =
       , auth : Optional { _1 : Text, _2 : Text }
       }
 
+let CacheBackend = < CacheBackendSQLite | CacheBackendR2 >
+
+let R2Config = { r2Endpoint : Text, r2Bucket : Text }
+
 let ClientConfig =
       { Type =
           { clientId : Text
@@ -12,8 +16,15 @@ let ClientConfig =
           , proxy : Optional ClientProxy
           , downloadDir : Text
           , cachePath : Text
+          , cacheBackend : CacheBackend
+          , r2Config : Optional R2Config
           }
-      , default = { version = "", proxy = None ClientProxy }
+      , default =
+          { version = ""
+          , proxy = None ClientProxy
+          , cacheBackend = CacheBackend.CacheBackendSQLite
+          , r2Config = None R2Config
+          }
       }
 
 in  ClientConfig::{
@@ -22,4 +33,6 @@ in  ClientConfig::{
     , version = "176"
     , downloadDir = "./download"
     , cachePath = "./cache"
+    , cacheBackend = CacheBackend.CacheBackendSQLite
+    , r2Config = None R2Config
     }

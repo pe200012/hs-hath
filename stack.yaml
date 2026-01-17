@@ -10,6 +10,10 @@ extra-deps:
   - timers-0.2.0.4
   - cryptostore-0.3.0.1
   - vendor/placeholder
+  - vendor/minio-hs
+  - time-units-1.0.0
+  - ini-0.4.2
+  - digest-0.0.2.1
 
 allow-newer: true
 allow-newer-deps:
