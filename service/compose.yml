@@ -1,0 +1,42 @@
+services:
+  vpn:
+    image: qmcgaw/gluetun
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - VPN_SERVICE_PROVIDER=custom
+      - VPN_TYPE=wireguard
+      # Fill these using your wg0-client.conf from the VPS
+      - WIREGUARD_PRIVATE_KEY
+      - WIREGUARD_PRESHARED_KEY
+      - WIREGUARD_ADDRESSES
+      - WIREGUARD_ENDPOINT_IP
+      - WIREGUARD_ENDPOINT_PORT # Usually 51820
+      - WIREGUARD_PUBLIC_KEY
+      - FIREWALL_OUTBOUND_SUBNETS # Allow local VPN traffic
+    ports:
+      - "443:443"  # Your service port
+
+  rathole-client:
+    image: rapiz1/rathole
+    network_mode: service:vpn  # Shares VPN network
+    volumes:
+      - ./client.toml:/etc/rathole/client.toml
+    depends_on:
+      - vpn
+    command:
+      - --client
+      - /etc/rathole/client.toml
+
+  hs-hath:
+    image: hs-hath
+    build: .
+    network_mode: service:vpn  # All three share the same network
+    volumes:
+      - ./asset/client-login:/client-login
+      - ./asset/cache:/cache
+    environment:
+      - R2_ACCESS_KEY
+      - R2_SECRET_KEY
+    depends_on:
+      - vpn
