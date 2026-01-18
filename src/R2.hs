@@ -49,6 +49,12 @@ import           Types                   ( FileURI(..), RPCError(..) )
 import qualified Types                   as Ty
 
 import           Utils                   ( log )
+import           System.IO.Unsafe        ( unsafePerformIO )
+import qualified Data.Map                as Map
+
+memoryCache :: IORef (Map FileURI FileRecord)
+memoryCache = unsafePerformIO (newIORef mempty)
+{-# NOINLINE memoryCache #-}
 
 -- | R2 connection configuration built at runtime
 data R2Connection
@@ -113,21 +119,29 @@ runCacheR2 conn = interpret $ \case
   LookupKV uri -> do
     let key    = fileURIToKey uri
         bucket = r2ConnBucket conn
-    result <- embed $ try @SomeException $ Minio.runMinioWith (r2MinioConn conn) $ do
-      resp <- getObject bucket key defaultGetObjectOptions
-      -- Consume the response body
-      let src = Minio.gorObjectStream resp
-      lbs <- C.runConduit $ src C..| C.sinkLazy
-      pure $ BL.toStrict lbs
-    case result of
-      Left err -> do
-        log Warning ("R2 lookup failed for " <> key <> ": " <> T.pack (show err))
-        pure Nothing
-      Right (Left minioErr) -> do
-        log Warning ("R2 lookup failed for " <> key <> ": " <> T.pack (show minioErr))
-        pure Nothing
-      Right (Right bytes) ->
-        pure $ Just $ reconstructRecord uri bytes
+    memCache <- readIORef memoryCache
+    case Map.lookup uri memCache of
+      Just res -> pure $ Just res
+      Nothing -> do
+        result <- embed $ try @SomeException $ Minio.runMinioWith (r2MinioConn conn) $ do
+          resp <- getObject bucket key defaultGetObjectOptions
+          -- Consume the response body
+          let src = Minio.gorObjectStream resp
+          lbs <- C.runConduit $ src C..| C.sinkLazy
+          pure $ BL.toStrict lbs
+        case result of
+          Left err -> do
+            log Warning ("R2 lookup failed for " <> key <> ": " <> T.pack (show err))
+            pure Nothing
+          Right (Left minioErr) -> do
+            log Warning ("R2 lookup failed for " <> key <> ": " <> T.pack (show minioErr))
+            pure Nothing
+          Right (Right bytes) -> do
+            let recd = reconstructRecord uri bytes
+            if Map.size memCache > 100
+              then writeIORef memoryCache (Map.singleton uri recd)
+              else writeIORef memoryCache (Map.insert uri recd memCache)
+            pure $ Just recd
 
   UpdateKV uri (Just record) -> do
     let key     = fileURIToKey uri
@@ -144,7 +158,7 @@ runCacheR2 conn = interpret $ \case
       Right (Left minioErr) -> do
         log Error ("R2 write failed for " <> key <> ": " <> T.pack (show minioErr))
         throw $ Ty.R2WriteError (T.pack $ show minioErr)
-      Right (Right _) -> pure ()
+      Right (Right _) -> modifyIORef' memoryCache (Map.alter (const (Just record)) uri)
 
   UpdateKV uri Nothing -> do
     let key    = fileURIToKey uri
@@ -158,4 +172,4 @@ runCacheR2 conn = interpret $ \case
       Right (Left minioErr) -> do
         log Error ("R2 delete failed for " <> key <> ": " <> T.pack (show minioErr))
         throw $ Ty.R2WriteError (T.pack $ show minioErr)
-      Right (Right _) -> pure ()
+      Right (Right _) -> modifyIORef' memoryCache (Map.delete uri)
