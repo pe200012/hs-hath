@@ -49,7 +49,7 @@ main = do
     runRPCIO config serverStat >>= \case
         Right (Right True) -> runRPCIO config clientLogin >>= \case
             Right (Right settings) -> runGenesisIO config fetchCertificate >>= \case
-                Right (Right certs) -> startServer config settings certs chan (optSkipPeriodicVerify options) (optDisableRateLimit options)
+                Right (Right certs) -> startServer config settings certs chan (optSkipPeriodicVerify options) (optDisableRateLimit options) (optTrustProxyHeaders options)
                 e -> do
                     print e
                     putStrLn "Unable to fetch certs, exiting..."
