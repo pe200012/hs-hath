@@ -13,16 +13,14 @@ module Stats
   , incServed
   , incFetched
   , readStats
-  , StatsSnapshot(..)
-  , readSnapshot
+  , readPrometheus
   , runStats
   ) where
 
 import qualified Control.Concurrent.STM as STM
 
-import           Data.Aeson             ( (.=), ToJSON, object )
-import qualified Data.Aeson             as A
 import           Data.Time.Clock        ( UTCTime, getCurrentTime )
+import qualified Data.Text              as T
 
 import           Polysemy
 import           Polysemy.Operators
@@ -46,34 +44,34 @@ newStatsEnv = do
   v <- STM.newTVarIO emptyTrafficStats
   pure $ StatsEnv t0 v
 
-data StatsSnapshot
-  = StatsSnapshot { since          :: !UTCTime
-                  , upload_bytes   :: !Int64
-                  , download_bytes :: !Int64
-                  , served_count   :: !Int64
-                  , fetched_count  :: !Int64
-                  }
-  deriving ( Show, Eq, Generic )
-
-instance ToJSON StatsSnapshot where
-  toJSON s
-    = object
-      [ "since" .= since s
-      , "upload_bytes" .= upload_bytes s
-      , "download_bytes" .= download_bytes s
-      , "served_count" .= served_count s
-      , "fetched_count" .= fetched_count s
-      ]
-
 data Stats m a where
   AddUpload :: Int -> Stats m ()
   AddDownload :: Int -> Stats m ()
   IncServed :: Stats m ()
   IncFetched :: Stats m ()
   ReadStats :: Stats m TrafficStats
-  ReadSnapshot :: Stats m StatsSnapshot
+  ReadPrometheus :: Stats m Text
 
 makeSem ''Stats
+
+toPrometheus :: TrafficStats -> Text
+toPrometheus s = T.unlines
+  [ "# HELP hs_hath_upload_bytes_total Total bytes uploaded"
+  , "# TYPE hs_hath_upload_bytes_total counter"
+  , "hs_hath_upload_bytes_total " <> show (uploadBytes s)
+  , ""
+  , "# HELP hs_hath_download_bytes_total Total bytes downloaded"
+  , "# TYPE hs_hath_download_bytes_total counter"
+  , "hs_hath_download_bytes_total " <> show (downloadBytes s)
+  , ""
+  , "# HELP hs_hath_served_requests_total Total served requests"
+  , "# TYPE hs_hath_served_requests_total counter"
+  , "hs_hath_served_requests_total " <> show (servedCount s)
+  , ""
+  , "# HELP hs_hath_fetched_requests_total Total fetched requests"
+  , "# TYPE hs_hath_fetched_requests_total counter"
+  , "hs_hath_fetched_requests_total " <> show (fetchedCount s)
+  ]
 
 runStats :: Members '[ Embed IO, Reader StatsEnv ] r => Stats : r @> a -> r @> a
 runStats = interpret $ \case
@@ -95,13 +93,7 @@ runStats = interpret $ \case
   ReadStats     -> do
     StatsEnv { statsVar } <- ask
     embed $ STM.readTVarIO statsVar
-  ReadSnapshot  -> do
-    StatsEnv { statsStart, statsVar } <- ask
+  ReadPrometheus -> do
+    StatsEnv { statsVar } <- ask
     s <- embed $ STM.readTVarIO statsVar
-    pure
-      $ StatsSnapshot { since          = statsStart
-                      , upload_bytes   = uploadBytes s
-                      , download_bytes = downloadBytes s
-                      , served_count   = servedCount s
-                      , fetched_count  = fetchedCount s
-                      }
+    pure $ toPrometheus s

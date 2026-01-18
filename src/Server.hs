@@ -118,13 +118,12 @@ import           SpeedTest                            ( bufferSending )
 
 import           Stats                                ( Stats
                                                       , StatsEnv(..)
-                                                      , StatsSnapshot(..)
                                                       , addDownload
                                                       , addUpload
                                                       , incFetched
                                                       , incServed
                                                       , newStatsEnv
-                                                      , readSnapshot
+                                                      , readPrometheus
                                                       , runStats
                                                       )
 
@@ -392,9 +391,7 @@ server
           $ Source.fromStepT
           $ Source.Yield t Source.Stop
 
-    statsHandler = do
-      snapshot <- readSnapshot
-      pure snapshot
+    statsHandler = readPrometheus
 
     testHandler testSize testTime (encodeUtf8 @_ @ByteString -> testKey) _ = do
       currentTime <- embed getSystemTime
