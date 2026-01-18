@@ -483,14 +483,18 @@ makeApplication :: ClientConfig
                 -> HathSettings
                 -> MVar ServerAction
                 -> TVar IPMap
+                -> Bool  -- ^ Disable rate limiting
                 -> CacheRunner
                 -> StatsEnv
                 -> Application
-makeApplication config settings action ipMap cacheRunner statsEnv
-  = rateLimitMiddleware ipMap
+makeApplication config settings action ipMap disableRateLimit cacheRunner statsEnv
+  = applyRateLimit
   $ normalizeAcceptMiddleware
   $ serve api (hoistServer api interpretServer server)
   where
+    applyRateLimit :: Middleware
+    applyRateLimit = if disableRateLimit then id else rateLimitMiddleware ipMap
+
     interpretServer :: Sem _ a -> Handler a
     interpretServer
       = Handler
@@ -513,8 +517,8 @@ makeApplication config settings action ipMap cacheRunner statsEnv
       . runRPC
 
 startServer
-  :: ClientConfig -> HathSettings -> ( CertificateChain, PrivKey ) -> MVar ServerAction -> Bool -> IO ()
-startServer config settings certs chan skipVerify = do
+  :: ClientConfig -> HathSettings -> ( CertificateChain, PrivKey ) -> MVar ServerAction -> Bool -> Bool -> IO ()
+startServer config settings certs chan skipVerify disableRateLimit = do
   ipMap <- newTVarIO HashMap.empty
   statsEnv <- newStatsEnv
   lastVerifTime <- newTVarIO Nothing  -- TVar for tracking last verification time
@@ -526,7 +530,7 @@ startServer config settings certs chan skipVerify = do
         let cacheRunner = CacheRunner { runCacheWith = runCache conn }
         stopTictok <- tictokSQLite config ipMap conn lastVerifTime skipVerify
         finally
-          (loopSQLite config settings certs conn cacheRunner ipMap statsEnv)
+          (loopSQLite config settings certs conn cacheRunner ipMap disableRateLimit statsEnv)
           (stopTictok ())
     CacheBackendR2 -> do
       case r2Config config of
@@ -537,7 +541,7 @@ startServer config settings certs chan skipVerify = do
             Left err -> error $ "Failed to initialize R2: " <> err
             Right r2Conn -> do
               let cacheRunner = CacheRunner { runCacheWith = runCacheR2 r2Conn }
-              loopR2 config settings certs cacheRunner ipMap statsEnv
+              loopR2 config settings certs cacheRunner ipMap disableRateLimit statsEnv
   where
     gracefulShutdown :: IO a
     gracefulShutdown
@@ -577,8 +581,8 @@ startServer config settings certs chan skipVerify = do
                 phi (retries + 1)
 
     -- SQLite loop - needs Connection for tictok
-    loopSQLite cfg set c conn cacheRunner ipMap statsEnv = do
-      let app = makeApplication cfg set chan ipMap cacheRunner statsEnv
+    loopSQLite cfg set c conn cacheRunner ipMap disableRL statsEnv = do
+      let app = makeApplication cfg set chan ipMap disableRL cacheRunner statsEnv
       result <- withAsync (notifyStart cfg set) $ \_ -> race (takeMVar chan)
         $ runTLS
           (defaultTlsSettings
@@ -591,15 +595,15 @@ startServer config settings certs chan skipVerify = do
         Left Reload -> exitSuccess
         Left Cert -> do
           newCerts <- refreshCerts
-          loopSQLite cfg set newCerts conn cacheRunner ipMap statsEnv
+          loopSQLite cfg set newCerts conn cacheRunner ipMap disableRL statsEnv
         Left Settings -> do
           newSettings <- refreshSettings
-          loopSQLite cfg newSettings certs conn cacheRunner ipMap statsEnv
+          loopSQLite cfg newSettings certs conn cacheRunner ipMap disableRL statsEnv
         Right _ -> error "Server terminated unexpectedly"
 
     -- R2 loop - no Connection needed
-    loopR2 cfg set c cacheRunner ipMap statsEnv = do
-      let app = makeApplication cfg set chan ipMap cacheRunner statsEnv
+    loopR2 cfg set c cacheRunner ipMap disableRL statsEnv = do
+      let app = makeApplication cfg set chan ipMap disableRL cacheRunner statsEnv
       result <- withAsync (notifyStart cfg set) $ \_ -> race (takeMVar chan)
         $ runTLS
           (defaultTlsSettings
@@ -612,10 +616,10 @@ startServer config settings certs chan skipVerify = do
         Left Reload -> exitSuccess
         Left Cert -> do
           newCerts <- refreshCerts
-          loopR2 cfg set newCerts cacheRunner ipMap statsEnv
+          loopR2 cfg set newCerts cacheRunner ipMap disableRL statsEnv
         Left Settings -> do
           newSettings <- refreshSettings
-          loopR2 cfg newSettings certs cacheRunner ipMap statsEnv
+          loopR2 cfg newSettings certs cacheRunner ipMap disableRL statsEnv
         Right _ -> error "Server terminated unexpectedly"
 
     -- tictok for SQLite backend (uses Connection)

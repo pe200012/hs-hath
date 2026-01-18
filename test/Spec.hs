@@ -9,6 +9,8 @@ import           Database
 
 import           Integration      ( integrationSpecs )
 
+import           R2Spec           ( r2Specs )
+
 import           Polysemy
 import           Polysemy.KVStore ( KVStore, lookupKV, updateKV )
 
@@ -22,6 +24,7 @@ main :: IO ()
 main = hspec $ do
   cacheSpecs
   integrationSpecs
+  r2Specs
 
 -- | Helper to store a file record
 storeFile :: Member (KVStore FileURI FileRecord) r => FileRecord -> Sem r ()

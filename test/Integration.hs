@@ -54,7 +54,9 @@ import           Relude                   hiding ( Reader
                                                  , runReader
                                                  )
 
-import           Server                   ( ServerAction(..), makeApplication, startServer )
+import           Server                   ( CacheRunner(..), ServerAction(..), makeApplication, startServer )
+
+import           Database                 ( runCache )
 
 import           Stats                    ( newStatsEnv )
 
@@ -62,7 +64,8 @@ import           System.Environment       ( setEnv )
 
 import           Test.Hspec
 
-import           Types                    ( ClientConfig(..)
+import           Types                    ( CacheBackend(..)
+                                          , ClientConfig(..)
                                           , HathSettings(..)
                                           , defaultHathSettings
                                           )
@@ -71,12 +74,14 @@ import           Types                    ( ClientConfig(..)
 testConfig :: Int -> ClientConfig
 testConfig port
   = ClientConfig
-  { clientId    = "test-client-001"
-  , key         = "test-secret-key-12345"
-  , version     = "1.0.0-test"
-  , proxy       = Nothing
-  , downloadDir = "/tmp/hs-hath-test"
-  , cachePath   = "/tmp/hs-hath-test-" <> show port <> ".db"
+  { clientId     = "test-client-001"
+  , key          = "test-secret-key-12345"
+  , version      = "1.0.0-test"
+  , proxy        = Nothing
+  , downloadDir  = "/tmp/hs-hath-test"
+  , cachePath    = "/tmp/hs-hath-test-" <> show port <> ".db"
+  , cacheBackend = CacheBackendSQLite
+  , r2Config     = Nothing
   }
 
 withTestServer
@@ -92,7 +97,8 @@ withTestServer mockCfg clientCfg settings action = withMockRPC mockCfg $ do
   statsEnv <- newStatsEnv
   withConnection ":memory:" $ \conn -> do
     initializeDB conn
-    let app = makeApplication clientCfg settings serverChan ipMap conn statsEnv
+    let cacheRunner = CacheRunner { runCacheWith = runCache conn }
+        app = makeApplication clientCfg settings serverChan ipMap cacheRunner statsEnv
     Warp.testWithApplication (pure app) action
 
 -- | Helper to load test certificates
@@ -119,9 +125,9 @@ withStartServer mockCfg clientCfg settings action = withMockRPC mockCfg $ do
       let certs = (certChain, privKey)
           port = clientPort settings
       
-      -- Start server in background thread
+      -- Start server in background thread (skipVerify = True for tests)
       bracket
-        (forkIO $ startServer clientCfg settings certs serverChan)
+        (forkIO $ startServer clientCfg settings certs serverChan True)
         killThread
         (\_ -> do
           -- Wait a bit for server to initialize

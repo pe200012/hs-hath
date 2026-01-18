@@ -36,6 +36,8 @@ import           Network.Minio           ( CredentialValue(..)
                                          )
 import qualified Network.Minio           as Minio
 
+import           Network.HTTP.Client     ( newManager )
+import           Network.HTTP.Client.TLS ( tlsManagerSettings )
 import           Polysemy
 import           Polysemy.Error          ( Error, throw )
 import           Polysemy.KVStore        ( KVStore(..) )
@@ -50,7 +52,7 @@ import           Utils                   ( log )
 
 -- | R2 connection configuration built at runtime
 data R2Connection
-  = R2Connection { r2ConnInfo   :: !Minio.ConnectInfo
+  = R2Connection { r2MinioConn  :: !Minio.MinioConn
                  , r2ConnBucket :: !Text
                  }
 
@@ -71,10 +73,12 @@ mkR2Connection cfg = do
             }
           -- Use IsString instance to parse endpoint URL
           baseConnInfo = fromString $ T.unpack $ Ty.r2Endpoint cfg
-          -- Set credentials and region
-          connInfo = setCreds creds $ setRegion "auto" baseConnInfo
+      -- Set credentials and region
+      minioConn <- liftIO $ do
+        manager <- newManager tlsManagerSettings
+        Minio.mkMinioConn (setCreds creds $ setRegion "auto" baseConnInfo) manager
       pure $ Right R2Connection
-        { r2ConnInfo   = connInfo
+        { r2MinioConn  = minioConn
         , r2ConnBucket = Ty.r2Bucket cfg
         }
 
@@ -109,7 +113,7 @@ runCacheR2 conn = interpret $ \case
   LookupKV uri -> do
     let key    = fileURIToKey uri
         bucket = r2ConnBucket conn
-    result <- embed $ try @SomeException $ runMinio (r2ConnInfo conn) $ do
+    result <- embed $ try @SomeException $ Minio.runMinioWith (r2MinioConn conn) $ do
       resp <- getObject bucket key defaultGetObjectOptions
       -- Consume the response body
       let src = Minio.gorObjectStream resp
@@ -131,7 +135,7 @@ runCacheR2 conn = interpret $ \case
         content = fileRecordBytes record
         size    = fromIntegral (BS.length content) :: Int64
         src     = C.yield content
-    result <- embed $ try @SomeException $ runMinio (r2ConnInfo conn) $
+    result <- embed $ try @SomeException $ Minio.runMinioWith (r2MinioConn conn) $
       Minio.putObject bucket key src (Just size) defaultPutObjectOptions
     case result of
       Left err -> do
@@ -145,7 +149,7 @@ runCacheR2 conn = interpret $ \case
   UpdateKV uri Nothing -> do
     let key    = fileURIToKey uri
         bucket = r2ConnBucket conn
-    result <- embed $ try @SomeException $ runMinio (r2ConnInfo conn) $
+    result <- embed $ try @SomeException $ Minio.runMinioWith (r2MinioConn conn) $
       removeObject bucket key
     case result of
       Left err -> do

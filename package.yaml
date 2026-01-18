@@ -123,6 +123,20 @@ executables:
     dependencies:
       - hs-hath
 
+  migrate-to-r2:
+    main: Migrate.hs
+    source-dirs: app
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+      - -main-is
+      - Migrate
+    dependencies:
+      - hs-hath
+      - optparse-applicative
+      - directory
+
 tests:
   hs-hath-test:
     main: Spec.hs

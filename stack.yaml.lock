@@ -32,6 +32,27 @@ packages:
       size: 8675
   original:
     hackage: cryptostore-0.3.0.1
+- completed:
+    hackage: time-units-1.0.0@sha256:27cf54091c4a0ca73d504fc11d5c31ab4041d17404fe3499945e2055697746c1,928
+    pantry-tree:
+      sha256: 9b516d4195fcea22cd1f4335cfe210e88deca397ba7dacc494d5a2feb69e1af8
+      size: 212
+  original:
+    hackage: time-units-1.0.0
+- completed:
+    hackage: ini-0.4.2@sha256:d49131863e2957386d228c53773c25d1262de490728c6c19b85064eb4422c3e6,1658
+    pantry-tree:
+      sha256: 5f86edc24679d8076263a01d9915d1816172d3b59221883e3c0855459d1153bc
+      size: 356
+  original:
+    hackage: ini-0.4.2
+- completed:
+    hackage: digest-0.0.2.1@sha256:938215f33ed3546dc2f059f3707f7370e9e9e1c0285cac16379ebfa45e9054c0,3623
+    pantry-tree:
+      sha256: 3246db635be9d76d3df53ec3485d27ed1fac0bf7e2ea7d612fe299cd04164942
+      size: 1807
+  original:
+    hackage: digest-0.0.2.1
 snapshots:
 - completed:
     sha256: c320c36b8a392602c9076bdd0c656e12dcab30f294105a50c3f8ef963c4c3a0d

@@ -15,6 +15,7 @@ data Options
             , optCachePath        :: !(Maybe Text)  -- ^ Override cache path
             , optSkipStartupVerify :: !Bool         -- ^ Skip startup cache verification
             , optSkipPeriodicVerify :: !Bool        -- ^ Skip periodic file verification
+            , optDisableRateLimit :: !Bool          -- ^ Disable rate limiting (for NAT/proxy scenarios)
             }
   deriving ( Show )
 
@@ -53,6 +54,9 @@ optionsParser
   <*> switch
     (long "disable-periodic-verification"
      <> help "Disable periodic file verification during runtime")
+  <*> switch
+    (long "disable-rate-limit"
+     <> help "Disable rate limiting (use when behind NAT/proxy that doesn't forward real IP)")
 
 -- | Apply CLI options to client configuration
 applyOptionsToConfig :: Options -> ClientConfig -> ClientConfig
