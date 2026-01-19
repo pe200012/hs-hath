@@ -5,7 +5,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeOperators #-}
 
-module API
+module Interface.API
   (   -- * H@H Client Exposed API
     API
   , api
@@ -47,8 +47,6 @@ import           Data.String.Interpolate  ( i )
 import qualified Data.Text                as T
 import           Data.Time.Clock.System   ( SystemTime(systemSeconds), getSystemTime )
 import           Data.X509                ( CertificateChain, PrivKey )
-
-import           Hash                     ( hash )
 
 import           Network.HTTP.Client      ( Request(responseTimeout, host, requestHeaders)
                                           , Response(responseBody)
@@ -103,6 +101,8 @@ import           Types                    ( ClientConfig
                                           , parseRPCResponse'
                                           , parseSettings
                                           )
+
+import           Utils                    ( hash )
 
 -- | Available server commands
 data ServerCommand

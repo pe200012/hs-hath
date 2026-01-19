@@ -1,11 +1,17 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Genesis ( Genesis(..), fetchSettings, fetchCertificate, runGenesis, runGenesisIO ) where
-
-import           API
+module HathNetwork.Genesis
+  ( Genesis(..)
+  , fetchSettings
+  , fetchCertificate
+  , runGenesis
+  , runGenesisIO
+  ) where
 
 import           Data.X509          ( CertificateChain, PrivKey )
+
+import           Interface.API
 
 import           Polysemy
 import           Polysemy.Error     ( Error, errorToIOFinal )
