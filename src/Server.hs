@@ -128,6 +128,7 @@ import           Types                                ( CacheBackend(..)
 import           UnliftIO                             ( TChan
                                                       , race
                                                       , readTChan
+                                                      , replicateConcurrently
                                                       , withAsync
                                                       , writeTChan
                                                       )
@@ -337,7 +338,7 @@ server
           = let
               rs        = fromMaybe "" (Map.lookup "keystamp" opts)
               ( t, rk ) = BSC.span (/= '-') rs
-            in
+            in 
               ( fromIntegral $ maybe 0 fst $ BSC.readInteger t, BS.tail rk )
 
         {-# INLINE challange #-}
@@ -360,7 +361,7 @@ server
               , testSize
               , [i|#{protocol}://#{hostname}:#{port}/t/#{testSize}/#{testTime}/#{testKey}/0|]
               )
-        in
+        in 
           case args of
             Nothing -> throw err403
             Just ( testCount, testSize, url ) -> do
@@ -368,7 +369,7 @@ server
               case parseRequest url of
                 Nothing  -> throw err403
                 Just req -> do
-                  results <- replicateM testCount $ embed $ runTest testSize req mgr
+                  results <- embed $ replicateConcurrently testCount $ runTest testSize req mgr
                   let ( failed :: Int, millis :: Int64 )
                         = foldl' (\( f, t ) r -> case r of
                                     Nothing -> ( f + 1, t )
@@ -380,7 +381,7 @@ server
               1000000
               (fromIntegral . fst)
               (BSC.readInteger =<< lookupParam "testsize" additional)
-        in
+        in 
           return $ addHeader @"Content-Length" testSize $ Source.fromStepT $ bufferSending testSize
       RefreshSettings   -> do
         log Info "Refreshing settings"
@@ -443,10 +444,7 @@ server
       _      -> k $ responseLBS status404 [] ""
 
 -- | Set up periodic timers for various housekeeping tasks
-tictok :: ClientConfig
-       -> TVar IPMap
-       -> TVar KeystampMap
-       -> IO (IO ())
+tictok :: ClientConfig -> TVar IPMap -> TVar KeystampMap -> IO (IO ())
 tictok config ipMap ksVar = do
   -- ipmap cleanup
   cleanupHandle <- repeatedTimer
@@ -633,7 +631,7 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
     gracefulShutdown
       = let
           phi = flip unless phi . fromRight False =<< runEHentaiAPIIO config stopListening
-        in
+        in 
           phi >> exitSuccess
 
     refreshCerts = phi 0
