@@ -8,6 +8,7 @@ import           Colog.Polysemy          ( Log )
 
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Short   as SBS
+import qualified Data.HashSet            as HashSet
 import qualified Data.Map                as Map
 import           Data.String.Interpolate ( i )
 
@@ -21,13 +22,13 @@ import           Polysemy.Reader         ( Reader, ask )
 
 import           Relude                  hiding ( Reader, ask )
 
+import           SettingM                ( SettingM, getSettings )
+
 import           Stats                   ( Stats, addDownload, incFetched )
 
 import           Types
 
 import           Utils                   ( log )
-import qualified Data.HashSet as HashSet
-import SettingM (SettingM, getSettings)
 
 data LocateURI
   = LocateURI { locateURIFilename :: !ByteString
