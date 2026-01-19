@@ -31,7 +31,9 @@ jobs:
       - uses: actions/cache@v4
         name: Cache GHC
         with:
-          path: ~/.ghcup
+          path: |
+            /usr/local/.ghcup
+            ~/.ghcup
           key: ${{ runner.os }}-ghcup-${{ matrix.plan.ghc }}
 
       - uses: haskell-actions/setup@v2
