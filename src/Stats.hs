@@ -52,6 +52,21 @@ data Stats m a where
   ReadStats :: Stats m TrafficStats
   ReadPrometheus :: Stats m Text
 
+  -- New uptime metric
+  UpdateUptime :: Stats m ()
+
+  -- Active connections
+  IncActiveConnections :: Stats m ()
+  DecActiveConnections :: Stats m ()
+
+  -- Gallery Downloader metrics
+  IncDlTask :: Stats m ()
+  IncDlFile :: Stats m ()
+  AddDlBytes :: Int -> Stats m ()
+
+  -- Error metrics with labels
+  IncError :: Text -> Stats m ()  -- error type label
+
 makeSem ''Stats
 
 toPrometheus :: TrafficStats -> Text
