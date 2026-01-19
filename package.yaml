@@ -63,6 +63,7 @@ dependencies:
   - placeholder >= 0 && < 1
   - polysemy >= 1.9 && < 1.10
   - polysemy-zoo >= 0.8 && < 0.9
+  - prometheus >= 2.3.0 && < 2.4
   - process >= 1.6 && < 1.7
   - template-haskell >= 2.19 && < 2.24
   - filepath >= 1.4 && < 1.6
