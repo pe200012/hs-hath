@@ -23,11 +23,11 @@ import           Relude                  hiding ( Reader, ask )
 
 import           Stats                   ( Stats, addDownload, incFetched )
 
-import           Storage.Database        ( FileRecord(..) )
-
 import           Types
 
 import           Utils                   ( log )
+import qualified Data.HashSet as HashSet
+import SettingM (SettingM, getSettings)
 
 data LocateURI
   = LocateURI { locateURIFilename :: !ByteString
@@ -44,7 +44,7 @@ makeSem ''Locate
 runLocate
   :: Members
     '[ KVStore FileURI FileRecord
-     , Reader HathSettings
+     , SettingM
      , Error RPCError
      , Reader ClientConfig
      , EHentaiAPI
@@ -57,12 +57,10 @@ runLocate
   -> r @> a
 runLocate = interpret $ \case
   LocateResource uri -> do
-    settings <- ask @HathSettings
+    settings <- getSettings
     let fileURI = locateURI uri
         s4      = SBS.take 4 . show $ fileURI
-    -- if HashSet.member s4 (staticRanges settings)
-    -- temporarily disabled
-    if True
+    if HashSet.member s4 (staticRanges settings)
       then lookupKV fileURI >>= \case
         Just record -> return $ Just $ fileRecordBytes record
         Nothing     -> case ( Map.lookup "fileindex" (locateURIOptions uri)

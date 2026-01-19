@@ -38,6 +38,8 @@ import qualified Data.ByteString.Short   as SBS
 import qualified Data.HashSet            as HashSet
 import           Data.String.Interpolate ( i )
 
+import           Database.SQLite.Simple  ( FromRow, ToRow )
+
 import           Dhall                   ( FromDhall(..), ToDhall(..), auto, input )
 
 import           Network.HTTP.Types      ( HeaderName )
@@ -47,8 +49,8 @@ import           Polysemy.Error          ( Error )
 import qualified Polysemy.Error          as Error
 
 import           Prelude                 ( Show(show) )
+
 import           Relude
-import           Database.SQLite.Simple  ( FromRow, ToRow )
 
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, Text ) ] #-}
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, ByteString ) ] #-}
@@ -294,7 +296,6 @@ getPayload response
 -- | Parse RPC responses effectfully
 parseRPCResponse' :: Member (Error RPCError) r => ByteString -> Sem r [ ByteString ]
 parseRPCResponse' bytes = Error.fromEither (getPayload =<< parseRPCResponse bytes)
-
 
 data FileRecord
   = FileRecord { fileRecordLRUCounter :: {-# UNPACK #-} !Int64
