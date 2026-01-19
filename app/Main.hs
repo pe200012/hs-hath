@@ -1,6 +1,7 @@
 module Main ( main ) where
 
 import           CLI               ( Options(..), applyOptionsToConfig, parseOptions )
+import           Version           ( versionInfo )
 
 import           Database          ( initializeDB )
 import           Database.SQLite.Simple ( withConnection )
@@ -24,6 +25,12 @@ import           Types
 main :: IO ()
 main = do
     options <- parseOptions
+
+    -- Handle --version flag
+    when (optShowVersion options) $ do
+        putStrLn $ T.unpack versionInfo
+        exitSuccess
+
     baseConfig <- readClientConfig (toText $ optConfigPath options)
     let config = applyOptionsToConfig options baseConfig
 

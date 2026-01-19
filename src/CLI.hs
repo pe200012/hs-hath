@@ -17,6 +17,7 @@ data Options
             , optSkipPeriodicVerify :: !Bool        -- ^ Skip periodic file verification
             , optDisableRateLimit :: !Bool          -- ^ Disable rate limiting (for NAT/proxy scenarios)
             , optTrustProxyHeaders :: !Bool         -- ^ Trust X-Forwarded-For header for real IP
+            , optShowVersion     :: !Bool          -- ^ Show version information
             }
   deriving ( Show )
 
@@ -58,9 +59,14 @@ optionsParser
   <*> switch
     (long "disable-rate-limit"
      <> help "Disable rate limiting (use when behind NAT/proxy that doesn't forward real IP)")
-  <*> switch
+   <*> switch
     (long "trust-proxy-headers"
      <> help "Trust X-Forwarded-For header for real client IP (use when behind trusted proxy)")
+  <*> switch
+    (long "version"
+     <> short 'v'
+     <> help "Show version information and exit")
+
 
 -- | Apply CLI options to client configuration
 applyOptionsToConfig :: Options -> ClientConfig -> ClientConfig

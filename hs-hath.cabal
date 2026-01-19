@@ -44,6 +44,7 @@ library
       Types
       URLParam
       Utils
+      Version
   other-modules:
       Paths_hs_hath
   hs-source-dirs:
@@ -97,6 +98,7 @@ library
     , placeholder ==0.*
     , polysemy ==1.9.*
     , polysemy-zoo ==0.8.*
+    , process ==1.6.*
     , relude ==1.2.*
     , resourcet ==1.3.*
     , safe-exceptions ==0.1.*
@@ -108,6 +110,7 @@ library
     , stm ==2.5.*
     , string-interpolate ==0.3.*
     , suspend ==0.2.*
+    , template-haskell >=2.19 && <2.24
     , text >=2.0 && <2.2
     , time >=1.12 && <1.15
     , timers ==0.2.*
@@ -180,6 +183,7 @@ executable hs-hath
     , placeholder ==0.*
     , polysemy ==1.9.*
     , polysemy-zoo ==0.8.*
+    , process ==1.6.*
     , relude ==1.2.*
     , resourcet ==1.3.*
     , safe-exceptions ==0.1.*
@@ -191,6 +195,7 @@ executable hs-hath
     , stm ==2.5.*
     , string-interpolate ==0.3.*
     , suspend ==0.2.*
+    , template-haskell >=2.19 && <2.24
     , text >=2.0 && <2.2
     , time >=1.12 && <1.15
     , timers ==0.2.*
@@ -263,6 +268,7 @@ executable migrate-to-r2
     , placeholder ==0.*
     , polysemy ==1.9.*
     , polysemy-zoo ==0.8.*
+    , process ==1.6.*
     , relude ==1.2.*
     , resourcet ==1.3.*
     , safe-exceptions ==0.1.*
@@ -274,6 +280,7 @@ executable migrate-to-r2
     , stm ==2.5.*
     , string-interpolate ==0.3.*
     , suspend ==0.2.*
+    , template-haskell >=2.19 && <2.24
     , text >=2.0 && <2.2
     , time >=1.12 && <1.15
     , timers ==0.2.*
@@ -350,6 +357,7 @@ test-suite hs-hath-test
     , placeholder ==0.*
     , polysemy ==1.9.*
     , polysemy-zoo ==0.8.*
+    , process ==1.6.*
     , relude ==1.2.*
     , resourcet ==1.3.*
     , safe-exceptions ==0.1.*
@@ -361,6 +369,7 @@ test-suite hs-hath-test
     , stm ==2.5.*
     , string-interpolate ==0.3.*
     , suspend ==0.2.*
+    , template-haskell >=2.19 && <2.24
     , text >=2.0 && <2.2
     , time >=1.12 && <1.15
     , timers ==0.2.*
