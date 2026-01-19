@@ -136,7 +136,7 @@ runCacheR2 conn m = do
     phi cache (UpdateKV uri (Just record)) = do
       let key     = fileURIToKey uri
           content = fileRecordBytes record
-          siz    = fromIntegral (BS.length content) :: Int64
+          siz     = fromIntegral (BS.length content) :: Int64
           src     = C.yield content
       result <- embed
         $ try @SomeException

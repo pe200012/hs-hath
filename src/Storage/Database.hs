@@ -17,7 +17,7 @@ import           Polysemy.Operators
 
 import           Relude                  hiding ( Reader, State, ask, evalState, get, modify, put )
 
-import           Types                   ( FileURI, FileRecord(..) )
+import           Types                   ( FileRecord(..), FileURI )
 
 {-# INLINE initializeDB #-}
 -- | Initialize database with required schema
