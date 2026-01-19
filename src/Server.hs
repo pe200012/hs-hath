@@ -40,13 +40,21 @@ import           Database.SQLite.Simple               ( Connection, withConnecti
 import           FileVerification                     ( VerificationResult(..), verifyRandomFile )
 
 import           HathNetwork.Genesis
-import           HathNetwork.RPC                      ( RPC, runRPC, runRPCIO, stillAlive )
+import           HathNetwork.RPC                      ( RPC
+                                                      , notifyGalleryCompletion
+                                                      , runRPC
+                                                      , runRPCIO
+                                                      , stillAlive
+                                                      )
 
 import           Interface.API                        ( API
+                                                      , EHentaiAPI
                                                       , ServerCommand(..)
                                                       , WithDynamicContentType(WithDynamicContentType)
                                                       , api
+                                                      , downloadGalleryFile
                                                       , fetchBlacklist
+                                                      , nextGalleryTask
                                                       , runEHentaiAPI
                                                       , runEHentaiAPIIO
                                                       , startListening
@@ -88,6 +96,7 @@ import           Polysemy                             ( Embed
                                                       , embedToFinal
                                                       , runFinal
                                                       )
+import           Polysemy.Async                       ( Async, async, asyncToIOFinal )
 import           Polysemy.Error                       ( Error, errorToIOFinal, mapError, throw )
 import           Polysemy.KVStore                     ( KVStore )
 import           Polysemy.Reader                      ( Reader, ask, runReader )
@@ -119,6 +128,8 @@ import           Types                                ( CacheBackend(..)
                                                       , ClientConfig
                                                       , ClientConfig(..)
                                                       , FileURI(fileExt)
+                                                      , GalleryFile(..)
+                                                      , GalleryMetadata(..)
                                                       , HathSettings(..)
                                                       , RPCError
                                                       , hentaiHeader
@@ -126,6 +137,8 @@ import           Types                                ( CacheBackend(..)
                                                       )
 
 import           UnliftIO                             ( TChan
+                                                      , mapConcurrently_
+                                                      , pooledMapConcurrentlyN_
                                                       , race
                                                       , readTChan
                                                       , replicateConcurrently
@@ -278,6 +291,8 @@ keystampLimitMiddleware ksVar app req sendResponse
 server :: Members
          '[ Embed IO
           , Error ServerError
+          , Error RPCError
+          , EHentaiAPI
           , Reader ClientConfig
           , RPC
           , Locate
@@ -286,6 +301,7 @@ server :: Members
           , Log Message
           , Genesis
           , SettingM
+          , Async
           ]
          r
        => ServerT API (Sem r)
@@ -345,7 +361,11 @@ server
         challange :: ClientConfig -> ByteString
         challange cfg = BS.take 10 (hash [i|#{timestamp}-#{fileid}-#{key cfg}-hotlinkthis|])
 
-    serverCmdHandler command (parseURLParams . encodeUtf8 -> additional) time key = case command of
+    serverCmdHandler
+      command
+      (parseURLParams . encodeUtf8 -> additional)
+      _time
+      _key = case command of
       StillAlive        -> plainText "I feel FANTASTIC and I'm still alive"
       ThreadedProxyTest -> let
           args = do
@@ -387,7 +407,9 @@ server
         log Info "Refreshing settings"
         updateSettings =<< fetchSettings
         plainText ""
-      StartDownloader   -> plainText ""
+      StartDownloader   -> do
+        void $ async startsDownloader
+        plainText ""
       RefreshCerts      -> do
         log Info "Refreshing certificates"
         chan <- ask @(TChan ServerAction)
@@ -396,6 +418,29 @@ server
           atomically $ writeTChan chan Cert
         plainText ""
       where
+        startsDownloader = do
+          metadata <- nextGalleryTask
+          case metadata of
+            Nothing -> log Info "No gallery task available"
+            Just md -> do
+              log Info [i|Starting download for gallery #{galleryID md}|]
+              complete <- mapM (verifyAndDownload md) (galleryFileList md)
+              when (and complete) (notifyGalleryCompletion md)
+
+        verifyAndDownload md f = do
+          let filePath :: FilePath
+                = [i|download/#{galleryTitle md}/#{galleryFileName f}.#{galleryFileExt f}|]
+          existingBytes <- embed $ BS.readFile filePath
+          if galleryFileHash f == hash existingBytes
+            then log Info [i|#{galleryFileName f}.#{galleryFileExt f} already verified, skipping|]
+              >> pure True
+            else downloadGalleryFile md f >>= \case
+              Nothing    -> pure False
+              Just bytes -> do
+                log Info [i|Downloaded #{galleryFileName f}.#{galleryFileExt f}|]
+                embed $ BS.writeFile filePath bytes
+                pure True
+
         runTest testSize req mgr = do
           start <- getPOSIXTime
           let phi 0 _  = do
@@ -555,6 +600,7 @@ makeApplication
       = Handler
       . ExceptT
       . runFinal
+      . asyncToIOFinal
       . embedToFinal @IO
       . errorToIOFinal @ServerError
       . mapError @RPCError (const err500)
