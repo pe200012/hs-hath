@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-and-release:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt install libsqlite3-dev
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.12.2"
+          enable-stack: true
+
+      - name: Build
+        run: |
+          stack build --system-ghc
+          stack install --system-ghc --local-bin-path ./bin/
+
+      - name: Compress binaries (Unix)
+        if: runner.os != 'Windows'
+        uses: crazy-max/ghaction-upx@v3
+        with:
+          version: latest
+          files: ./bin/*
+          args: -fq
+
+      - name: Package binaries
+        run: |
+          cd bin
+          tar -czf ../hs-hath-${{ matrix.os }}.tar.gz *
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: hs-hath-${{ matrix.os }}.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
