@@ -42,7 +42,7 @@ import           Data.Time.Clock                      ( NominalDiffTime
                                                       , addUTCTime
                                                       , getCurrentTime
                                                       )
-import           Data.Time.Clock.POSIX                ( POSIXTime, getPOSIXTime )
+import           Data.Time.Clock.POSIX                ( POSIXTime, getPOSIXTime, utcTimeToPOSIXSeconds )
 import           Data.Time.Clock.System               ( SystemTime(systemSeconds), getSystemTime )
 import           Data.X509                            ( CertificateChain, PrivKey )
 
@@ -243,6 +243,41 @@ tooManyRequestsResponse
     [ ( "Content-Type", "text/plain" ) ]
     "Too Many Requests"
 
+type KeystampMap = HashMap Int64 (Int, UTCTime)
+
+-- | Keystamp rate limiting middleware
+keystampLimitMiddleware :: TVar KeystampMap -> Middleware
+keystampLimitMiddleware ksVar app req sendResponse
+  | "/h/" `BS.isPrefixOf` path = do
+    let parts = BS.split 47 (BS.drop 1 path) -- 47 is '/'
+    case parts of
+      (_h : _fileid : optsRaw : _) -> do
+        let opts = parseURLParams optsRaw
+        case Map.lookup "keystamp" opts of
+          Just ksRaw -> do
+            let (t, _) = BSC.span (/= '-') ksRaw
+            case BSC.readInteger t of
+              Just (fromIntegral -> ts, _) -> do
+                now <- getCurrentTime
+                allowed <- atomically $ do
+                  m <- readTVar ksVar
+                  let (count, _) = HashMap.lookupDefault (0, now) ts m
+                  if count >= 10  -- Undocumented limit
+                    then return False
+                    else do
+                      let !newM = HashMap.insert ts (count + 1, now) m
+                      writeTVar ksVar newM
+                      return True
+                if allowed
+                  then app req sendResponse
+                  else sendResponse tooManyRequestsResponse
+              Nothing -> app req sendResponse
+          Nothing -> app req sendResponse
+      _ -> app req sendResponse
+  | otherwise = app req sendResponse
+  where
+    path = rawPathInfo req
+
 -- Server implementation
 server :: Members
          '[ Embed IO
@@ -416,11 +451,12 @@ server
 -- | Set up periodic timers for various housekeeping tasks
 tictok :: ClientConfig
        -> TVar IPMap
+       -> TVar KeystampMap
        -> Connection
        -> TVar (Maybe UTCTime)
        -> Bool  -- ^ Skip file verification
        -> IO (() -> IO ())
-tictok config ipMap conn lastVerifTime skipVerify = do
+tictok config ipMap ksVar conn lastVerifTime skipVerify = do
   -- ipmap cleanup
   cleanupHandle <- repeatedTimer
     (do
@@ -436,6 +472,19 @@ tictok config ipMap conn lastVerifTime skipVerify = do
                                             []      -> False) m
          writeTVar ipMap filtered)
     (mDelay 1)
+
+  -- keystamp cleanup (every minute, remove entries older than 2 hours)
+  ksCleanupHandle <- repeatedTimer
+    (do
+       now <- getCurrentTime
+       atomically $ do
+         m <- readTVar ksVar
+         -- Keep entries where (timestamp > now - 30 mins)
+         -- Since keystamp is a unix timestamp (seconds), we compare it directly
+         let twoHoursAgo = truncate (realToFrac (utcTimeToPOSIXSeconds (addUTCTime (-1800) now)) :: Double) :: Int64
+         let filtered = HashMap.filterWithKey (\ts _ -> ts > twoHoursAgo) m
+         writeTVar ksVar filtered)
+    (mDelay 60)
 
   -- heartbeat
   heartbeatHandle <- repeatedTimer (void $ runRPCIO config stillAlive) (mDelay 1)
@@ -457,6 +506,7 @@ tictok config ipMap conn lastVerifTime skipVerify = do
 
   return $ \() -> do
     stopTimer cleanupHandle
+    stopTimer ksCleanupHandle
     stopTimer heartbeatHandle
     stopTimer blacklistHandle
     mapM_ stopTimer verificationHandle
@@ -481,12 +531,13 @@ makeApplication :: ClientConfig
                 -> HathSettings
                 -> MVar ServerAction
                 -> TVar IPMap
+                -> TVar KeystampMap
                 -> Bool  -- ^ Disable rate limiting
                 -> Bool  -- ^ Trust proxy headers for real IP
                 -> CacheRunner
                 -> StatsEnv
                 -> Application
-makeApplication config settings action ipMap disableRateLimit trustProxyHeaders cacheRunner statsEnv
+makeApplication config settings action ipMap ksVar disableRateLimit trustProxyHeaders cacheRunner statsEnv
   = finalMiddleware
   $ normalizeAcceptMiddleware
   $ serve api (hoistServer api interpretServer server)
@@ -497,8 +548,11 @@ makeApplication config settings action ipMap disableRateLimit trustProxyHeaders 
     applyRateLimit :: Middleware
     applyRateLimit = if disableRateLimit then id else rateLimitMiddleware ipMap
 
+    applyKeystampLimit :: Middleware
+    applyKeystampLimit = keystampLimitMiddleware ksVar
+
     finalMiddleware :: Middleware
-    finalMiddleware = applyRealIp . applyRateLimit
+    finalMiddleware = applyRealIp . applyKeystampLimit . applyRateLimit
 
     interpretServer :: Sem _ a -> Handler a
     interpretServer
@@ -525,6 +579,7 @@ startServer
   :: ClientConfig -> HathSettings -> ( CertificateChain, PrivKey ) -> MVar ServerAction -> Bool -> Bool -> Bool -> IO ()
 startServer config settings certs chan skipVerify disableRateLimit trustProxyHeaders = do
   ipMap <- newTVarIO HashMap.empty
+  ksVar <- newTVarIO HashMap.empty
   statsEnv <- newStatsEnv
   lastVerifTime <- newTVarIO Nothing  -- TVar for tracking last verification time
   print =<< runRPCIO config (fetchBlacklist 259200)
@@ -533,9 +588,9 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
       withConnection (Text.unpack $ cachePath config) $ \conn -> do
         initializeDB conn
         let cacheRunner = CacheRunner { runCacheWith = runCache conn }
-        stopTictok <- tictokSQLite config ipMap conn lastVerifTime skipVerify
+        stopTictok <- tictokSQLite config ipMap ksVar conn lastVerifTime skipVerify
         finally
-          (loopSQLite config settings certs conn cacheRunner ipMap disableRateLimit trustProxyHeaders statsEnv)
+          (loopSQLite config settings certs conn cacheRunner ipMap ksVar disableRateLimit trustProxyHeaders statsEnv)
           (stopTictok ())
     CacheBackendR2 -> do
       case r2Config config of
@@ -546,7 +601,8 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
             Left err -> error $ "Failed to initialize R2: " <> err
             Right r2Conn -> do
               let cacheRunner = CacheRunner { runCacheWith = runCacheR2 r2Conn }
-              loopR2 config settings certs cacheRunner ipMap disableRateLimit trustProxyHeaders statsEnv
+              let stopTictok = \(_ :: ()) -> pure () :: IO ()
+              loopR2 config settings certs cacheRunner ipMap ksVar disableRateLimit trustProxyHeaders statsEnv
   where
     gracefulShutdown :: IO a
     gracefulShutdown
@@ -586,8 +642,8 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
                 phi (retries + 1)
 
     -- SQLite loop - needs Connection for tictok
-    loopSQLite cfg set c conn cacheRunner ipMap disableRL trustProxy statsEnv = do
-      let app = makeApplication cfg set chan ipMap disableRL trustProxy cacheRunner statsEnv
+    loopSQLite cfg set c conn cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
+      let app = makeApplication cfg set chan ipMap ksVar disableRL trustProxy cacheRunner statsEnv
       result <- withAsync (notifyStart cfg set) $ \_ -> race (takeMVar chan)
         $ runTLS
           (defaultTlsSettings
@@ -600,15 +656,15 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
         Left Reload -> exitSuccess
         Left Cert -> do
           newCerts <- refreshCerts
-          loopSQLite cfg set newCerts conn cacheRunner ipMap disableRL trustProxy statsEnv
+          loopSQLite cfg set newCerts conn cacheRunner ipMap ksVar disableRL trustProxy statsEnv
         Left Settings -> do
           newSettings <- refreshSettings
-          loopSQLite cfg newSettings certs conn cacheRunner ipMap disableRL trustProxy statsEnv
+          loopSQLite cfg newSettings certs conn cacheRunner ipMap ksVar disableRL trustProxy statsEnv
         Right _ -> error "Server terminated unexpectedly"
 
     -- R2 loop - no Connection needed
-    loopR2 cfg set c cacheRunner ipMap disableRL trustProxy statsEnv = do
-      let app = makeApplication cfg set chan ipMap disableRL trustProxy cacheRunner statsEnv
+    loopR2 cfg set c cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
+      let app = makeApplication cfg set chan ipMap ksVar disableRL trustProxy cacheRunner statsEnv
       result <- withAsync (notifyStart cfg set) $ \_ -> race (takeMVar chan)
         $ runTLS
           (defaultTlsSettings
@@ -621,15 +677,15 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
         Left Reload -> exitSuccess
         Left Cert -> do
           newCerts <- refreshCerts
-          loopR2 cfg set newCerts cacheRunner ipMap disableRL trustProxy statsEnv
+          loopR2 cfg set newCerts cacheRunner ipMap ksVar disableRL trustProxy statsEnv
         Left Settings -> do
           newSettings <- refreshSettings
-          loopR2 cfg newSettings certs cacheRunner ipMap disableRL trustProxy statsEnv
+          loopR2 cfg newSettings certs cacheRunner ipMap ksVar disableRL trustProxy statsEnv
         Right _ -> error "Server terminated unexpectedly"
 
     -- tictok for SQLite backend (uses Connection)
-    tictokSQLite cfg ipMap conn lastVerifTime skipVerify' =
-      tictok cfg ipMap conn lastVerifTime skipVerify'
+    tictokSQLite cfg ipMap ksVar conn lastVerifTime skipVerify' =
+      tictok cfg ipMap ksVar conn lastVerifTime skipVerify'
 
 normalizeAcceptMiddleware :: Middleware
 normalizeAcceptMiddleware app req = app req { requestHeaders = normalizedHeaders }
