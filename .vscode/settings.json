@@ -1,3 +1,24 @@
 {
-    "haskell.formattingProvider": "floskell"
+    "haskell.formattingProvider": "floskell",
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/.hg/store/**": true,
+        "**/.stack-work/**": true,
+        "**/.repos": true
+    },
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/.DS_Store": true,
+        "**/Thumbs.db": true,
+        "**/.repos": true
+    },
+    "search.exclude": {
+        "**/node_modules": true,
+        "**/bower_components": true,
+        "**/*.code-search": true,
+        "**/.repos": true
+    }
 }
