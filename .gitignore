@@ -1,3 +1,8 @@
 .stack-work/
 *~
 .aider*
+.idea
+.oc
+.serena
+.vscode
+dist-newstyle
