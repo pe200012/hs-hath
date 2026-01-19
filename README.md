@@ -2,33 +2,11 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-A high-performance Haskell implementation of the Hentai@Home client, featuring:
-
-- Efficient resource caching and serving
-- TLS-secured RPC communication
-- Rate limiting and flood control
-- Gallery download capabilities
-- Automatic certificate management
-
-## Table of Contents
-- [Features](#features)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Usage](#usage)  
-- [Architecture](#architecture)
-- [Performance](#performance)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
-- [License](#license)
+A high-performance Haskell implementation of the Hentai@Home client. The client caches and serves gallery files, communicates with the H@H server via TLS-secured RPC, and supports S3-compatible storage backends including Cloudflare R2.
 
 ## Features
 
-- **Resource Caching**: Smart LRU-based caching of served resources
-- **RPC Communication**: Secure client-server communication via TLS
-- **Rate Limiting**: Built-in request throttling and IP banning
-- **Gallery Downloads**: Parallel downloading of gallery files
-- **Automatic Updates**: Certificate and settings refresh
-- **Logging**: Detailed operational logging
+Resource caching uses an LRU cache with SQLite-backed or R2-backed storage. RPC communication to the H@H server uses TLS with automatic certificate refresh every 24 hours. Rate limiting includes both IP-based throttling and keystamp-based fallback for NAT environments. Gallery downloads support parallel file fetching. Prometheus metrics are available at the `/metrics` endpoint. The client tracks build information via the `--version` flag.
 
 ## Installation
 
@@ -64,56 +42,38 @@ Start the client:
 stack exec hs-hath
 ```
 
-Key commands:
-- `SIGINT`/`SIGTERM`: Graceful shutdown
-- Automatic certificate refresh every 24 hours
-- Settings reload via RPC command
+View version information:
+```bash
+stack exec hs-hath -- --version
+```
+
+The client responds to `SIGINT` and `SIGTERM` for graceful shutdown. Settings reload automatically via RPC command. The Prometheus metrics endpoint is available at `/metrics` for monitoring.
 
 ## Architecture
 
-The system consists of several key components:
+The RPC client handles communication with the H@H server, including certificate management and settings synchronization. The resource cache stores files using SQLite with LRU eviction. An HTTP server built on Warp serves cached resources. Rate limiting middleware provides both IP-based and keystamp-based request throttling. The storage backend supports local filesystem and S3-compatible services like Cloudflare R2.
 
-1. **RPC Client**: Handles communication with the H@H server
-2. **Resource Cache**: SQLite-backed file storage
-3. **HTTP Server**: Warp-based web server for resource delivery
-4. **Rate Limiter**: Request throttling middleware
-5. **Task Manager**: Gallery download coordination
+## Metrics
+
+The client exports Prometheus metrics in text format at the `/metrics` endpoint. Metrics include request counters, cache statistics, and operational counters for monitoring and alerting.
 
 ## Performance
 
-The client is optimized for:
-- High concurrent request handling
-- Minimal memory footprint (~50MB baseline)
-- Efficient disk caching
-- Low-latency responses
+Has not been optimized yet. Currently, it will take ~200MiB RAM on average.
 
 ## Troubleshooting
 
-Common issues:
+### Certificate errors
+Verify system clock synchronization and certificate file permissions. Certificate refresh occurs automatically every 24 hours.
 
-**Certificate errors**:
-- Verify system clock is synchronized
-- Check certificate file permissions
+### Connection issues
+Check proxy settings if configured. Ensure firewall allows outbound TLS connections on the required ports.
 
-**Connection issues**:
-- Verify proxy settings if used
-- Check firewall allows outbound TLS connections
+### Storage backend errors
+For S3-compatible backends like Cloudflare R2, verify that the storage server returns required headers: `ETag`, `Content-Length`, and `Last-Modified`. Missing `ETag` headers cause write failures.
 
-**Rate limiting**:
-- Client implements strict request throttling
-- Banned IPs are logged in the console
-
-## Contributing
-
-Contributions welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Submit a pull request
-
-Ensure all changes:
-- Maintain backwards compatibility
-- Include tests where applicable
-- Follow existing code style
+### Rate limiting
+The client implements strict request throttling. Banned IPs and rate limit violations appear in console logs. Verify client configuration if legitimate requests are being rejected.
 
 ## License
 
