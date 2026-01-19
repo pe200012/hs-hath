@@ -21,6 +21,8 @@ import           System.Posix           ( Handler(Catch), installHandler, sigINT
 
 import           Types
 
+import           UnliftIO               ( newTChanIO, writeTChan )
+
 import           Version                ( versionInfo )
 
 main :: IO ()
@@ -51,9 +53,9 @@ main = do
         $ putStrLn
         $ "WARNING: " <> show (corruptedCount stats) <> " corrupted files were found and removed."
 
-  chan <- newEmptyMVar
-  void $ installHandler sigINT (Catch $ putMVar chan GracefulShutdown) Nothing
-  void $ installHandler sigTERM (Catch $ putMVar chan GracefulShutdown) Nothing
+  chan <- newTChanIO
+  void $ installHandler sigINT (Catch $ atomically $ writeTChan chan GracefulShutdown) Nothing
+  void $ installHandler sigTERM (Catch $ atomically $ writeTChan chan GracefulShutdown) Nothing
 
   runRPCIO config serverStat >>= \case
     Right (Right True) -> runRPCIO config clientLogin >>= \case
@@ -63,7 +65,6 @@ main = do
           settings
           certs
           chan
-          (optSkipPeriodicVerify options)
           (optDisableRateLimit options)
           (optTrustProxyHeaders options)
         e -> do

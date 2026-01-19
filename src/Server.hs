@@ -125,7 +125,12 @@ import           Types                                ( CacheBackend(..)
                                                       , parseFileURI
                                                       )
 
-import           UnliftIO                             ( race, withAsync )
+import           UnliftIO                             ( TChan
+                                                      , race
+                                                      , readTChan
+                                                      , withAsync
+                                                      , writeTChan
+                                                      )
 
 import           Utils                                ( bufferSending
                                                       , hash
@@ -275,7 +280,7 @@ server :: Members
           , Reader ClientConfig
           , RPC
           , Locate
-          , Reader (MVar ServerAction)
+          , Reader (TChan ServerAction)
           , Stats
           , Log Message
           , Genesis
@@ -332,7 +337,7 @@ server
           = let
               rs        = fromMaybe "" (Map.lookup "keystamp" opts)
               ( t, rk ) = BSC.span (/= '-') rs
-            in 
+            in
               ( fromIntegral $ maybe 0 fst $ BSC.readInteger t, BS.tail rk )
 
         {-# INLINE challange #-}
@@ -355,7 +360,7 @@ server
               , testSize
               , [i|#{protocol}://#{hostname}:#{port}/t/#{testSize}/#{testTime}/#{testKey}/0|]
               )
-        in 
+        in
           case args of
             Nothing -> throw err403
             Just ( testCount, testSize, url ) -> do
@@ -375,7 +380,7 @@ server
               1000000
               (fromIntegral . fst)
               (BSC.readInteger =<< lookupParam "testsize" additional)
-        in 
+        in
           return $ addHeader @"Content-Length" testSize $ Source.fromStepT $ bufferSending testSize
       RefreshSettings   -> do
         log Info "Refreshing settings"
@@ -384,10 +389,10 @@ server
       StartDownloader   -> plainText ""
       RefreshCerts      -> do
         log Info "Refreshing certificates"
-        chan <- ask @(MVar ServerAction)
+        chan <- ask @(TChan ServerAction)
         void $ embed $ forkIO $ do
           threadDelay (1000000 * 2)
-          putMVar chan Cert
+          atomically $ writeTChan chan Cert
         plainText ""
       where
         runTest testSize req mgr = do
@@ -441,11 +446,8 @@ server
 tictok :: ClientConfig
        -> TVar IPMap
        -> TVar KeystampMap
-       -> Connection
-       -> TVar (Maybe UTCTime)
-       -> Bool  -- ^ Skip file verification
-       -> IO (() -> IO ())
-tictok config ipMap ksVar conn lastVerifTime skipVerify = do
+       -> IO (IO ())
+tictok config ipMap ksVar = do
   -- ipmap cleanup
   cleanupHandle <- repeatedTimer
     (do
@@ -485,21 +487,11 @@ tictok config ipMap ksVar conn lastVerifTime skipVerify = do
                                       res <- runRPCIO config (fetchBlacklist 43200)
                                       print res) (mDelay 36)
 
-  -- file verification timer (every 2 seconds, if not disabled)
-  verificationHandle <- if skipVerify
-    then pure Nothing
-    else Just
-      <$> repeatedTimer (verifyRandomFile conn lastVerifTime >>= \case
-                           Just (VerificationCorrupted fileId) -> putStrLn
-                             $ "[Warning] Corrupted file detected and removed: " <> toString fileId
-                           _ -> pure ()) (sDelay 2)
-
-  return $ \() -> do
+  return $ do
     stopTimer cleanupHandle
     stopTimer ksCleanupHandle
     stopTimer heartbeatHandle
     stopTimer blacklistHandle
-    mapM_ stopTimer verificationHandle
 
 notifyStart :: ClientConfig -> IO ()
 notifyStart config = psi
@@ -520,7 +512,7 @@ newtype CacheRunner
 makeApplication
   :: ClientConfig
   -> TVar HathSettings
-  -> MVar ServerAction
+  -> TChan ServerAction
   -> TVar IPMap
   -> TVar KeystampMap
   -> Bool  -- ^ Disable rate limiting
@@ -585,24 +577,22 @@ makeApplication
 startServer :: ClientConfig
             -> HathSettings
             -> ( CertificateChain, PrivKey )
-            -> MVar ServerAction
-            -> Bool
+            -> TChan ServerAction
             -> Bool
             -> Bool
             -> IO ()
-startServer config settings certs chan skipVerify disableRateLimit trustProxyHeaders = do
+startServer config settings certs chan disableRateLimit trustProxyHeaders = do
   ipMap <- newTVarIO HashMap.empty
   ksVar <- newTVarIO HashMap.empty
   ssVar <- newTVarIO settings
   statsEnv <- newStatsEnv
-  lastVerifTime <- newTVarIO Nothing  -- TVar for tracking last verification time
   print =<< runRPCIO config (fetchBlacklist 259200)
   case cacheBackend config of
     CacheBackendSQLite -> do
       withConnection (Text.unpack $ cachePath config) $ \conn -> do
         initializeDB conn
         let cacheRunner = CacheRunner { runCacheWith = runCache conn }
-        stopTictok <- tictokSQLite config ipMap ksVar conn lastVerifTime skipVerify
+        stopTictok <- tictok config ipMap ksVar
         finally
           (loopSQLite
              config
@@ -615,7 +605,7 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
              disableRateLimit
              trustProxyHeaders
              statsEnv)
-          (stopTictok ())
+          stopTictok
     CacheBackendR2     -> do
       case r2Config config of
         Nothing    -> error "cacheBackend=r2 but r2Config is missing"
@@ -625,22 +615,25 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
             Left err     -> error $ "Failed to initialize R2: " <> err
             Right r2Conn -> do
               let cacheRunner = CacheRunner { runCacheWith = runCacheR2 r2Conn }
-              loopR2
-                config
-                ssVar
-                certs
-                cacheRunner
-                ipMap
-                ksVar
-                disableRateLimit
-                trustProxyHeaders
-                statsEnv
+              stopTictok <- tictok config ipMap ksVar
+              finally
+                (loopR2
+                   config
+                   ssVar
+                   certs
+                   cacheRunner
+                   ipMap
+                   ksVar
+                   disableRateLimit
+                   trustProxyHeaders
+                   statsEnv)
+                stopTictok
   where
     gracefulShutdown :: IO a
     gracefulShutdown
       = let
           phi = flip unless phi . fromRight False =<< runEHentaiAPIIO config stopListening
-        in 
+        in
           phi >> exitSuccess
 
     refreshCerts = phi 0
@@ -662,7 +655,7 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
     loopSQLite cfg set c conn cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
       let app = makeApplication cfg set chan ipMap ksVar disableRL trustProxy cacheRunner statsEnv
       st <- readTVarIO set
-      result <- withAsync (notifyStart cfg) $ \_ -> race (takeMVar chan)
+      result <- withAsync (notifyStart cfg) $ \_ -> race (atomically $ readTChan chan)
         $ runTLS
           (defaultTlsSettings
            { tlsCredentials = Just (Credentials [ c ]), onInsecure = AllowInsecure })
@@ -681,7 +674,7 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
     loopR2 cfg set c cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
       let app = makeApplication cfg set chan ipMap ksVar disableRL trustProxy cacheRunner statsEnv
       st <- readTVarIO set
-      result <- withAsync (notifyStart cfg) $ \_ -> race (takeMVar chan)
+      result <- withAsync (notifyStart cfg) $ \_ -> race (atomically $ readTChan chan)
         $ runTLS
           (defaultTlsSettings
            { tlsCredentials = Just (Credentials [ c ]), onInsecure = AllowInsecure })
@@ -695,10 +688,6 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
           newCerts <- refreshCerts
           loopR2 cfg set newCerts cacheRunner ipMap ksVar disableRL trustProxy statsEnv
         Right _ -> error "Server terminated unexpectedly"
-
-    -- tictok for SQLite backend (uses Connection)
-    tictokSQLite cfg ipMap ksVar conn lastVerifTime skipVerify'
-      = tictok cfg ipMap ksVar conn lastVerifTime skipVerify'
 
 normalizeAcceptMiddleware :: Middleware
 normalizeAcceptMiddleware app req = app req { requestHeaders = normalizedHeaders }
