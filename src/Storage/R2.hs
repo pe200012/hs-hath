@@ -15,7 +15,8 @@ import           Control.Exception       ( try )
 import qualified Data.ByteArray          as BA
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Lazy    as BL
-import qualified Data.Map                as Map
+import           Data.Cache.LRU.IO
+import qualified Data.Cache.LRU.IO       as LRU
 import qualified Data.Text               as T
 
 import           Network.HTTP.Client     ( newManager )
@@ -41,17 +42,10 @@ import           Relude                  hiding ( Reader, ask )
 
 import           Storage.Database        ( FileRecord(..) )
 
-import           System.IO.Unsafe        ( unsafePerformIO )
-
 import           Types                   ( FileURI(..), RPCError(..) )
 import qualified Types                   as Ty
 
 import           Utils                   ( log )
-
-memoryCache :: IORef (Map FileURI FileRecord)
-memoryCache = unsafePerformIO (newIORef mempty)
-
-{-# NOINLINE memoryCache #-}
 
 -- | R2 connection configuration built at runtime
 data R2Connection = R2Connection { r2MinioConn :: !Minio.MinioConn, r2ConnBucket :: !Text }
@@ -107,65 +101,66 @@ runCacheR2 :: Members '[ Embed IO, Log Message, Error RPCError ] r
            => R2Connection
            -> KVStore FileURI FileRecord : r @> a
            -> r @> a
-runCacheR2 conn = interpret $ \case
-  LookupKV uri -> do
-    let key    = fileURIToKey uri
-        bucket = r2ConnBucket conn
-    memCache <- readIORef memoryCache
-    case Map.lookup uri memCache of
-      Just res -> pure $ Just res
-      Nothing  -> do
-        result <- embed $ try @SomeException $ Minio.runMinioWith (r2MinioConn conn) $ do
-          resp <- getObject bucket key defaultGetObjectOptions
-          -- Consume the response body
-          let src = Minio.gorObjectStream resp
-          lbs <- C.runConduit $ src C..| C.sinkLazy
-          pure $ BL.toStrict lbs
-        case result of
-          Left err -> do
-            log Warning ("R2 lookup failed for " <> key <> ": " <> T.pack (show err))
-            pure Nothing
-          Right (Left minioErr) -> do
-            log Warning ("R2 lookup failed for " <> key <> ": " <> T.pack (show minioErr))
-            pure Nothing
-          Right (Right bytes) -> do
-            let recd = reconstructRecord uri bytes
-            if Map.size memCache > 100
-              then writeIORef memoryCache (Map.singleton uri recd)
-              else writeIORef memoryCache (Map.insert uri recd memCache)
-            pure $ Just recd
+runCacheR2 conn m = do
+  memCache <- embed $ newAtomicLRU (Just 200)
+  interpret (phi memCache) m
+  where
+    bucket = r2ConnBucket conn
 
-  UpdateKV uri (Just record) -> do
-    let key     = fileURIToKey uri
-        bucket  = r2ConnBucket conn
-        content = fileRecordBytes record
-        size    = fromIntegral (BS.length content) :: Int64
-        src     = C.yield content
-    result <- embed
-      $ try @SomeException
-      $ Minio.runMinioWith (r2MinioConn conn)
-      $ Minio.putObject bucket key src (Just size) defaultPutObjectOptions
-    case result of
-      Left err -> do
-        log Error ("R2 write failed for " <> key <> ": " <> T.pack (show err))
-        throw $ Ty.R2WriteError (T.pack $ show err)
-      Right (Left minioErr) -> do
-        log Error ("R2 write failed for " <> key <> ": " <> T.pack (show minioErr))
-        throw $ Ty.R2WriteError (T.pack $ show minioErr)
-      Right (Right _) -> modifyIORef' memoryCache (Map.alter (const (Just record)) uri)
+    phi :: forall r r1 x. Members '[ Embed IO, Log Message, Error RPCError ] r1
+        => AtomicLRU FileURI FileRecord
+        -> KVStore FileURI FileRecord (Sem r) x
+        -> Sem r1 x
+    phi cache (LookupKV uri@(fileURIToKey -> key)) = do
+      embed (LRU.lookup uri cache) >>= \case
+        Just res -> pure $ Just res
+        Nothing  -> do
+          result <- embed $ try @SomeException $ Minio.runMinioWith (r2MinioConn conn) $ do
+            resp <- getObject bucket key defaultGetObjectOptions
+            -- Consume the response body
+            let src = Minio.gorObjectStream resp
+            lbs <- C.runConduit $ src C..| C.sinkLazy
+            pure $ BL.toStrict lbs
+          case result of
+            Left err -> do
+              log Warning ("R2 lookup failed for " <> key <> ": " <> T.pack (show err))
+              pure Nothing
+            Right (Left minioErr) -> do
+              log Warning ("R2 lookup failed for " <> key <> ": " <> T.pack (show minioErr))
+              pure Nothing
+            Right (Right bytes) -> do
+              let recd = reconstructRecord uri bytes
+              embed $ LRU.insert uri recd cache
+              pure $ Just recd
 
-  UpdateKV uri Nothing -> do
-    let key    = fileURIToKey uri
-        bucket = r2ConnBucket conn
-    result <- embed
-      $ try @SomeException
-      $ Minio.runMinioWith (r2MinioConn conn)
-      $ removeObject bucket key
-    case result of
-      Left err -> do
-        log Error ("R2 delete failed for " <> key <> ": " <> T.pack (show err))
-        throw $ Ty.R2WriteError (T.pack $ show err)
-      Right (Left minioErr) -> do
-        log Error ("R2 delete failed for " <> key <> ": " <> T.pack (show minioErr))
-        throw $ Ty.R2WriteError (T.pack $ show minioErr)
-      Right (Right _) -> modifyIORef' memoryCache (Map.delete uri)
+    phi cache (UpdateKV uri (Just record)) = do
+      let key     = fileURIToKey uri
+          content = fileRecordBytes record
+          siz    = fromIntegral (BS.length content) :: Int64
+          src     = C.yield content
+      result <- embed
+        $ try @SomeException
+        $ Minio.runMinioWith (r2MinioConn conn)
+        $ Minio.putObject bucket key src (Just siz) defaultPutObjectOptions
+      case result of
+        Left err -> do
+          log Error ("R2 write failed for " <> key <> ": " <> T.pack (show err))
+          throw $ Ty.R2WriteError (T.pack $ show err)
+        Right (Left minioErr) -> do
+          log Error ("R2 write failed for " <> key <> ": " <> T.pack (show minioErr))
+          throw $ Ty.R2WriteError (T.pack $ show minioErr)
+        Right (Right _) -> embed $ LRU.insert uri record cache
+
+    phi cache (UpdateKV uri@(fileURIToKey -> key) Nothing) = do
+      result <- embed
+        $ try @SomeException
+        $ Minio.runMinioWith (r2MinioConn conn)
+        $ removeObject bucket key
+      case result of
+        Left err -> do
+          log Error ("R2 delete failed for " <> key <> ": " <> T.pack (show err))
+          throw $ Ty.R2WriteError (T.pack $ show err)
+        Right (Left minioErr) -> do
+          log Error ("R2 delete failed for " <> key <> ": " <> T.pack (show minioErr))
+          throw $ Ty.R2WriteError (T.pack $ show minioErr)
+        Right (Right _) -> embed $ void $ LRU.delete uri cache
