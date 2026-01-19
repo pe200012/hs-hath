@@ -1,20 +1,17 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Locate ( LocateURI(..), Locate(..), locateResource, runLocate ) where
-
-import           API                     ( EHentaiAPI, fetchResource )
+module Storage.Locate ( LocateURI(..), Locate(..), locateResource, runLocate ) where
 
 import           Colog                   ( Message, Severity(Info, Warning) )
 import           Colog.Polysemy          ( Log )
 
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Short   as SBS
-import qualified Data.HashSet            as HashSet
 import qualified Data.Map                as Map
 import           Data.String.Interpolate ( i )
 
-import           Database                ( FileRecord(..) )
+import           Interface.API           ( EHentaiAPI, fetchResource )
 
 import           Polysemy
 import           Polysemy.Error          ( Error )
@@ -25,6 +22,8 @@ import           Polysemy.Reader         ( Reader, ask )
 import           Relude                  hiding ( Reader, ask )
 
 import           Stats                   ( Stats, addDownload, incFetched )
+
+import           Storage.Database        ( FileRecord(..) )
 
 import           Types
 
@@ -93,5 +92,3 @@ runLocate = interpret $ \case
       else do
         log Info [i|Resource not in our ranges, rejecting: #{s4}|]
         pure Nothing
-
-

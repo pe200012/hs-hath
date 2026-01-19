@@ -5,7 +5,44 @@
 
 module Server ( startServer, ServerAction(..), makeApplication, CacheRunner(..) ) where
 
-import           API                                  ( API
+import           Colog                                ( Message
+                                                      , Severity(Info)
+                                                      , richMessageAction
+                                                      )
+import           Colog.Polysemy                       ( Log, runLogAction )
+
+import           Control.Concurrent                   ( ThreadId, forkIO, threadDelay )
+import           Control.Concurrent.Suspend           ( mDelay, sDelay )
+import           Control.Concurrent.Timer             ( repeatedTimer, stopTimer )
+import           Control.Exception                    ( finally, try )
+
+import qualified Data.ByteString                      as BS
+import qualified Data.ByteString.Char8                as BSC
+import qualified Data.ByteString.Lazy                 as LBS
+import qualified Data.HashMap.Strict                  as HashMap
+import qualified Data.Map.Strict                      as Map
+import           Data.String.Interpolate              ( i )
+import qualified Data.Text                            as Text
+import           Data.Time.Clock                      ( NominalDiffTime
+                                                      , UTCTime
+                                                      , addUTCTime
+                                                      , getCurrentTime
+                                                      )
+import           Data.Time.Clock.POSIX                ( POSIXTime
+                                                      , getPOSIXTime
+                                                      , utcTimeToPOSIXSeconds
+                                                      )
+import           Data.Time.Clock.System               ( SystemTime(systemSeconds), getSystemTime )
+import           Data.X509                            ( CertificateChain, PrivKey )
+
+import           Database.SQLite.Simple               ( Connection, withConnection )
+
+import           FileVerification                     ( VerificationResult(..), verifyRandomFile )
+
+import           HathNetwork.Genesis
+import           HathNetwork.RPC                      ( RPC, runRPC, runRPCIO, stillAlive )
+
+import           Interface.API                        ( API
                                                       , ServerCommand(..)
                                                       , WithDynamicContentType(WithDynamicContentType)
                                                       , api
@@ -16,58 +53,9 @@ import           API                                  ( API
                                                       , stopListening
                                                       )
 
-import           Colog                                ( Message
-                                                      , Severity(Info, Warning)
-                                                      , richMessageAction
-                                                      )
-import           Colog.Polysemy                       ( Log, runLogAction )
-
-import           Control.Concurrent                   ( ThreadId, forkIO, threadDelay, throwTo )
-import           Control.Concurrent.STM.TVar          ( modifyTVar' )
-import           Control.Concurrent.Suspend           ( mDelay, sDelay )
-import           Control.Concurrent.Timer             ( TimerIO, repeatedTimer, stopTimer )
-import           Control.Exception                    ( finally, try )
-
-import qualified Data.ByteString                      as BS
-import qualified Data.ByteString.Char8                as BSC
-import qualified Data.ByteString.Lazy                 as LBS
-import           Data.Char                            ( isDigit, isSpace )
-import qualified Data.HashMap.Strict                  as HashMap
-import           Data.List                            ( nub )
-import qualified Data.Map.Strict                      as Map
-import           Data.String.Interpolate              ( i )
-import qualified Data.Text                            as Text
-import           Data.Time.Clock                      ( NominalDiffTime
-                                                      , UTCTime
-                                                      , addUTCTime
-                                                      , getCurrentTime
-                                                      )
-import           Data.Time.Clock.POSIX                ( POSIXTime, getPOSIXTime, utcTimeToPOSIXSeconds )
-import           Data.Time.Clock.System               ( SystemTime(systemSeconds), getSystemTime )
-import           Data.X509                            ( CertificateChain, PrivKey )
-
-import           FileVerification                     ( VerificationResult(..)
-                                                      , verifyRandomFile
-                                                      )
-
-import           Database                             ( FileRecord, initializeDB, runCache )
-import           Database.SQLite.Simple               ( Connection, withConnection )
-
-import           Genesis
-
-import           Hash                                 ( hash )
-
-import           Locate
-
-import           Polysemy.KVStore                     ( KVStore )
-
-import           R2                                   ( R2Connection
-                                                      , mkR2Connection
-                                                      , runCacheR2
-                                                      )
+import           Storage.Locate
 
 import           Network.HTTP.Client                  ( brReadSome
-                                                      , httpLbs
                                                       , newManager
                                                       , parseRequest
                                                       , responseBody
@@ -86,15 +74,14 @@ import           Network.Wai                          ( Middleware
                                                       , requestHeaders
                                                       , responseLBS
                                                       )
-import qualified Network.Wai.Handler.Warp             as Warp
 import           Network.Wai.Handler.Warp             ( defaultSettings, setPort )
 import           Network.Wai.Handler.WarpTLS          ( OnInsecure(AllowInsecure)
                                                       , TLSSettings(..)
                                                       , defaultTlsSettings
                                                       , runTLS
                                                       )
+import           Network.Wai.Middleware.RealIp        ( realIpHeader )
 import           Network.Wai.Middleware.RequestLogger ( logStdout, logStdoutDev )
-import           Network.Wai.Middleware.RealIp       ( realIpHeader )
 
 import           Polysemy                             ( Embed
                                                       , Members
@@ -104,17 +91,14 @@ import           Polysemy                             ( Embed
                                                       , runFinal
                                                       )
 import           Polysemy.Error                       ( Error, errorToIOFinal, mapError, throw )
+import           Polysemy.KVStore                     ( KVStore )
 import           Polysemy.Reader                      ( Reader, ask, runReader )
-
-import           RPC                                  ( RPC, runRPC, runRPCIO, stillAlive )
 
 import           Relude                               hiding ( Reader, ask, get, runReader )
 
 import           Servant
 import           Servant.Client                       ( ClientError )
 import qualified Servant.Types.SourceT                as Source
-
-import           SpeedTest                            ( bufferSending )
 
 import           Stats                                ( Stats
                                                       , StatsEnv(..)
@@ -127,22 +111,27 @@ import           Stats                                ( Stats
                                                       , runStats
                                                       )
 
+import           Storage.Database                     ( FileRecord, initializeDB, runCache )
+import           Storage.R2                           ( mkR2Connection, runCacheR2 )
+
 import           Types                                ( CacheBackend(..)
                                                       , ClientConfig
                                                       , ClientConfig(..)
                                                       , FileURI(fileExt)
                                                       , HathSettings(..)
-                                                      , R2Config(..)
                                                       , RPCError
                                                       , hentaiHeader
                                                       , parseFileURI
                                                       )
 
-import           URLParam                             ( lookupParam, parseURLParams )
-
 import           UnliftIO                             ( race, withAsync )
 
-import           Utils                                ( log )
+import           Utils                                ( bufferSending
+                                                      , hash
+                                                      , log
+                                                      , lookupParam
+                                                      , parseURLParams
+                                                      )
 
 maxTimeDrift :: Int64
 maxTimeDrift = 600
@@ -158,7 +147,7 @@ data ServerAction = Reload | Cert | Settings | GracefulShutdown
 -- Data types for tracking requests
 -- Note: Lists cannot be unpacked, so we use strict spine with explicit strictness
 data IPRecord
-  = IPRecord { requestTimes :: ![UTCTime]       -- ^ Times of recent requests (strict spine)
+  = IPRecord { requestTimes :: ![ UTCTime ]       -- ^ Times of recent requests (strict spine)
              , bannedUntil  :: !(Maybe UTCTime) -- ^ When the ban expires
              }
   deriving ( Show )
@@ -243,7 +232,7 @@ tooManyRequestsResponse
     [ ( "Content-Type", "text/plain" ) ]
     "Too Many Requests"
 
-type KeystampMap = HashMap Int64 (Int, UTCTime)
+type KeystampMap = HashMap Int64 ( Int, UTCTime )
 
 -- | Keystamp rate limiting middleware
 keystampLimitMiddleware :: TVar KeystampMap -> Middleware
@@ -255,24 +244,24 @@ keystampLimitMiddleware ksVar app req sendResponse
         let opts = parseURLParams optsRaw
         case Map.lookup "keystamp" opts of
           Just ksRaw -> do
-            let (t, _) = BSC.span (/= '-') ksRaw
+            let ( t, _ ) = BSC.span (/= '-') ksRaw
             case BSC.readInteger t of
-              Just (fromIntegral -> ts, _) -> do
+              Just ( fromIntegral -> ts, _ ) -> do
                 now <- getCurrentTime
                 allowed <- atomically $ do
                   m <- readTVar ksVar
-                  let (count, _) = HashMap.lookupDefault (0, now) ts m
+                  let ( count, _ ) = HashMap.lookupDefault ( 0, now ) ts m
                   if count >= 10  -- Undocumented limit
                     then return False
                     else do
-                      let !newM = HashMap.insert ts (count + 1, now) m
+                      let !newM = HashMap.insert ts ( count + 1, now ) m
                       writeTVar ksVar newM
                       return True
                 if allowed
                   then app req sendResponse
                   else sendResponse tooManyRequestsResponse
               Nothing -> app req sendResponse
-          Nothing -> app req sendResponse
+          Nothing    -> app req sendResponse
       _ -> app req sendResponse
   | otherwise = app req sendResponse
   where
@@ -481,7 +470,9 @@ tictok config ipMap ksVar conn lastVerifTime skipVerify = do
          m <- readTVar ksVar
          -- Keep entries where (timestamp > now - 30 mins)
          -- Since keystamp is a unix timestamp (seconds), we compare it directly
-         let twoHoursAgo = truncate (realToFrac (utcTimeToPOSIXSeconds (addUTCTime (-1800) now)) :: Double) :: Int64
+         let twoHoursAgo
+               = truncate (realToFrac (utcTimeToPOSIXSeconds (addUTCTime (-1800) now)) :: Double)
+                 :: Int64
          let filtered = HashMap.filterWithKey (\ts _ -> ts > twoHoursAgo) m
          writeTVar ksVar filtered)
     (mDelay 60)
@@ -497,12 +488,11 @@ tictok config ipMap ksVar conn lastVerifTime skipVerify = do
   -- file verification timer (every 2 seconds, if not disabled)
   verificationHandle <- if skipVerify
     then pure Nothing
-    else Just <$> repeatedTimer
-      (verifyRandomFile conn lastVerifTime >>= \case
-          Just (VerificationCorrupted fileId) ->
-            putStrLn $ "[Warning] Corrupted file detected and removed: " <> toString fileId
-          _ -> pure ())
-      (sDelay 2)
+    else Just
+      <$> repeatedTimer (verifyRandomFile conn lastVerifTime >>= \case
+                           Just (VerificationCorrupted fileId) -> putStrLn
+                             $ "[Warning] Corrupted file detected and removed: " <> toString fileId
+                           _ -> pure ()) (sDelay 2)
 
   return $ \() -> do
     stopTimer cleanupHandle
@@ -520,33 +510,49 @@ notifyStart config _ = psi
 
 -- | Abstract cache runner - wraps the cache effect interpreter
 -- This allows us to switch between SQLite and R2 backends at runtime
-data CacheRunner = CacheRunner
-  { runCacheWith :: forall r a. Members '[Embed IO, Log Message, Error RPCError] r
-                 => Sem (KVStore FileURI FileRecord : r) a
-                 -> Sem r a
-  }
+data CacheRunner
+  = CacheRunner { runCacheWith :: forall r a. Members '[ Embed IO, Log Message, Error RPCError ] r
+                               => Sem (KVStore FileURI FileRecord : r) a
+                               -> Sem r a
+                }
 
 -- Create the WAI application with rate limiting
-makeApplication :: ClientConfig
-                -> HathSettings
-                -> MVar ServerAction
-                -> TVar IPMap
-                -> TVar KeystampMap
-                -> Bool  -- ^ Disable rate limiting
-                -> Bool  -- ^ Trust proxy headers for real IP
-                -> CacheRunner
-                -> StatsEnv
-                -> Application
-makeApplication config settings action ipMap ksVar disableRateLimit trustProxyHeaders cacheRunner statsEnv
+makeApplication
+  :: ClientConfig
+  -> HathSettings
+  -> MVar ServerAction
+  -> TVar IPMap
+  -> TVar KeystampMap
+  -> Bool  -- ^ Disable rate limiting
+  -> Bool  -- ^ Trust proxy headers for real IP
+  -> CacheRunner
+  -> StatsEnv
+  -> Application
+makeApplication
+  config
+  settings
+  action
+  ipMap
+  ksVar
+  disableRateLimit
+  trustProxyHeaders
+  cacheRunner
+  statsEnv
   = finalMiddleware
   $ normalizeAcceptMiddleware
   $ serve api (hoistServer api interpretServer server)
   where
     applyRealIp :: Middleware
-    applyRealIp = if trustProxyHeaders then realIpHeader "X-Forwarded-For" else id
+    applyRealIp
+      = if trustProxyHeaders
+        then realIpHeader "X-Forwarded-For"
+        else id
 
     applyRateLimit :: Middleware
-    applyRateLimit = if disableRateLimit then id else rateLimitMiddleware ipMap
+    applyRateLimit
+      = if disableRateLimit
+        then id
+        else rateLimitMiddleware ipMap
 
     applyKeystampLimit :: Middleware
     applyKeystampLimit = keystampLimitMiddleware ksVar
@@ -575,8 +581,14 @@ makeApplication config settings action ipMap ksVar disableRateLimit trustProxyHe
       . runLocate
       . runRPC
 
-startServer
-  :: ClientConfig -> HathSettings -> ( CertificateChain, PrivKey ) -> MVar ServerAction -> Bool -> Bool -> Bool -> IO ()
+startServer :: ClientConfig
+            -> HathSettings
+            -> ( CertificateChain, PrivKey )
+            -> MVar ServerAction
+            -> Bool
+            -> Bool
+            -> Bool
+            -> IO ()
 startServer config settings certs chan skipVerify disableRateLimit trustProxyHeaders = do
   ipMap <- newTVarIO HashMap.empty
   ksVar <- newTVarIO HashMap.empty
@@ -590,19 +602,38 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
         let cacheRunner = CacheRunner { runCacheWith = runCache conn }
         stopTictok <- tictokSQLite config ipMap ksVar conn lastVerifTime skipVerify
         finally
-          (loopSQLite config settings certs conn cacheRunner ipMap ksVar disableRateLimit trustProxyHeaders statsEnv)
+          (loopSQLite
+             config
+             settings
+             certs
+             conn
+             cacheRunner
+             ipMap
+             ksVar
+             disableRateLimit
+             trustProxyHeaders
+             statsEnv)
           (stopTictok ())
-    CacheBackendR2 -> do
+    CacheBackendR2     -> do
       case r2Config config of
-        Nothing -> error "cacheBackend=r2 but r2Config is missing"
+        Nothing    -> error "cacheBackend=r2 but r2Config is missing"
         Just r2Cfg -> do
           r2ConnResult <- mkR2Connection r2Cfg
           case r2ConnResult of
-            Left err -> error $ "Failed to initialize R2: " <> err
+            Left err     -> error $ "Failed to initialize R2: " <> err
             Right r2Conn -> do
               let cacheRunner = CacheRunner { runCacheWith = runCacheR2 r2Conn }
               let stopTictok = \(_ :: ()) -> pure () :: IO ()
-              loopR2 config settings certs cacheRunner ipMap ksVar disableRateLimit trustProxyHeaders statsEnv
+              loopR2
+                config
+                settings
+                certs
+                cacheRunner
+                ipMap
+                ksVar
+                disableRateLimit
+                trustProxyHeaders
+                statsEnv
   where
     gracefulShutdown :: IO a
     gracefulShutdown
@@ -659,7 +690,17 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
           loopSQLite cfg set newCerts conn cacheRunner ipMap ksVar disableRL trustProxy statsEnv
         Left Settings -> do
           newSettings <- refreshSettings
-          loopSQLite cfg newSettings certs conn cacheRunner ipMap ksVar disableRL trustProxy statsEnv
+          loopSQLite
+            cfg
+            newSettings
+            certs
+            conn
+            cacheRunner
+            ipMap
+            ksVar
+            disableRL
+            trustProxy
+            statsEnv
         Right _ -> error "Server terminated unexpectedly"
 
     -- R2 loop - no Connection needed
@@ -684,8 +725,8 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
         Right _ -> error "Server terminated unexpectedly"
 
     -- tictok for SQLite backend (uses Connection)
-    tictokSQLite cfg ipMap ksVar conn lastVerifTime skipVerify' =
-      tictok cfg ipMap ksVar conn lastVerifTime skipVerify'
+    tictokSQLite cfg ipMap ksVar conn lastVerifTime skipVerify'
+      = tictok cfg ipMap ksVar conn lastVerifTime skipVerify'
 
 normalizeAcceptMiddleware :: Middleware
 normalizeAcceptMiddleware app req = app req { requestHeaders = normalizedHeaders }

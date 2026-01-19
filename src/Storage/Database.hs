@@ -4,7 +4,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Database ( FileRecord(..), initializeDB, runCache, runCachePure ) where
+module Storage.Database ( FileRecord(..), initializeDB, runCache, runCachePure ) where
 
 import qualified Data.ByteString         as BS
 import           Data.String.Interpolate ( i )
@@ -17,20 +17,7 @@ import           Polysemy.Operators
 
 import           Relude                  hiding ( Reader, State, ask, evalState, get, modify, put )
 
-import           Types                   ( FileURI )
-
-data FileRecord
-  = FileRecord { fileRecordLRUCounter :: {-# UNPACK #-} !Int64
-               , fileRecordS4         :: {-# UNPACK #-} !Text
-               , fileRecordFileId     :: {-# UNPACK #-} !Text
-               , fileRecordFileName   :: {-# UNPACK #-} !(Maybe Text)
-               , fileRecordBytes      :: !BS.ByteString
-               }
-  deriving ( Show, Generic, Eq )
-
-instance FromRow FileRecord
-
-instance ToRow FileRecord
+import           Types                   ( FileURI, FileRecord(..) )
 
 {-# INLINE initializeDB #-}
 -- | Initialize database with required schema

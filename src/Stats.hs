@@ -19,8 +19,8 @@ module Stats
 
 import qualified Control.Concurrent.STM as STM
 
-import           Data.Time.Clock        ( UTCTime, getCurrentTime )
 import qualified Data.Text              as T
+import           Data.Time.Clock        ( UTCTime, getCurrentTime )
 
 import           Polysemy
 import           Polysemy.Operators
@@ -55,42 +55,43 @@ data Stats m a where
 makeSem ''Stats
 
 toPrometheus :: TrafficStats -> Text
-toPrometheus s = T.unlines
-  [ "# HELP hs_hath_upload_bytes_total Total bytes uploaded"
-  , "# TYPE hs_hath_upload_bytes_total counter"
-  , "hs_hath_upload_bytes_total " <> show (uploadBytes s)
-  , ""
-  , "# HELP hs_hath_download_bytes_total Total bytes downloaded"
-  , "# TYPE hs_hath_download_bytes_total counter"
-  , "hs_hath_download_bytes_total " <> show (downloadBytes s)
-  , ""
-  , "# HELP hs_hath_served_requests_total Total served requests"
-  , "# TYPE hs_hath_served_requests_total counter"
-  , "hs_hath_served_requests_total " <> show (servedCount s)
-  , ""
-  , "# HELP hs_hath_fetched_requests_total Total fetched requests"
-  , "# TYPE hs_hath_fetched_requests_total counter"
-  , "hs_hath_fetched_requests_total " <> show (fetchedCount s)
-  ]
+toPrometheus s
+  = T.unlines
+    [ "# HELP hs_hath_upload_bytes_total Total bytes uploaded"
+    , "# TYPE hs_hath_upload_bytes_total counter"
+    , "hs_hath_upload_bytes_total " <> show (uploadBytes s)
+    , ""
+    , "# HELP hs_hath_download_bytes_total Total bytes downloaded"
+    , "# TYPE hs_hath_download_bytes_total counter"
+    , "hs_hath_download_bytes_total " <> show (downloadBytes s)
+    , ""
+    , "# HELP hs_hath_served_requests_total Total served requests"
+    , "# TYPE hs_hath_served_requests_total counter"
+    , "hs_hath_served_requests_total " <> show (servedCount s)
+    , ""
+    , "# HELP hs_hath_fetched_requests_total Total fetched requests"
+    , "# TYPE hs_hath_fetched_requests_total counter"
+    , "hs_hath_fetched_requests_total " <> show (fetchedCount s)
+    ]
 
 runStats :: Members '[ Embed IO, Reader StatsEnv ] r => Stats : r @> a -> r @> a
 runStats = interpret $ \case
-  AddUpload n   -> do
+  AddUpload n    -> do
     StatsEnv { statsVar } <- ask
     embed $ STM.atomically $ STM.modifyTVar' statsVar $ \s -> s
       { uploadBytes = uploadBytes s + fromIntegral n }
-  AddDownload n -> do
+  AddDownload n  -> do
     StatsEnv { statsVar } <- ask
     embed $ STM.atomically $ STM.modifyTVar' statsVar $ \s -> s
       { downloadBytes = downloadBytes s + fromIntegral n }
-  IncServed     -> do
+  IncServed      -> do
     StatsEnv { statsVar } <- ask
     embed $ STM.atomically $ STM.modifyTVar' statsVar $ \s -> s { servedCount = servedCount s + 1 }
-  IncFetched    -> do
+  IncFetched     -> do
     StatsEnv { statsVar } <- ask
     embed $ STM.atomically $ STM.modifyTVar' statsVar $ \s -> s
       { fetchedCount = fetchedCount s + 1 }
-  ReadStats     -> do
+  ReadStats      -> do
     StatsEnv { statsVar } <- ask
     embed $ STM.readTVarIO statsVar
   ReadPrometheus -> do

@@ -6,7 +6,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module RPC
+module HathNetwork.RPC
   ( RPCResponse(..)
   , parseRPCResponse
   , getPayload
@@ -23,10 +23,10 @@ module RPC
   , runRPCIO
   ) where
 
-import           API                hiding ( StillAlive )
-
 import           Colog              ( Message, Severity(Info), richMessageAction )
 import           Colog.Polysemy     ( Log, runLogAction )
+
+import           Interface.API      hiding ( StillAlive )
 
 import           Polysemy
 import           Polysemy.Error     ( Error, errorToIOFinal )

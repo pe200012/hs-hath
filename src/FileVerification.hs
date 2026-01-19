@@ -1,8 +1,8 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE BangPatterns #-}
 
 module FileVerification
   ( -- * Types
@@ -22,19 +22,20 @@ module FileVerification
   , minVerificationIntervalSeconds
   ) where
 
-import           Data.Time.Clock       ( NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime )
+import           Data.Time.Clock        ( NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime )
 
-import           Database              ( FileRecord(..) )
 import           Database.SQLite.Simple
-
-import           Hash                  ( hash )
 
 import           Polysemy
 import           Polysemy.Operators
 
 import           Relude
 
-import           Types                 ( FileURI(..), parseFileURI )
+import           Storage.Database       ( FileRecord(..) )
+
+import           Types                  ( FileURI(..), parseFileURI )
+
+import           Utils                  ( hash )
 
 -- | Result of verifying a single file
 data VerificationResult
@@ -45,21 +46,21 @@ data VerificationResult
 
 -- | Statistics from a verification run
 data VerificationStats
-  = VerificationStats
-  { verifiedCount   :: {-# UNPACK #-} !Int
-  , corruptedCount  :: {-# UNPACK #-} !Int
-  , missingCount    :: {-# UNPACK #-} !Int
-  , deletedCount    :: {-# UNPACK #-} !Int
-  , verificationTime :: {-# UNPACK #-} !NominalDiffTime
-  }
+  = VerificationStats { verifiedCount    :: {-# UNPACK #-} !Int
+                      , corruptedCount   :: {-# UNPACK #-} !Int
+                      , missingCount     :: {-# UNPACK #-} !Int
+                      , deletedCount     :: {-# UNPACK #-} !Int
+                      , verificationTime :: {-# UNPACK #-} !NominalDiffTime
+                      }
   deriving ( Show, Eq, Generic )
 
 instance Semigroup VerificationStats where
-  a <> b = VerificationStats
-    { verifiedCount   = verifiedCount a + verifiedCount b
-    , corruptedCount  = corruptedCount a + corruptedCount b
-    , missingCount    = missingCount a + missingCount b
-    , deletedCount    = deletedCount a + deletedCount b
+  a <> b
+    = VerificationStats
+    { verifiedCount    = verifiedCount a + verifiedCount b
+    , corruptedCount   = corruptedCount a + corruptedCount b
+    , missingCount     = missingCount a + missingCount b
+    , deletedCount     = deletedCount a + deletedCount b
     , verificationTime = verificationTime a + verificationTime b
     }
 
@@ -76,22 +77,24 @@ minVerificationIntervalSeconds = 2
 
 -- | Check if a file should be verified based on last verification time
 shouldVerifyFile :: UTCTime -> UTCTime -> Bool
-shouldVerifyFile lastVerified now =
-  diffUTCTime now lastVerified > fromIntegral verificationCooldownSeconds
+shouldVerifyFile lastVerified now
+  = diffUTCTime now lastVerified > fromIntegral verificationCooldownSeconds
 
 -- | Verify a single file's integrity by comparing stored hash with computed hash
 verifyFile :: FileRecord -> VerificationResult
-verifyFile record =
-  let storedFileId = fileRecordFileId record
+verifyFile record
+  = let
+      storedFileId = fileRecordFileId record
       content      = fileRecordBytes record
       uri          = parseFileURI (encodeUtf8 storedFileId)
       -- Extract expected hash from FileURI (already ByteString)
       -- FileURI format: hash-size-xres-yres-ext
       expectedHash = fileHash uri
       computedHash = hash @ByteString content
-  in if expectedHash == computedHash
-     then VerificationOK
-     else VerificationCorrupted storedFileId
+    in 
+      if expectedHash == computedHash
+        then VerificationOK
+        else VerificationCorrupted storedFileId
 
 -- | Effect for file verification operations
 data FileVerification m a where
@@ -113,11 +116,11 @@ runFileVerification :: Member (Embed IO) r
                     -> FileVerification : r @> a
                     -> r @> a
 runFileVerification conn lastVerifVar = interpret $ \case
-  VerifyAllFilesE -> embed @IO $ verifyAllFiles conn
+  VerifyAllFilesE           -> embed @IO $ verifyAllFiles conn
 
-  VerifyRandomFileE -> embed @IO $ verifyRandomFile conn lastVerifVar
+  VerifyRandomFileE         -> embed @IO $ verifyRandomFile conn lastVerifVar
 
-  GetLastVerificationTime -> embed @IO $ readTVarIO lastVerifVar
+  GetLastVerificationTime   -> embed @IO $ readTVarIO lastVerifVar
 
   SetLastVerificationTime t -> embed @IO $ atomically $ writeTVar lastVerifVar (Just t)
 
@@ -125,45 +128,44 @@ runFileVerification conn lastVerifVar = interpret $ \case
 verifyAllFiles :: Connection -> IO VerificationStats
 verifyAllFiles conn = do
   startTime <- getCurrentTime
-  
+
   -- Use IORefs to accumulate results while streaming
   statsRef <- newIORef $! VerificationStats 0 0 0 0 0
-  toDeleteRef <- newIORef ([] :: [Text])
-  
+  toDeleteRef <- newIORef ([] :: [ Text ])
+
   -- Stream files one at a time using fold_ to avoid loading all bytes into memory
-  fold_ conn
+  fold_
+    conn
     "SELECT lru_counter, s4, file_id, file_name, bytes FROM files"
     ()
     (\() record -> do
-      case verifyFile record of
-        VerificationOK -> 
-          modifyIORef' statsRef $ \s -> 
-            let !v = verifiedCount s + 1 
-            in s { verifiedCount = v }
-        VerificationCorrupted fileId -> do
-          modifyIORef' statsRef $ \s -> 
-            let !c = corruptedCount s + 1 
-            in s { corruptedCount = c }
-          modifyIORef' toDeleteRef (fileId :)
-        VerificationMissing fileId -> do
-          modifyIORef' statsRef $ \s -> 
-            let !m = missingCount s + 1 
-            in s { missingCount = m }
-          modifyIORef' toDeleteRef (fileId :))
-  
+       case verifyFile record of
+         VerificationOK -> modifyIORef' statsRef $ \s -> let
+             !v = verifiedCount s + 1
+           in 
+             s { verifiedCount = v }
+         VerificationCorrupted fileId -> do
+           modifyIORef' statsRef $ \s -> let
+               !c = corruptedCount s + 1
+             in 
+               s { corruptedCount = c }
+           modifyIORef' toDeleteRef (fileId :)
+         VerificationMissing fileId -> do
+           modifyIORef' statsRef $ \s -> let
+               !m = missingCount s + 1
+             in 
+               s { missingCount = m }
+           modifyIORef' toDeleteRef (fileId :))
+
   -- Delete corrupted files
   toDelete <- readIORef toDeleteRef
-  forM_ toDelete $ \fileId ->
-    execute conn "DELETE FROM files WHERE file_id = ?" (Only fileId)
-  
+  forM_ toDelete $ \fileId -> execute conn "DELETE FROM files WHERE file_id = ?" (Only fileId)
+
   endTime <- getCurrentTime
   let !elapsed = diffUTCTime endTime startTime
-  
+
   stats <- readIORef statsRef
-  pure $! stats
-    { deletedCount = length toDelete
-    , verificationTime = elapsed
-    }
+  pure $! stats { deletedCount = length toDelete, verificationTime = elapsed }
 
 -- | Verify a random file from the cache
 -- Returns Nothing if verification is on cooldown or no files exist
@@ -174,16 +176,18 @@ verifyRandomFile conn lastVerifVar = do
 
   -- Check cooldown
   case lastVerif of
-    Just t | diffUTCTime now t < minVerificationIntervalSeconds ->
-      pure Nothing  -- On cooldown
-    _ -> do
+    Just t
+      | diffUTCTime now t < minVerificationIntervalSeconds -> pure Nothing  -- On cooldown
+    _      -> do
       -- Get a random file that hasn't been verified recently
       -- We use RANDOM() for simplicity; production might want better randomization
-      maybeRecord <- listToMaybe <$> query_ conn
-        "SELECT lru_counter, s4, file_id, file_name, bytes FROM files ORDER BY RANDOM() LIMIT 1"
+      maybeRecord <- listToMaybe
+        <$> query_
+          conn
+          "SELECT lru_counter, s4, file_id, file_name, bytes FROM files ORDER BY RANDOM() LIMIT 1"
 
       case maybeRecord of
-        Nothing -> pure Nothing  -- No files in cache
+        Nothing     -> pure Nothing  -- No files in cache
         Just record -> do
           -- Update last verification time
           atomically $ writeTVar lastVerifVar (Just now)
@@ -200,9 +204,7 @@ verifyRandomFile conn lastVerifVar = do
             _ -> pure $! Just result
 
 -- | Run file verification in IO
-runFileVerificationIO :: Connection
-                      -> TVar (Maybe UTCTime)
-                      -> [FileVerification, Embed IO, Final IO] @> a
-                      -> IO a
-runFileVerificationIO conn lastVerifVar =
-  runFinal . embedToFinal . runFileVerification conn lastVerifVar
+runFileVerificationIO
+  :: Connection -> TVar (Maybe UTCTime) -> [ FileVerification, Embed IO, Final IO ] @> a -> IO a
+runFileVerificationIO conn lastVerifVar
+  = runFinal . embedToFinal . runFileVerification conn lastVerifVar

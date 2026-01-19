@@ -14,6 +14,7 @@ module Types
   , RPCResponse(..)
   , CacheBackend(..)
   , R2Config(..)
+  , FileRecord(..)
     -- * Globals
   , hentaiHeader
     -- * Default values
@@ -45,9 +46,9 @@ import           Polysemy                ( Member, Sem )
 import           Polysemy.Error          ( Error )
 import qualified Polysemy.Error          as Error
 
-import           Prelude                 ( show )
-
+import           Prelude                 ( Show(show) )
 import           Relude
+import           Database.SQLite.Simple  ( FromRow, ToRow )
 
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, Text ) ] #-}
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, ByteString ) ] #-}
@@ -72,9 +73,7 @@ instance FromDhall ClientProxy
 instance ToDhall ClientProxy
 
 -- | Cache backend selection
-data CacheBackend
-  = CacheBackendSQLite
-  | CacheBackendR2
+data CacheBackend = CacheBackendSQLite | CacheBackendR2
   deriving ( Show, Eq, Generic )
 
 instance FromDhall CacheBackend
@@ -82,10 +81,7 @@ instance FromDhall CacheBackend
 instance ToDhall CacheBackend
 
 -- | R2 configuration (endpoint and bucket from config, secrets from env)
-data R2Config
-  = R2Config { r2Endpoint :: {-# UNPACK #-} !Text
-             , r2Bucket   :: {-# UNPACK #-} !Text
-             }
+data R2Config = R2Config { r2Endpoint :: {-# UNPACK #-} !Text, r2Bucket :: {-# UNPACK #-} !Text }
   deriving ( Show, Generic )
 
 instance FromDhall R2Config
@@ -93,15 +89,16 @@ instance FromDhall R2Config
 instance ToDhall R2Config
 
 data ClientConfig
-  = ClientConfig { clientId     :: {-# UNPACK #-} !Text
-                 , key          :: {-# UNPACK #-} !Text
-                 , version      :: {-# UNPACK #-} !Text
-                 , proxy        :: {-# UNPACK #-} !(Maybe ClientProxy)
-                 , downloadDir  :: {-# UNPACK #-} !Text
-                 , cachePath    :: {-# UNPACK #-} !Text
-                 , cacheBackend :: !CacheBackend
-                 , r2Config     :: !(Maybe R2Config)
-                 }
+  = ClientConfig
+  { clientId     :: {-# UNPACK #-} !Text
+  , key          :: {-# UNPACK #-} !Text
+  , version      :: {-# UNPACK #-} !Text
+  , proxy        :: {-# UNPACK #-} !(Maybe ClientProxy)
+  , downloadDir  :: {-# UNPACK #-} !Text
+  , cachePath    :: {-# UNPACK #-} !Text
+  , cacheBackend :: !CacheBackend
+  , r2Config     :: !(Maybe R2Config)
+  }
   deriving ( Show, Generic )
 
 instance FromDhall ClientConfig
@@ -297,3 +294,17 @@ getPayload response
 -- | Parse RPC responses effectfully
 parseRPCResponse' :: Member (Error RPCError) r => ByteString -> Sem r [ ByteString ]
 parseRPCResponse' bytes = Error.fromEither (getPayload =<< parseRPCResponse bytes)
+
+
+data FileRecord
+  = FileRecord { fileRecordLRUCounter :: {-# UNPACK #-} !Int64
+               , fileRecordS4         :: {-# UNPACK #-} !Text
+               , fileRecordFileId     :: {-# UNPACK #-} !Text
+               , fileRecordFileName   :: {-# UNPACK #-} !(Maybe Text)
+               , fileRecordBytes      :: !BS.ByteString
+               }
+  deriving ( Show, Generic, Eq )
+
+instance FromRow FileRecord
+
+instance ToRow FileRecord
