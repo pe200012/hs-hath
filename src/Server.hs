@@ -53,8 +53,6 @@ import           Interface.API                        ( API
                                                       , stopListening
                                                       )
 
-import           Storage.Locate
-
 import           Network.HTTP.Client                  ( brReadSome
                                                       , newManager
                                                       , parseRequest
@@ -100,6 +98,8 @@ import           Servant
 import           Servant.Client                       ( ClientError )
 import qualified Servant.Types.SourceT                as Source
 
+import           SettingM                             ( SettingM(..), runSettingM, updateSettings )
+
 import           Stats                                ( Stats
                                                       , StatsEnv(..)
                                                       , addDownload
@@ -112,6 +112,7 @@ import           Stats                                ( Stats
                                                       )
 
 import           Storage.Database                     ( FileRecord, initializeDB, runCache )
+import           Storage.Locate
 import           Storage.R2                           ( mkR2Connection, runCacheR2 )
 
 import           Types                                ( CacheBackend(..)
@@ -142,7 +143,7 @@ timeWindow = 10
 maxRequests :: Int
 maxRequests = 5
 
-data ServerAction = Reload | Cert | Settings | GracefulShutdown
+data ServerAction = Reload | Cert | GracefulShutdown
 
 -- Data types for tracking requests
 -- Note: Lists cannot be unpacked, so we use strict spine with explicit strictness
@@ -277,6 +278,8 @@ server :: Members
           , Reader (MVar ServerAction)
           , Stats
           , Log Message
+          , Genesis
+          , SettingM
           ]
          r
        => ServerT API (Sem r)
@@ -376,10 +379,7 @@ server
           return $ addHeader @"Content-Length" testSize $ Source.fromStepT $ bufferSending testSize
       RefreshSettings   -> do
         log Info "Refreshing settings"
-        chan <- ask @(MVar ServerAction)
-        void $ embed $ forkIO $ do
-          threadDelay (1000000 * 2)
-          putMVar chan Settings
+        updateSettings =<< fetchSettings
         plainText ""
       StartDownloader   -> plainText ""
       RefreshCerts      -> do
@@ -501,8 +501,8 @@ tictok config ipMap ksVar conn lastVerifTime skipVerify = do
     stopTimer blacklistHandle
     mapM_ stopTimer verificationHandle
 
-notifyStart :: ClientConfig -> HathSettings -> IO ()
-notifyStart config _ = psi
+notifyStart :: ClientConfig -> IO ()
+notifyStart config = psi
   where
     psi = runRPCIO config startListening >>= \case
       Right (Right True) -> return ()
@@ -510,7 +510,7 @@ notifyStart config _ = psi
 
 -- | Abstract cache runner - wraps the cache effect interpreter
 -- This allows us to switch between SQLite and R2 backends at runtime
-data CacheRunner
+newtype CacheRunner
   = CacheRunner { runCacheWith :: forall r a. Members '[ Embed IO, Log Message, Error RPCError ] r
                                => Sem (KVStore FileURI FileRecord : r) a
                                -> Sem r a
@@ -519,7 +519,7 @@ data CacheRunner
 -- Create the WAI application with rate limiting
 makeApplication
   :: ClientConfig
-  -> HathSettings
+  -> TVar HathSettings
   -> MVar ServerAction
   -> TVar IPMap
   -> TVar KeystampMap
@@ -570,7 +570,7 @@ makeApplication
       . mapError @RPCError (const err500)
       . mapError @ClientError (const err500)
       . mapError @SomeException (const err500)
-      . runReader settings
+      . runSettingM settings
       . runReader config
       . runReader action
       . runReader statsEnv
@@ -579,6 +579,7 @@ makeApplication
       . runCacheWith cacheRunner
       . runStats
       . runLocate
+      . runGenesis
       . runRPC
 
 startServer :: ClientConfig
@@ -592,6 +593,7 @@ startServer :: ClientConfig
 startServer config settings certs chan skipVerify disableRateLimit trustProxyHeaders = do
   ipMap <- newTVarIO HashMap.empty
   ksVar <- newTVarIO HashMap.empty
+  ssVar <- newTVarIO settings
   statsEnv <- newStatsEnv
   lastVerifTime <- newTVarIO Nothing  -- TVar for tracking last verification time
   print =<< runRPCIO config (fetchBlacklist 259200)
@@ -604,7 +606,7 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
         finally
           (loopSQLite
              config
-             settings
+             ssVar
              certs
              conn
              cacheRunner
@@ -623,10 +625,9 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
             Left err     -> error $ "Failed to initialize R2: " <> err
             Right r2Conn -> do
               let cacheRunner = CacheRunner { runCacheWith = runCacheR2 r2Conn }
-              let stopTictok = \(_ :: ()) -> pure () :: IO ()
               loopR2
                 config
-                settings
+                ssVar
                 certs
                 cacheRunner
                 ipMap
@@ -641,21 +642,6 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
           phi = flip unless phi . fromRight False =<< runEHentaiAPIIO config stopListening
         in 
           phi >> exitSuccess
-
-    refreshSettings = phi 0
-      where
-        phi (retries :: Int) = runGenesisIO config fetchSettings >>= \case
-          Right (Right newSetings) -> return newSetings
-          e -> do
-            putStrLn $ "Failed to refresh settings: " <> show e
-            if retries > 3
-              then do
-                putStrLn "Giving up"
-                gracefulShutdown
-              else do
-                putStrLn $ "Retrying in " <> show (2 ^ retries :: Int) <> " seconds"
-                threadDelay (1000000 * 2 ^ retries)
-                phi (retries + 1)
 
     refreshCerts = phi 0
       where
@@ -675,11 +661,12 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
     -- SQLite loop - needs Connection for tictok
     loopSQLite cfg set c conn cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
       let app = makeApplication cfg set chan ipMap ksVar disableRL trustProxy cacheRunner statsEnv
-      result <- withAsync (notifyStart cfg set) $ \_ -> race (takeMVar chan)
+      st <- readTVarIO set
+      result <- withAsync (notifyStart cfg) $ \_ -> race (takeMVar chan)
         $ runTLS
           (defaultTlsSettings
            { tlsCredentials = Just (Credentials [ c ]), onInsecure = AllowInsecure })
-          (setPort (clientPort set) defaultSettings)
+          (setPort (clientPort st) defaultSettings)
         $ logStdoutDev
         $ logStdout app
       case result of
@@ -688,29 +675,17 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
         Left Cert -> do
           newCerts <- refreshCerts
           loopSQLite cfg set newCerts conn cacheRunner ipMap ksVar disableRL trustProxy statsEnv
-        Left Settings -> do
-          newSettings <- refreshSettings
-          loopSQLite
-            cfg
-            newSettings
-            certs
-            conn
-            cacheRunner
-            ipMap
-            ksVar
-            disableRL
-            trustProxy
-            statsEnv
         Right _ -> error "Server terminated unexpectedly"
 
     -- R2 loop - no Connection needed
     loopR2 cfg set c cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
       let app = makeApplication cfg set chan ipMap ksVar disableRL trustProxy cacheRunner statsEnv
-      result <- withAsync (notifyStart cfg set) $ \_ -> race (takeMVar chan)
+      st <- readTVarIO set
+      result <- withAsync (notifyStart cfg) $ \_ -> race (takeMVar chan)
         $ runTLS
           (defaultTlsSettings
            { tlsCredentials = Just (Credentials [ c ]), onInsecure = AllowInsecure })
-          (setPort (clientPort set) defaultSettings)
+          (setPort (clientPort st) defaultSettings)
         $ logStdoutDev
         $ logStdout app
       case result of
@@ -719,9 +694,6 @@ startServer config settings certs chan skipVerify disableRateLimit trustProxyHea
         Left Cert -> do
           newCerts <- refreshCerts
           loopR2 cfg set newCerts cacheRunner ipMap ksVar disableRL trustProxy statsEnv
-        Left Settings -> do
-          newSettings <- refreshSettings
-          loopR2 cfg newSettings certs cacheRunner ipMap ksVar disableRL trustProxy statsEnv
         Right _ -> error "Server terminated unexpectedly"
 
     -- tictok for SQLite backend (uses Connection)

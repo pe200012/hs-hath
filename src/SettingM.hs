@@ -1,7 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Settings ( Settings(..), getSettings, updateSettings, runSettings ) where
+module SettingM ( SettingM(..), getSettings, updateSettings, runSettingM ) where
 
 import           Polysemy
 import           Polysemy.Operators
@@ -10,17 +10,17 @@ import           Relude             hiding ( Reader )
 
 import           Types              ( HathSettings )
 
-data Settings m a where
+data SettingM m a where
   -- | Get current H@H settings
-  GetSettings :: Settings m HathSettings
+  GetSettings :: SettingM m HathSettings
   -- | Update H@H settings (hot update without restart)
-  UpdateSettings :: HathSettings -> Settings m ()
+  UpdateSettings :: HathSettings -> SettingM m ()
 
-makeSem ''Settings
+makeSem ''SettingM
 
-{-# INLINE runSettings #-}
+{-# INLINE runSettingM #-}
 -- | Run the Settings effect with a TVar storing the current settings
-runSettings :: Member (Embed IO) r => TVar HathSettings -> Settings : r @> a -> r @> a
-runSettings tvar = interpret $ \case
+runSettingM :: Member (Embed IO) r => TVar HathSettings -> SettingM : r @> a -> r @> a
+runSettingM tvar = interpret $ \case
   GetSettings        -> embed $ readTVarIO @IO tvar
   UpdateSettings new -> embed $ atomically @IO $ writeTVar tvar new
