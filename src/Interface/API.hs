@@ -189,6 +189,9 @@ type API
         :> Capture "testkey" Text
         :> Capture "nothing" Text
         :> StreamGet NoFraming SpeedTest (Headers '[Header "Content-Length" Int] (SourceIO ByteString))
+    :<|> "admin"
+        :> "settings"
+        :> Get '[PlainText] Text
     :<|> Raw  -- This will catch all other routes including HEAD requests
 -- floskell-enable
 
@@ -297,7 +300,7 @@ runEHentaiAPI m = do
           add'      = fromMaybe "" (add params)
           clientId' = clientId cfg
           key'      = key cfg
-        in 
+        in
           hash [i|hentai@home-#{act'}-#{add'}-#{clientId'}-#{time}-#{key'}|]
 
 {-# INLINE checkServerStatus #-}
