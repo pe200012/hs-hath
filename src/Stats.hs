@@ -10,6 +10,12 @@ module Stats
   , addDownload
   , incServed
   , incFetched
+  , updateUptime
+  , incActiveConnections
+  , decActiveConnections
+  , incDlTask
+  , incDlFile
+  , addDlBytes
   , readPrometheus
   , runStats
   ) where
