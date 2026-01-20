@@ -26,23 +26,71 @@ import           Polysemy
 import           Polysemy.Operators
 import           Polysemy.Reader        ( Reader, ask )
 
+import qualified System.Metrics.Prometheus.Concurrent.Registry as Registry
+import           System.Metrics.Prometheus.Concurrent.RegistryT
+import           System.Metrics.Prometheus.Metric.Counter
+import           System.Metrics.Prometheus.Metric.Gauge
+import qualified System.Metrics.Prometheus.MetricId as MetricId
+import qualified System.Metrics.Prometheus.Encode.Text as Encode
+
 import           Relude                 hiding ( Reader, ask )
 
 data TrafficStats
   = TrafficStats
-  { uploadBytes :: !Int64, downloadBytes :: !Int64, servedCount :: !Int64, fetchedCount :: !Int64 }
-  deriving ( Show, Eq, Generic )
+  { uploadBytes :: !Int64
+  , downloadBytes :: !Int64
+  , servedCount :: !Int64
+  , fetchedCount :: !Int64
+  , dlTaskCount   :: !Int64
+  , dlFileCount   :: !Int64
+  , dlBytes       :: !Int64
+  } deriving ( Show, Eq, Generic )
 
 emptyTrafficStats :: TrafficStats
-emptyTrafficStats = TrafficStats 0 0 0 0
+emptyTrafficStats = TrafficStats 0 0 0 0 0 0 0
 
-data StatsEnv = StatsEnv { statsStart :: !UTCTime, statsVar :: !(TVar TrafficStats) }
+data StatsEnv = StatsEnv
+  { statsStart :: !UTCTime
+  , statsRegistry :: !Registry.Registry
+  , statsUploadBytesCounter :: !Counter
+  , statsDownloadBytesCounter :: !Counter
+  , statsServedCounter :: !Counter
+  , statsFetchedCounter :: !Counter
+  , statsActiveConnectionsGauge :: !Gauge
+  , statsUptimeGauge :: !Gauge
+  , statsDlTaskCounter :: !Counter
+  , statsDlFileCounter :: !Counter
+  , statsDlBytesCounter :: !Counter
+  , statsErrorCounter :: !Counter
+  }
 
 newStatsEnv :: IO StatsEnv
 newStatsEnv = do
   t0 <- getCurrentTime
-  v <- STM.newTVarIO emptyTrafficStats
-  pure $ StatsEnv t0 v
+  registry <- Registry.new
+  uploadBytesCounter <- Registry.registerCounter "hath_cache_sent_bytes_total" mempty registry
+  downloadBytesCounter <- Registry.registerCounter "hath_cache_received_bytes_total" mempty registry
+  servedCounter <- Registry.registerCounter "hath_cache_sent_total" mempty registry
+  fetchedCounter <- Registry.registerCounter "hath_cache_received_total" mempty registry
+  activeConnectionsGauge <- Registry.registerGauge "hath_active_connections" mempty registry
+  uptimeGauge <- Registry.registerGauge "hath_uptime_seconds" mempty registry
+  dlTaskCounter <- Registry.registerCounter "hath_download_task_count_total" mempty registry
+  dlFileCounter <- Registry.registerCounter "hath_download_file_count_total" mempty registry
+  dlBytesCounter <- Registry.registerCounter "hath_download_size_bytes_total" mempty registry
+  errorCounter <- Registry.registerCounter "hath_errors_total" (MetricId.fromList [("type", "rpc_timeout")]) registry
+  pure $ StatsEnv
+    t0
+    registry
+    uploadBytesCounter
+    downloadBytesCounter
+    servedCounter
+    fetchedCounter
+    activeConnectionsGauge
+    uptimeGauge
+    dlTaskCounter
+    dlFileCounter
+    dlBytesCounter
+    errorCounter
 
 data Stats m a where
   AddUpload :: Int -> Stats m ()
