@@ -164,6 +164,7 @@ import           Utils                                  ( bufferSending
                                                         , lookupParam
                                                         , parseURLParams
                                                         )
+import           System.IO                              ( hPutStrLn )
 
 maxTimeDrift :: Int64
 maxTimeDrift = 600
@@ -629,9 +630,9 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
   ssVar <- newTVarIO settings
   galleryHandler <- newTChanIO
   statsEnv <- newStatsEnv
-  void $ forkIO $ forever $ try @SomeException $ do
+  void $ forkIO $ forever $ do
     GalleryTask <- atomically $ readTChan galleryHandler
-    runFinal
+    result <- try @SomeException $ runFinal
       $ embedToFinal @IO
       $ errorToIOFinal @ClientError
       $ errorToIOFinal @RPCError
@@ -641,6 +642,9 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
       $ runLogAction @IO @Message richMessageAction
       $ runEHentaiAPI
       $ runRPC startsDownloader
+    case result of
+      Left e  -> hPutStrLn stderr $ "Gallery downloader error: " <> show e
+      Right _ -> return ()
   print =<< runRPCIO config (fetchBlacklist 259200)
   case cacheBackend config of
     CacheBackendSQLite -> do
