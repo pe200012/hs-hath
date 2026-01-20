@@ -130,6 +130,8 @@ import           Storage.Database                       ( FileRecord, initialize
 import           Storage.Locate
 import           Storage.R2                             ( mkR2Connection, runCacheR2 )
 
+import           System.Directory                       ( createDirectoryIfMissing, doesFileExist )
+import           System.FilePath                        ( takeDirectory )
 import qualified System.Metrics.Prometheus.Metric.Gauge as Gauge
 
 import           Types                                  ( CacheBackend(..)
@@ -705,7 +707,12 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
     verifyAndDownload md f = do
       let filePath :: FilePath
             = [i|download/#{galleryID md}/#{galleryFileName f}.#{galleryFileExt f}|]
-      existingBytes <- embed $ BS.readFile filePath
+      embed $ createDirectoryIfMissing True (takeDirectory filePath)
+      existingBytes <- embed $ do
+        existing <- doesFileExist filePath
+        if existing
+          then BS.readFile filePath
+          else return BS.empty
       if galleryFileHash f == hash existingBytes
         then log Info [i|#{galleryFileName f}.#{galleryFileExt f} already verified, skipping|]
           >> pure True
