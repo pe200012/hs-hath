@@ -16,6 +16,8 @@ import           Control.Concurrent.Suspend             ( mDelay )
 import           Control.Concurrent.Timer               ( repeatedTimer, stopTimer )
 import           Control.Exception                      ( finally, try )
 
+import qualified Crypto.Hash                            as Crypto
+
 import qualified Data.ByteString                        as BS
 import qualified Data.ByteString.Char8                  as BSC
 import qualified Data.ByteString.Lazy                   as LBS
@@ -262,7 +264,7 @@ tooManyRequestsResponse
     [ ( "Content-Type", "text/plain" ) ]
     "Too Many Requests"
 
-type KeystampMap = HashMap Int64 ( Int, UTCTime )
+type KeystampMap = HashMap ByteString ( Int, UTCTime )
 
 -- | Keystamp rate limiting middleware
 keystampLimitMiddleware :: TVar KeystampMap -> Middleware
@@ -270,27 +272,25 @@ keystampLimitMiddleware ksVar app req sendResponse
   | "/h/" `BS.isPrefixOf` path = do
     let parts = BS.split 47 (BS.drop 1 path) -- 47 is '/'
     case parts of
-      (_h : _fileid : optsRaw : _) -> do
+      (_h : fileid : optsRaw : _) -> do
         let opts = parseURLParams optsRaw
         case Map.lookup "keystamp" opts of
           Just ksRaw -> do
-            let ( t, _ ) = BSC.span (/= '-') ksRaw
-            case BSC.readInteger t of
-              Just ( fromIntegral -> ts, _ ) -> do
-                now <- getCurrentTime
-                allowed <- atomically $ do
-                  m <- readTVar ksVar
-                  let ( count, _ ) = HashMap.lookupDefault ( 0, now ) ts m
-                  if count >= 10  -- Undocumented limit
-                    then return False
-                    else do
-                      let !newM = HashMap.insert ts ( count + 1, now ) m
-                      writeTVar ksVar newM
-                      return True
-                if allowed
-                  then app req sendResponse
-                  else sendResponse tooManyRequestsResponse
-              Nothing -> app req sendResponse
+            let ( timestamp, _ ) = BSC.span (/= '-') ksRaw
+                checkKey         = fileid <> timestamp
+            now <- getCurrentTime
+            allowed <- atomically $ do
+              m <- readTVar ksVar
+              let ( count, _ ) = HashMap.lookupDefault ( 0, now ) checkKey m
+              if count >= 10  -- Undocumented limit
+                then return False
+                else do
+                  let !newM = HashMap.insert checkKey ( count + 1, now ) m
+                  writeTVar ksVar newM
+                  return True
+            if allowed
+              then app req sendResponse
+              else sendResponse tooManyRequestsResponse
           Nothing    -> app req sendResponse
       _ -> app req sendResponse
   | otherwise = app req sendResponse
@@ -514,19 +514,7 @@ tictok config ipMap ksVar = do
     (mDelay 1)
 
   -- keystamp cleanup (every minute, remove entries older than 2 hours)
-  ksCleanupHandle <- repeatedTimer
-    (do
-       now <- getCurrentTime
-       atomically $ do
-         m <- readTVar ksVar
-         -- Keep entries where (timestamp > now - 30 mins)
-         -- Since keystamp is a unix timestamp (seconds), we compare it directly
-         let twoHoursAgo
-               = truncate (realToFrac (utcTimeToPOSIXSeconds (addUTCTime (-1800) now)) :: Double)
-                 :: Int64
-         let filtered = HashMap.filterWithKey (\ts _ -> ts > twoHoursAgo) m
-         writeTVar ksVar filtered)
-    (mDelay 60)
+  ksCleanupHandle <- repeatedTimer (atomically $ writeTVar ksVar mempty) (mDelay 10)
 
   -- heartbeat
   heartbeatHandle <- repeatedTimer (void $ runRPCIO config stillAlive) (mDelay 1)
