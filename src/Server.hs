@@ -704,7 +704,7 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
 
     verifyAndDownload md f = do
       let filePath :: FilePath
-            = [i|download/#{galleryTitle md}/#{galleryFileName f}.#{galleryFileExt f}|]
+            = [i|download/#{galleryID md}/#{galleryFileName f}.#{galleryFileExt f}|]
       existingBytes <- embed $ BS.readFile filePath
       if galleryFileHash f == hash existingBytes
         then log Info [i|#{galleryFileName f}.#{galleryFileExt f} already verified, skipping|]
