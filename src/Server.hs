@@ -637,7 +637,7 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
   ssVar <- newTVarIO settings
   galleryHandler <- newTChanIO
   statsEnv <- newStatsEnv
-  void $ forkIO $ forever $ do
+  void $ forkIO $ forever $ try @SomeException $ do
     GalleryTask <- atomically $ readTChan galleryHandler
     runFinal
       $ embedToFinal @IO

@@ -48,7 +48,8 @@ import qualified Data.Text                as T
 import           Data.Time.Clock.System   ( SystemTime(systemSeconds), getSystemTime )
 import           Data.X509                ( CertificateChain, PrivKey )
 
-import           Network.HTTP.Client      ( Request(responseTimeout, host, requestHeaders)
+import           Network.HTTP.Client      ( HttpException
+                                          , Request(responseTimeout, host, requestHeaders)
                                           , Response(responseBody)
                                           , defaultManagerSettings
                                           , newManager
@@ -101,6 +102,8 @@ import           Types                    ( ClientConfig
                                           , parseRPCResponse'
                                           , parseSettings
                                           )
+
+import           UnliftIO                 ( try )
 
 import           Utils                    ( hash )
 
@@ -385,13 +388,17 @@ downloadGalleryFile metadata file = do
   where
     download url = case parseRequest url of
       Nothing  -> pure Nothing
-      Just req -> do
-        bytes <- embed $ LBS.toStrict . responseBody <$> httpLbs @IO req
-        if hash bytes /= galleryFileHash file
-          then do
-            modify @[ Text ] ([i|#{host req}-#{galleryFileIndex file}-#{galleryFileXRes file}|] :)
-            pure Nothing
-          else return $ Just bytes
+      Just req -> embed (try @IO @HttpException $ LBS.toStrict . responseBody <$> httpLbs @IO req)
+        >>= \case
+          Left _      -> pure Nothing
+          Right bytes -> do
+            if hash bytes /= galleryFileHash file
+              then do
+                modify
+                  @[ Text ]
+                  ([i|#{host req}-#{galleryFileIndex file}-#{galleryFileXRes file}|] :)
+                pure Nothing
+              else return $ Just bytes
 
     operate (retries :: Int)
       | retries > 3 = return Nothing
