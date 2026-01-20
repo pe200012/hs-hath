@@ -94,6 +94,7 @@ import           Polysemy                               ( Embed
                                                         , embed
                                                         , embedToFinal
                                                         , runFinal
+                                                        , runM
                                                         )
 import           Polysemy.Async                         ( Async, async, asyncToIOFinal )
 import           Polysemy.Error                         ( Error, errorToIOFinal, mapError, throw )
@@ -144,6 +145,7 @@ import           Types                                  ( CacheBackend(..)
                                                         )
 
 import           UnliftIO                               ( TChan
+                                                        , newTChanIO
                                                         , race
                                                         , readTChan
                                                         , replicateConcurrently
@@ -298,6 +300,8 @@ tracingConnections statsEnv app req k = do
   Gauge.inc (statsActiveConnectionsGauge statsEnv)
   finally (app req k) (Gauge.dec (statsActiveConnectionsGauge statsEnv))
 
+data GalleryTask = GalleryTask
+
 -- Server implementation
 server :: Members
          '[ Embed IO
@@ -308,6 +312,7 @@ server :: Members
           , RPC
           , Locate
           , Reader (TChan ServerAction)
+          , Reader (TChan GalleryTask)
           , Stats
           , Log Message
           , Genesis
@@ -422,7 +427,10 @@ server
           updateSettings =<< fetchSettings
           plainText ""
         StartDownloader   -> do
-          void $ async startsDownloader
+          chan <- ask @(TChan GalleryTask)
+          log Info "Starting gallery downloader"
+          void $ embed $ forkIO $ do
+            atomically $ writeTChan chan GalleryTask
           plainText ""
         RefreshCerts      -> do
           log Info "Refreshing certificates"
@@ -432,32 +440,6 @@ server
             atomically $ writeTChan chan Cert
           plainText ""
       where
-        startsDownloader = do
-          metadata <- nextGalleryTask
-          incDlTask
-          case metadata of
-            Nothing -> log Info "No gallery task available"
-            Just md -> do
-              log Info [i|Starting download for gallery #{galleryID md}|]
-              complete <- mapM (verifyAndDownload md) (galleryFileList md)
-              when (and complete) (notifyGalleryCompletion md)
-
-        verifyAndDownload md f = do
-          let filePath :: FilePath
-                = [i|download/#{galleryTitle md}/#{galleryFileName f}.#{galleryFileExt f}|]
-          existingBytes <- embed $ BS.readFile filePath
-          if galleryFileHash f == hash existingBytes
-            then log Info [i|#{galleryFileName f}.#{galleryFileExt f} already verified, skipping|]
-              >> pure True
-            else downloadGalleryFile md f >>= \case
-              Nothing    -> pure False
-              Just bytes -> do
-                log Info [i|Downloaded #{galleryFileName f}.#{galleryFileExt f}|]
-                incDlFile
-                addDlBytes (BS.length bytes)
-                embed $ BS.writeFile filePath bytes
-                pure True
-
         runTest testSize req mgr = do
           start <- getPOSIXTime
           let phi 0 _  = do
@@ -574,6 +556,7 @@ makeApplication
   :: ClientConfig
   -> TVar HathSettings
   -> TChan ServerAction
+  -> TChan GalleryTask
   -> TVar IPMap
   -> TVar KeystampMap
   -> Bool  -- ^ Disable rate limiting
@@ -585,6 +568,7 @@ makeApplication
   config
   settings
   action
+  galleryHandler
   ipMap
   ksVar
   disableRateLimit
@@ -629,6 +613,7 @@ makeApplication
       . runReader config
       . runReader action
       . runReader statsEnv
+      . runReader galleryHandler
       . runLogAction @IO @Message richMessageAction
       . runEHentaiAPI
       . runCacheWith cacheRunner
@@ -648,7 +633,20 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
   ipMap <- newTVarIO HashMap.empty
   ksVar <- newTVarIO HashMap.empty
   ssVar <- newTVarIO settings
+  galleryHandler <- newTChanIO
   statsEnv <- newStatsEnv
+  void $ forkIO $ forever $ do
+    GalleryTask <- atomically $ readTChan galleryHandler
+    runFinal
+      $ embedToFinal @IO
+      $ errorToIOFinal @ClientError
+      $ errorToIOFinal @RPCError
+      $ runReader config
+      $ runReader statsEnv
+      $ runStats
+      $ runLogAction @IO @Message richMessageAction
+      $ runEHentaiAPI
+      $ runRPC startsDownloader
   print =<< runRPCIO config (fetchBlacklist 259200)
   case cacheBackend config of
     CacheBackendSQLite -> do
@@ -662,6 +660,7 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
              ssVar
              certs
              conn
+             galleryHandler
              cacheRunner
              ipMap
              ksVar
@@ -684,6 +683,7 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
                    config
                    ssVar
                    certs
+                   galleryHandler
                    cacheRunner
                    ipMap
                    ksVar
@@ -692,6 +692,32 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
                    statsEnv)
                 stopTictok
   where
+    startsDownloader = do
+      metadata <- nextGalleryTask
+      incDlTask
+      case metadata of
+        Nothing -> log Info "No gallery task available"
+        Just md -> do
+          log Info [i|Starting download for gallery #{galleryID md}|]
+          complete <- mapM (verifyAndDownload md) (galleryFileList md)
+          when (and complete) (notifyGalleryCompletion md)
+
+    verifyAndDownload md f = do
+      let filePath :: FilePath
+            = [i|download/#{galleryTitle md}/#{galleryFileName f}.#{galleryFileExt f}|]
+      existingBytes <- embed $ BS.readFile filePath
+      if galleryFileHash f == hash existingBytes
+        then log Info [i|#{galleryFileName f}.#{galleryFileExt f} already verified, skipping|]
+          >> pure True
+        else downloadGalleryFile md f >>= \case
+          Nothing    -> pure False
+          Just bytes -> do
+            log Info [i|Downloaded #{galleryFileName f}.#{galleryFileExt f}|]
+            incDlFile
+            addDlBytes (BS.length bytes)
+            embed $ BS.writeFile filePath bytes
+            pure True
+
     gracefulShutdown :: IO a
     gracefulShutdown
       = let
@@ -715,8 +741,19 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
                 phi (retries + 1)
 
     -- SQLite loop - needs Connection for tictok
-    loopSQLite cfg set c conn cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
-      let app = makeApplication cfg set chan ipMap ksVar disableRL trustProxy cacheRunner statsEnv
+    loopSQLite cfg set c conn gallery cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
+      let app
+            = makeApplication
+              cfg
+              set
+              chan
+              gallery
+              ipMap
+              ksVar
+              disableRL
+              trustProxy
+              cacheRunner
+              statsEnv
       st <- readTVarIO set
       result <- withAsync (notifyStart cfg) $ \_ -> race (atomically $ readTChan chan)
         $ runTLS
@@ -730,12 +767,34 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
         Left Reload -> exitSuccess
         Left Cert -> do
           newCerts <- refreshCerts
-          loopSQLite cfg set newCerts conn cacheRunner ipMap ksVar disableRL trustProxy statsEnv
+          loopSQLite
+            cfg
+            set
+            newCerts
+            conn
+            gallery
+            cacheRunner
+            ipMap
+            ksVar
+            disableRL
+            trustProxy
+            statsEnv
         Right _ -> error "Server terminated unexpectedly"
 
     -- R2 loop - no Connection needed
-    loopR2 cfg set c cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
-      let app = makeApplication cfg set chan ipMap ksVar disableRL trustProxy cacheRunner statsEnv
+    loopR2 cfg set c gallery cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
+      let app
+            = makeApplication
+              cfg
+              set
+              chan
+              gallery
+              ipMap
+              ksVar
+              disableRL
+              trustProxy
+              cacheRunner
+              statsEnv
       st <- readTVarIO set
       result <- withAsync (notifyStart cfg) $ \_ -> race (atomically $ readTChan chan)
         $ runTLS
@@ -749,7 +808,7 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
         Left Reload -> exitSuccess
         Left Cert -> do
           newCerts <- refreshCerts
-          loopR2 cfg set newCerts cacheRunner ipMap ksVar disableRL trustProxy statsEnv
+          loopR2 cfg set newCerts gallery cacheRunner ipMap ksVar disableRL trustProxy statsEnv
         Right _ -> error "Server terminated unexpectedly"
 
 normalizeAcceptMiddleware :: Middleware
