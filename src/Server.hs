@@ -108,6 +108,7 @@ import           Servant.Client                         ( ClientError )
 import qualified Servant.Types.SourceT                  as Source
 
 import           SettingM                               ( SettingM(..)
+                                                        , getSettings
                                                         , runSettingM
                                                         , updateSettings
                                                         )
@@ -330,6 +331,7 @@ server
   :<|> statsHandler
   :<|> serverCmdHandler
   :<|> testHandler
+  :<|> adminSettingsHandler
   :<|> Tagged rawHandler
   where
     faviconHandler
@@ -483,6 +485,8 @@ server
           = hash
             @ByteString
             [i|hentai@home-speedtest-#{testSize}-#{testTime}-#{clientId cfg}-#{key cfg}|]
+
+    adminSettingsHandler = show <$> getSettings
 
     rawHandler req k = case requestMethod req of
       -- Handle HEAD requests with 200 OK and empty body
