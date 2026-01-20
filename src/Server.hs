@@ -6,7 +6,7 @@
 module Server ( startServer, ServerAction(..), makeApplication, CacheRunner(..) ) where
 
 import           Colog                                  ( Message
-                                                        , Severity(Info)
+                                                        , Severity(Info, Warning)
                                                         , richMessageAction
                                                         )
 import           Colog.Polysemy                         ( Log, runLogAction )
@@ -709,7 +709,9 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
         then log Info [i|#{galleryFileName f}.#{galleryFileExt f} already verified, skipping|]
           >> pure True
         else downloadGalleryFile md f >>= \case
-          Nothing    -> pure False
+          Nothing    -> do
+            log Warning [i|Failed to download #{galleryFileName f}.#{galleryFileExt f}|]
+            pure False
           Just bytes -> do
             log Info [i|Downloaded #{galleryFileName f}.#{galleryFileExt f}|]
             incDlFile
