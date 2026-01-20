@@ -61,7 +61,8 @@ runLocate = interpret $ \case
     settings <- getSettings
     let fileURI = locateURI uri
         s4      = SBS.take 4 . show $ fileURI
-    if HashSet.member s4 (staticRanges settings)
+    -- if HashSet.member s4 (staticRanges settings) <-- we have a bug in setting parsing. wait for fix
+    if True
       then lookupKV fileURI >>= \case
         Just record -> return $ Just $ fileRecordBytes record
         Nothing     -> case ( Map.lookup "fileindex" (locateURIOptions uri)
