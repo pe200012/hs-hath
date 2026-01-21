@@ -48,7 +48,6 @@ jobs:
         run: |
           set -ex
           rm -f stack.yaml.lock
-          $STACK clean
 
       - name: Install dependencies
         run: $STACK test --bench --only-dependencies $FLAGS
