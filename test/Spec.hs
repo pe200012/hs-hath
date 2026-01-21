@@ -5,8 +5,9 @@
 import qualified Data.Map.Strict  as Map
 import           Data.Text        ( Text )
 
-import           Database
+import           Storage.Database ( FileRecord(..), runCachePure )
 
+import           FilesystemSpec   ( filesystemSpecs )
 import           Integration      ( integrationSpecs )
 
 import           R2Spec           ( r2Specs )
@@ -25,6 +26,7 @@ main = hspec $ do
   cacheSpecs
   integrationSpecs
   r2Specs
+  filesystemSpecs
 
 -- | Helper to store a file record
 storeFile :: Member (KVStore FileURI FileRecord) r => FileRecord -> Sem r ()

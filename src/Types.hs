@@ -29,6 +29,7 @@ module Types
   , parseFileURI
   , parseRPCResponse
   , parseRPCResponse'
+  , reconstructRecord
     -- * Selectors
   , getPayload
   ) where
@@ -37,6 +38,7 @@ import qualified Data.ByteString.Char8   as BS
 import qualified Data.ByteString.Short   as SBS
 import qualified Data.HashSet            as HashSet
 import           Data.String.Interpolate ( i )
+import qualified Data.Text               as T
 
 import           Database.SQLite.Simple  ( FromRow, ToRow )
 
@@ -50,7 +52,7 @@ import qualified Polysemy.Error          as Error
 
 import           Prelude                 ( Show(show) )
 
-import           Relude
+import           Relude                  hiding ( show )
 
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, Text ) ] #-}
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, ByteString ) ] #-}
@@ -75,7 +77,7 @@ instance FromDhall ClientProxy
 instance ToDhall ClientProxy
 
 -- | Cache backend selection
-data CacheBackend = CacheBackendSQLite | CacheBackendR2
+data CacheBackend = CacheBackendSQLite | CacheBackendR2 | CacheBackendFilesystem
   deriving ( Show, Eq, Generic )
 
 instance FromDhall CacheBackend
@@ -272,7 +274,7 @@ data RPCError
   = EmptyResponse
   | RequestFailure {-# UNPACK #-} !Text  -- Contains the error status code
   | CertificateFailure {-# UNPACK #-} !Text
-  | R2WriteError {-# UNPACK #-} !Text    -- R2 storage write/delete failure
+  | StorageError {-# UNPACK #-} !Text    -- Storage write/delete failure
   deriving ( Show, Eq, Generic )
 
 instance Exception RPCError
@@ -309,3 +311,15 @@ data FileRecord
 instance FromRow FileRecord
 
 instance ToRow FileRecord
+
+-- | Reconstruct FileRecord from FileURI and bytes
+reconstructRecord :: FileURI -> ByteString -> FileRecord
+reconstructRecord uri bytes
+  = FileRecord { fileRecordLRUCounter = 0
+               , fileRecordS4         = T.take 4 fileId
+               , fileRecordFileId     = fileId
+               , fileRecordFileName   = Nothing
+               , fileRecordBytes      = bytes
+               }
+  where
+    fileId = T.pack $ show uri

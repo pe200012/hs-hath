@@ -3,7 +3,16 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Server ( startServer, ServerAction(..), makeApplication, CacheRunner(..) ) where
+module Server
+  ( startServer
+  , ServerAction(..)
+  , makeApplication
+  , CacheRunner(..)
+  , IP(..)
+  , IPMap
+  , KeystampMap
+  , GalleryTask(..)
+  ) where
 
 import           Colog                                  ( Message
                                                         , Severity(Info, Warning)
@@ -130,11 +139,13 @@ import           Stats                                  ( Stats
                                                         )
 
 import           Storage.Database                       ( FileRecord, initializeDB, runCache )
+import           Storage.Filesystem                     ( runCacheFilesystem )
 import           Storage.Locate
 import           Storage.R2                             ( mkR2Connection, runCacheR2 )
 
 import           System.Directory                       ( createDirectoryIfMissing, doesFileExist )
 import           System.FilePath                        ( takeDirectory )
+import           System.IO                              ( hPutStrLn )
 import qualified System.Metrics.Prometheus.Metric.Gauge as Gauge
 
 import           Types                                  ( CacheBackend(..)
@@ -164,7 +175,6 @@ import           Utils                                  ( bufferSending
                                                         , lookupParam
                                                         , parseURLParams
                                                         )
-import           System.IO                              ( hPutStrLn )
 
 maxTimeDrift :: Int64
 maxTimeDrift = 600
@@ -632,7 +642,8 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
   statsEnv <- newStatsEnv
   void $ forkIO $ forever $ do
     GalleryTask <- atomically $ readTChan galleryHandler
-    result <- try @SomeException $ runFinal
+    result <- try @SomeException
+      $ runFinal
       $ embedToFinal @IO
       $ errorToIOFinal @ClientError
       $ errorToIOFinal @RPCError
@@ -647,7 +658,7 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
       Right _ -> return ()
   print =<< runRPCIO config (fetchBlacklist 259200)
   case cacheBackend config of
-    CacheBackendSQLite -> do
+    CacheBackendSQLite     -> do
       withConnection (Text.unpack $ cachePath config) $ \conn -> do
         initializeDB conn
         let cacheRunner = CacheRunner { runCacheWith = runCache conn }
@@ -666,7 +677,7 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
              trustProxyHeaders
              statsEnv)
           stopTictok
-    CacheBackendR2     -> do
+    CacheBackendR2         -> do
       case r2Config config of
         Nothing    -> error "cacheBackend=r2 but r2Config is missing"
         Just r2Cfg -> do
@@ -677,7 +688,7 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
               let cacheRunner = CacheRunner { runCacheWith = runCacheR2 r2Conn }
               stopTictok <- tictok config ipMap ksVar
               finally
-                (loopR2
+                (loopStateless
                    config
                    ssVar
                    certs
@@ -689,6 +700,25 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
                    trustProxyHeaders
                    statsEnv)
                 stopTictok
+    CacheBackendFilesystem -> do
+      let root = Text.unpack $ cachePath config
+      -- Ensure cache root exists
+      createDirectoryIfMissing True root
+      let cacheRunner = CacheRunner { runCacheWith = runCacheFilesystem root }
+      stopTictok <- tictok config ipMap ksVar
+      finally
+        (loopStateless
+           config
+           ssVar
+           certs
+           galleryHandler
+           cacheRunner
+           ipMap
+           ksVar
+           disableRateLimit
+           trustProxyHeaders
+           statsEnv)
+        stopTictok
   where
     startsDownloader = do
       metadata <- nextGalleryTask
@@ -786,8 +816,8 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
             statsEnv
         Right _ -> error "Server terminated unexpectedly"
 
-    -- R2 loop - no Connection needed
-    loopR2 cfg set c gallery cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
+    -- Stateless loop (R2, Filesystem) - no Connection needed
+    loopStateless cfg set c gallery cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
       let app
             = makeApplication
               cfg
@@ -813,7 +843,17 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
         Left Reload -> exitSuccess
         Left Cert -> do
           newCerts <- refreshCerts
-          loopR2 cfg set newCerts gallery cacheRunner ipMap ksVar disableRL trustProxy statsEnv
+          loopStateless
+            cfg
+            set
+            newCerts
+            gallery
+            cacheRunner
+            ipMap
+            ksVar
+            disableRL
+            trustProxy
+            statsEnv
         Right _ -> error "Server terminated unexpectedly"
 
 normalizeAcceptMiddleware :: Middleware
