@@ -316,6 +316,55 @@ tracingConnections statsEnv app req k = do
 
 data GalleryTask = GalleryTask
 
+-- | Server runtime environment containing all channels for inter-thread communication.
+-- This bundles channels used by the server loop to coordinate actions and tasks.
+data ServerChannels
+  = ServerChannels
+  { serverActionChan :: !(TChan ServerAction)
+    -- ^ Channel for receiving server control commands (reload, cert refresh, shutdown)
+  , galleryTaskChan  :: !(TChan GalleryTask)
+    -- ^ Channel for coordinating gallery download tasks
+  }
+
+-- | Server runtime state containing all mutable variables.
+-- These TVars are shared across threads and updated during server operation.
+data ServerState
+  = ServerState
+  { serverSettings :: !(TVar HathSettings)
+    -- ^ Dynamic server settings that can be updated via RPC
+  , serverIPMap    :: !(TVar IPMap)
+    -- ^ Rate limiting state tracking IPs and request counts
+  , serverKSMap    :: !(TVar KeystampMap)
+    -- ^ Keystamp tracking to prevent duplicate requests with same keystamp
+  , serverStatsEnv :: !StatsEnv
+    -- ^ Prometheus metrics environment (gauges, counters, histograms)
+  }
+
+-- | Server configuration flags controlling middleware behavior.
+data ServerFlags
+  = ServerFlags { disableRateLimit  :: !Bool
+                  -- ^ If True, bypass IP-based rate limiting middleware
+                , trustProxyHeaders :: !Bool
+                  -- ^ If True, trust X-Forwarded-For headers for real client IP
+                }
+
+-- | Server loop context bundling all runtime dependencies.
+-- This groups all parameters needed by the server loop to reduce parameter count
+-- and improve code clarity.
+data ServerLoopContext
+  = ServerLoopContext
+  { loopConfig      :: !ClientConfig
+    -- ^ Static client configuration (client ID, key, cache backend, etc.)
+  , loopChannels    :: !ServerChannels
+    -- ^ Communication channels for server actions and gallery tasks
+  , loopState       :: !ServerState
+    -- ^ Mutable server state (settings, rate limits, metrics)
+  , loopFlags       :: !ServerFlags
+    -- ^ Configuration flags controlling middleware behavior
+  , loopCacheRunner :: !CacheRunner
+    -- ^ Cache backend interpreter (SQLite, R2, or Filesystem)
+  }
+
 -- Server implementation
 server :: Members
          '[ Embed IO
@@ -557,43 +606,35 @@ newtype CacheRunner
                 }
 
 -- Create the WAI application with rate limiting
-makeApplication
-  :: ClientConfig
-  -> TVar HathSettings
-  -> TChan ServerAction
-  -> TChan GalleryTask
-  -> TVar IPMap
-  -> TVar KeystampMap
-  -> Bool  -- ^ Disable rate limiting
-  -> Bool  -- ^ Trust proxy headers for real IP
-  -> CacheRunner
-  -> StatsEnv
-  -> Application
-makeApplication
-  config
-  settings
-  action
-  galleryHandler
-  ipMap
-  ksVar
-  disableRateLimit
-  trustProxyHeaders
-  cacheRunner
-  statsEnv
+makeApplication :: ServerLoopContext -> Application
+makeApplication serverCxt
   = finalMiddleware
   $ normalizeAcceptMiddleware
   $ tracingConnections statsEnv
   $ serve api (hoistServer api interpretServer server)
   where
+    ServerLoopContext
+      { loopConfig = cfg
+      , loopChannels = ServerChannels { serverActionChan = action, galleryTaskChan = gallery }
+      , loopState = ServerState
+        { serverSettings = settings
+        , serverIPMap = ipMap
+        , serverKSMap = ksVar
+        , serverStatsEnv = statsEnv
+        }
+      , loopFlags = ServerFlags { disableRateLimit = disableRL, trustProxyHeaders = trustProxy }
+      , loopCacheRunner = cacheRunner
+      } = serverCxt
+
     applyRealIp :: Middleware
     applyRealIp
-      = if trustProxyHeaders
+      = if trustProxy
         then realIpHeader "X-Forwarded-For"
         else id
 
     applyRateLimit :: Middleware
     applyRateLimit
-      = if disableRateLimit
+      = if disableRL
         then id
         else rateLimitMiddleware ipMap
 
@@ -615,10 +656,10 @@ makeApplication
       . mapError @ClientError (const err500)
       . mapError @SomeException (const err500)
       . runSettingM settings
-      . runReader config
+      . runReader cfg
       . runReader action
       . runReader statsEnv
-      . runReader galleryHandler
+      . runReader gallery
       . runLogAction @IO @Message richMessageAction
       . runEHentaiAPI
       . runCacheWith cacheRunner
@@ -626,6 +667,96 @@ makeApplication
       . runLocate
       . runGenesis
       . runRPC
+
+-- | Core server loop implementing the main request-response cycle.
+--
+-- This function encapsulates the common logic for running the TLS server,
+-- handling server actions (reload, cert refresh, shutdown), and coordinating
+-- graceful shutdown. The loop is parameterized by a recursion continuation
+-- to support different cache backends that may need different state (e.g.,
+-- SQLite connection handle).
+--
+-- The server loop:
+-- 1. Creates a WAI application with all configured middleware
+-- 2. Notifies the RPC server that we're ready to serve
+-- 3. Races between:
+--    - Receiving control commands on the action channel
+--    - Running the TLS server to handle HTTP requests
+-- 4. Handles control commands:
+--    - 'GracefulShutdown': Stops listening and exits cleanly
+--    - 'Reload': Exits to allow systemd/supervisor to restart
+--    - 'Cert': Refreshes TLS certificates and recurses with new certs
+--
+--
+serverLoop :: ServerLoopContext
+           -- ^ Server runtime context (config, channels, state, flags, cache)
+           -> ( CertificateChain, PrivKey )
+           -- ^ Current TLS certificates
+           -> IO ( CertificateChain, PrivKey )
+serverLoop ctx certs = do
+  let ServerLoopContext { loopConfig = cfg
+                        , loopChannels = ServerChannels { serverActionChan = chan }
+                        , loopState = ServerState { serverSettings = settings }
+                        } = ctx
+
+  let app = makeApplication ctx
+
+  st <- readTVarIO settings
+  result <- withAsync (notifyStart cfg) $ \_ -> race (atomically $ readTChan chan)
+    $ runTLS
+      (defaultTlsSettings
+       { tlsCredentials = Just (Credentials [ certs ]), onInsecure = AllowInsecure })
+      (setPort (clientPort st) defaultSettings)
+    $ logStdoutDev
+    $ logStdout app
+
+  case result of
+    Left GracefulShutdown -> gracefulShutdown cfg
+    Left Reload -> exitSuccess
+    Left Cert -> refreshCerts cfg
+    Right _ -> error "Server terminated unexpectedly"
+
+-- | Perform graceful shutdown by notifying RPC server and exiting.
+--
+-- This function repeatedly calls 'stopListening' until the RPC server
+-- acknowledges the shutdown request, then exits the process cleanly.
+gracefulShutdown :: ClientConfig -> IO a
+gracefulShutdown cfg = go
+  where
+    go = runEHentaiAPIIO cfg stopListening >>= \case
+      Right _ -> exitSuccess
+      Left _  -> go
+
+-- | Refresh TLS certificates with exponential backoff retry logic.
+--
+-- Attempts to fetch new certificates from the Genesis RPC endpoint.
+-- On failure, retries up to 3 times with exponential backoff (2^n seconds).
+-- After 3 failures, triggers graceful shutdown.
+--
+-- This is called when the server receives a 'Cert' action, typically
+-- triggered by the periodic certificate refresh timer or manual server command.
+refreshCerts :: ClientConfig -> IO ( CertificateChain, PrivKey )
+refreshCerts cfg = retry 0
+  where
+    retry :: Int -> IO ( CertificateChain, PrivKey )
+    retry retries = runGenesisIO cfg fetchCertificate >>= \case
+      Right (Right newCerts) -> return newCerts
+      e -> do
+        putStrLn $ "Failed to refresh certs: " <> show e
+        if retries >= 3
+          then do
+            putStrLn "Giving up after 3 retries"
+            gracefulShutdown cfg
+          else do
+            let delaySeconds = 2 ^ retries :: Int
+            putStrLn
+              $ "Retrying in "
+              <> show delaySeconds
+              <> " seconds (attempt "
+              <> show (retries + 1)
+              <> "/3)"
+            threadDelay (1000000 * delaySeconds)
+            retry (retries + 1)
 
 startServer :: ClientConfig
             -> HathSettings
@@ -657,26 +788,28 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
       Left e  -> hPutStrLn stderr $ "Gallery downloader error: " <> show e
       Right _ -> return ()
   print =<< runRPCIO config (fetchBlacklist 259200)
+  let ctx runner
+        = ServerLoopContext
+        { loopConfig      = config
+        , loopChannels    = ServerChannels
+            { serverActionChan = chan, galleryTaskChan = galleryHandler }
+        , loopState       = ServerState
+            { serverSettings = ssVar
+            , serverIPMap    = ipMap
+            , serverKSMap    = ksVar
+            , serverStatsEnv = statsEnv
+            }
+        , loopFlags       = ServerFlags
+            { disableRateLimit = disableRateLimit, trustProxyHeaders = trustProxyHeaders }
+        , loopCacheRunner = runner
+        }
   case cacheBackend config of
     CacheBackendSQLite     -> do
       withConnection (Text.unpack $ cachePath config) $ \conn -> do
         initializeDB conn
         let cacheRunner = CacheRunner { runCacheWith = runCache conn }
         stopTictok <- tictok config ipMap ksVar
-        finally
-          (loopSQLite
-             config
-             ssVar
-             certs
-             conn
-             galleryHandler
-             cacheRunner
-             ipMap
-             ksVar
-             disableRateLimit
-             trustProxyHeaders
-             statsEnv)
-          stopTictok
+        finally (serverLoopMain (ctx cacheRunner) certs) stopTictok
     CacheBackendR2         -> do
       case r2Config config of
         Nothing    -> error "cacheBackend=r2 but r2Config is missing"
@@ -687,38 +820,14 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
             Right r2Conn -> do
               let cacheRunner = CacheRunner { runCacheWith = runCacheR2 r2Conn }
               stopTictok <- tictok config ipMap ksVar
-              finally
-                (loopStateless
-                   config
-                   ssVar
-                   certs
-                   galleryHandler
-                   cacheRunner
-                   ipMap
-                   ksVar
-                   disableRateLimit
-                   trustProxyHeaders
-                   statsEnv)
-                stopTictok
+              finally (serverLoopMain (ctx cacheRunner) certs) stopTictok
     CacheBackendFilesystem -> do
       let root = Text.unpack $ cachePath config
       -- Ensure cache root exists
       createDirectoryIfMissing True root
       let cacheRunner = CacheRunner { runCacheWith = runCacheFilesystem root }
       stopTictok <- tictok config ipMap ksVar
-      finally
-        (loopStateless
-           config
-           ssVar
-           certs
-           galleryHandler
-           cacheRunner
-           ipMap
-           ksVar
-           disableRateLimit
-           trustProxyHeaders
-           statsEnv)
-        stopTictok
+      finally (serverLoopMain (ctx cacheRunner) certs) stopTictok
   where
     startsDownloader = do
       metadata <- nextGalleryTask
@@ -753,108 +862,10 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
             embed $ BS.writeFile filePath bytes
             pure True
 
-    gracefulShutdown :: IO a
-    gracefulShutdown
-      = let
-          phi = flip unless phi . fromRight False =<< runEHentaiAPIIO config stopListening
-        in 
-          phi >> exitSuccess
-
-    refreshCerts = phi 0
-      where
-        phi (retries :: Int) = runGenesisIO config fetchCertificate >>= \case
-          Right (Right newCerts) -> return newCerts
-          e -> do
-            putStrLn $ "Failed to refresh certs: " <> show e
-            if retries > 3
-              then do
-                putStrLn "Giving up"
-                gracefulShutdown
-              else do
-                putStrLn $ "Retrying in " <> show (2 ^ retries :: Int) <> " seconds"
-                threadDelay (1000000 * 2 ^ retries)
-                phi (retries + 1)
-
-    -- SQLite loop - needs Connection for tictok
-    loopSQLite cfg set c conn gallery cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
-      let app
-            = makeApplication
-              cfg
-              set
-              chan
-              gallery
-              ipMap
-              ksVar
-              disableRL
-              trustProxy
-              cacheRunner
-              statsEnv
-      st <- readTVarIO set
-      result <- withAsync (notifyStart cfg) $ \_ -> race (atomically $ readTChan chan)
-        $ runTLS
-          (defaultTlsSettings
-           { tlsCredentials = Just (Credentials [ c ]), onInsecure = AllowInsecure })
-          (setPort (clientPort st) defaultSettings)
-        $ logStdoutDev
-        $ logStdout app
-      case result of
-        Left GracefulShutdown -> gracefulShutdown
-        Left Reload -> exitSuccess
-        Left Cert -> do
-          newCerts <- refreshCerts
-          loopSQLite
-            cfg
-            set
-            newCerts
-            conn
-            gallery
-            cacheRunner
-            ipMap
-            ksVar
-            disableRL
-            trustProxy
-            statsEnv
-        Right _ -> error "Server terminated unexpectedly"
-
-    -- Stateless loop (R2, Filesystem) - no Connection needed
-    loopStateless cfg set c gallery cacheRunner ipMap ksVar disableRL trustProxy statsEnv = do
-      let app
-            = makeApplication
-              cfg
-              set
-              chan
-              gallery
-              ipMap
-              ksVar
-              disableRL
-              trustProxy
-              cacheRunner
-              statsEnv
-      st <- readTVarIO set
-      result <- withAsync (notifyStart cfg) $ \_ -> race (atomically $ readTChan chan)
-        $ runTLS
-          (defaultTlsSettings
-           { tlsCredentials = Just (Credentials [ c ]), onInsecure = AllowInsecure })
-          (setPort (clientPort st) defaultSettings)
-        $ logStdoutDev
-        $ logStdout app
-      case result of
-        Left GracefulShutdown -> gracefulShutdown
-        Left Reload -> exitSuccess
-        Left Cert -> do
-          newCerts <- refreshCerts
-          loopStateless
-            cfg
-            set
-            newCerts
-            gallery
-            cacheRunner
-            ipMap
-            ksVar
-            disableRL
-            trustProxy
-            statsEnv
-        Right _ -> error "Server terminated unexpectedly"
+    serverLoopMain :: ServerLoopContext -> ( CertificateChain, PrivKey ) -> IO ()
+    serverLoopMain ctx cert = do
+      newCert <- serverLoop ctx cert
+      serverLoopMain ctx newCert
 
 normalizeAcceptMiddleware :: Middleware
 normalizeAcceptMiddleware app req = app req { requestHeaders = normalizedHeaders }
