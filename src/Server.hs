@@ -600,10 +600,12 @@ notifyStart config = psi
 -- | Abstract cache runner - wraps the cache effect interpreter
 -- This allows us to switch between SQLite and R2 backends at runtime
 newtype CacheRunner
-  = CacheRunner { runCacheWith :: forall r a. Members '[ Embed IO, Log Message, Error RPCError ] r
-                               => Sem (KVStore FileURI FileRecord : r) a
-                               -> Sem r a
-                }
+  = CacheRunner
+  { runCacheWith
+      :: forall r a. Members '[ Embed IO, Log Message, Reader ClientConfig, Error RPCError ] r
+      => Sem (KVStore FileURI FileRecord : r) a
+      -> Sem r a
+  }
 
 -- Create the WAI application with rate limiting
 makeApplication :: ServerLoopContext -> Application
