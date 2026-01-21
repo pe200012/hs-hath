@@ -5,7 +5,7 @@
 
 module Storage.Filesystem ( runCacheFilesystem ) where
 
-import           Colog              ( Message, Severity(Error, Warning) )
+import           Colog              ( Message, Severity(Error) )
 import           Colog.Polysemy     ( Log )
 
 import           Control.Exception  ( try )
@@ -19,15 +19,16 @@ import           Polysemy
 import           Polysemy.Error     ( Error, throw )
 import           Polysemy.KVStore   ( KVStore(..) )
 import           Polysemy.Operators
+import           Polysemy.Reader    ( Reader, asks )
 
-import           Relude             hiding ( Reader, ask )
+import           Relude             hiding ( Reader, ask, asks )
 
 import           Storage.Database   ( FileRecord(..) )
 
 import           System.Directory   ( createDirectoryIfMissing, doesFileExist, removeFile )
 import           System.FilePath    ( (</>), takeDirectory, takeFileName )
 
-import           Types              ( FileURI(..), RPCError(..) )
+import           Types              ( ClientConfig, FileURI(..), RPCError(..) )
 import qualified Types              as Ty
 
 import           Utils              ( log )
@@ -38,17 +39,19 @@ fileURIToPath :: FilePath -> FileURI -> FilePath
 fileURIToPath root uri = root </> s4 </> fileId
   where
     -- Sanitize to prevent directory traversal
-    fileId = takeFileName (toString $ show uri)
+    fileId = takeFileName (show uri)
 
     s4     = T.unpack $ T.take 4 (T.pack fileId)
 
 -- | Run the cache with Filesystem backend
-runCacheFilesystem :: Members '[ Embed IO, Log Message, Error RPCError ] r
+runCacheFilesystem :: Members '[ Embed IO, Log Message, Reader ClientConfig, Error RPCError ] r
                    => FilePath -- ^ Cache root directory
                    -> KVStore FileURI FileRecord : r @> a
                    -> r @> a
 runCacheFilesystem root m = do
-  memCache <- embed $ newAtomicLRU (Just 200)
+  lruSize <- asks Ty.lruCacheSize
+  let entries = Just (fromIntegral (lruSize `div` 300000)) -- Approximate number of entries based on avg file size ~300 KiB
+  memCache <- embed $ newAtomicLRU entries
   interpret (phi memCache) m
   where
     phi :: forall r r1 x. Members '[ Embed IO, Log Message, Error RPCError ] r1

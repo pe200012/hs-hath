@@ -11,13 +11,14 @@ import           Types               ( ClientConfig(..) )
 -- | Command line options
 data Options
   = Options
-  { optConfigPath         :: !FilePath      -- ^ Path to configuration file
-  , optDownloadDir        :: !(Maybe Text)  -- ^ Override download directory
-  , optCachePath          :: !(Maybe Text)  -- ^ Override cache path
-  , optSkipStartupVerify  :: !Bool         -- ^ Skip startup cache verification
-  , optDisableRateLimit   :: !Bool          -- ^ Disable rate limiting (for NAT/proxy scenarios)
-  , optTrustProxyHeaders  :: !Bool         -- ^ Trust X-Forwarded-For header for real IP
-  , optShowVersion        :: !Bool          -- ^ Show version information
+  { optConfigPath        :: !FilePath      -- ^ Path to configuration file
+  , optDownloadDir       :: !(Maybe Text)  -- ^ Override download directory
+  , optCachePath         :: !(Maybe Text)  -- ^ Override cache path
+  , optSkipStartupVerify :: !Bool         -- ^ Skip startup cache verification
+  , optDisableRateLimit  :: !Bool          -- ^ Disable rate limiting (for NAT/proxy scenarios)
+  , optTrustProxyHeaders :: !Bool         -- ^ Trust X-Forwarded-For header for real IP
+  , optValidateConfig    :: !Bool          -- ^ Validate configuration and exit
+  , optShowVersion       :: !Bool          -- ^ Show version information
   }
   deriving ( Show )
 
@@ -57,6 +58,7 @@ optionsParser
   <*> switch
     (long "trust-proxy-headers"
      <> help "Trust X-Forwarded-For header for real client IP (use when behind trusted proxy)")
+  <*> switch (long "validate-config" <> help "Validate configuration and exit")
   <*> switch (long "version" <> short 'v' <> help "Show version information and exit")
 
 -- | Apply CLI options to client configuration
