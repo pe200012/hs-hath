@@ -4,7 +4,7 @@ let ClientProxy =
       , auth : Optional { _1 : Text, _2 : Text }
       }
 
-let CacheBackend = < CacheBackendSQLite | CacheBackendR2 >
+let CacheBackend = < CacheBackendSQLite | CacheBackendR2 | CacheBackendFilesystem >
 
 let R2Config = { r2Endpoint : Text, r2Bucket : Text }
 

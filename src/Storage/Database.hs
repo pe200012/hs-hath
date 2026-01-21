@@ -6,7 +6,6 @@
 
 module Storage.Database ( FileRecord(..), initializeDB, runCache, runCachePure ) where
 
-import qualified Data.ByteString         as BS
 import           Data.String.Interpolate ( i )
 
 import           Database.SQLite.Simple

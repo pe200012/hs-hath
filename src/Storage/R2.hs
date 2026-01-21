@@ -83,17 +83,6 @@ fileURIToKey uri = s4 <> "/" <> fileId
 
     s4     = T.take 4 fileId
 
--- | Reconstruct FileRecord from FileURI and bytes
--- Metadata fields are set to defaults since R2 only stores bytes
-reconstructRecord :: FileURI -> ByteString -> FileRecord
-reconstructRecord uri bytes
-  = FileRecord { fileRecordLRUCounter = 0
-               , fileRecordS4         = T.take 4 (show uri)
-               , fileRecordFileId     = show uri
-               , fileRecordFileName   = Nothing
-               , fileRecordBytes      = bytes
-               }
-
 -- | Run the cache with Cloudflare R2
 -- Read operations silently degrade to Nothing on failure (with warning log)
 -- Write/delete operations propagate errors
@@ -129,7 +118,7 @@ runCacheR2 conn m = do
               log Warning ("R2 lookup failed for " <> key <> ": " <> T.pack (show minioErr))
               pure Nothing
             Right (Right bytes) -> do
-              let recd = reconstructRecord uri bytes
+              let recd = Ty.reconstructRecord uri bytes
               embed $ LRU.insert uri recd cache
               pure $ Just recd
 
@@ -145,10 +134,10 @@ runCacheR2 conn m = do
       case result of
         Left err -> do
           log Error ("R2 write failed for " <> key <> ": " <> T.pack (show err))
-          throw $ Ty.R2WriteError (T.pack $ show err)
+          throw $ Ty.StorageError (T.pack $ show err)
         Right (Left minioErr) -> do
           log Error ("R2 write failed for " <> key <> ": " <> T.pack (show minioErr))
-          throw $ Ty.R2WriteError (T.pack $ show minioErr)
+          throw $ Ty.StorageError (T.pack $ show minioErr)
         Right (Right _) -> embed $ LRU.insert uri record cache
 
     phi cache (UpdateKV uri@(fileURIToKey -> key) Nothing) = do
@@ -159,8 +148,8 @@ runCacheR2 conn m = do
       case result of
         Left err -> do
           log Error ("R2 delete failed for " <> key <> ": " <> T.pack (show err))
-          throw $ Ty.R2WriteError (T.pack $ show err)
+          throw $ Ty.StorageError (T.pack $ show err)
         Right (Left minioErr) -> do
           log Error ("R2 delete failed for " <> key <> ": " <> T.pack (show minioErr))
-          throw $ Ty.R2WriteError (T.pack $ show minioErr)
+          throw $ Ty.StorageError (T.pack $ show minioErr)
         Right (Right _) -> embed $ void $ LRU.delete uri cache
