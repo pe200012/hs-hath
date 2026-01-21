@@ -102,6 +102,7 @@ data ClientConfig
   , cachePath    :: {-# UNPACK #-} !Text
   , cacheBackend :: !CacheBackend
   , r2Config     :: !(Maybe R2Config)
+  , lruCacheSize :: {-# UNPACK #-} !Int64
   }
   deriving ( Show, Generic )
 
@@ -120,6 +121,7 @@ defaultClientConfig
   , cachePath    = ""
   , cacheBackend = CacheBackendSQLite
   , r2Config     = Nothing
+  , lruCacheSize = 100 * 1024 * 1024 -- 100 MiB, roughly 100 MiB / 300 KiB per file = 341 entries
   }
 
 readClientConfig :: Text -> IO ClientConfig

@@ -37,12 +37,13 @@ import           Polysemy
 import           Polysemy.Error          ( Error, throw )
 import           Polysemy.KVStore        ( KVStore(..) )
 import           Polysemy.Operators
+import           Polysemy.Reader         ( Reader, asks )
 
-import           Relude                  hiding ( Reader, ask )
+import           Relude                  hiding ( Reader, ask, asks )
 
 import           Storage.Database        ( FileRecord(..) )
 
-import           Types                   ( FileURI(..), RPCError(..) )
+import           Types                   ( ClientConfig, FileURI(..), RPCError(..) )
 import qualified Types                   as Ty
 
 import           Utils                   ( log )
@@ -86,12 +87,14 @@ fileURIToKey uri = s4 <> "/" <> fileId
 -- | Run the cache with Cloudflare R2
 -- Read operations silently degrade to Nothing on failure (with warning log)
 -- Write/delete operations propagate errors
-runCacheR2 :: Members '[ Embed IO, Log Message, Error RPCError ] r
+runCacheR2 :: Members '[ Embed IO, Log Message, Reader ClientConfig, Error RPCError ] r
            => R2Connection
            -> KVStore FileURI FileRecord : r @> a
            -> r @> a
 runCacheR2 conn m = do
-  memCache <- embed $ newAtomicLRU (Just 200)
+  lruSize <- asks Ty.lruCacheSize
+  let entries = Just (fromIntegral (lruSize `div` 300000)) -- Approximate number of entries based on avg file size ~300 KiB
+  memCache <- embed $ newAtomicLRU entries
   interpret (phi memCache) m
   where
     bucket = r2ConnBucket conn
