@@ -48,6 +48,8 @@ import qualified Data.Text                as T
 import           Data.Time.Clock.System   ( SystemTime(systemSeconds), getSystemTime )
 import           Data.X509                ( CertificateChain, PrivKey )
 
+import qualified Mason.Builder            as BD
+
 import           Network.HTTP.Client      ( HttpException
                                           , Request(responseTimeout, host, requestHeaders)
                                           , Response(responseBody)
@@ -301,7 +303,19 @@ runEHentaiAPI m = do
           clientId' = clientId cfg
           key'      = key cfg
         in 
-          hash [i|hentai@home-#{act'}-#{add'}-#{clientId'}-#{time}-#{key'}|]
+          -- [i|hentai@home-#{act'}-#{add'}-#{clientId'}-#{time}-#{key'}|]
+          hash
+          $ BD.toStrictByteString
+            ("hentai@home-"
+             <> BD.textUtf8 act'
+             <> "-"
+             <> BD.textUtf8 add'
+             <> "-"
+             <> BD.textUtf8 clientId'
+             <> "-"
+             <> BD.int64Dec time
+             <> "-"
+             <> BD.textUtf8 key')
 
 {-# INLINE checkServerStatus #-}
 -- checkServerStatus :: Member EHentaiAPI r => Sem r Bool

@@ -34,6 +34,7 @@ library
       HathNetwork.Genesis
       HathNetwork.RPC
       Interface.API
+      Middleware
       Server
       SettingM
       Stats
@@ -88,6 +89,7 @@ library
     , http-media ==0.8.*
     , http-types ==0.12.*
     , lrucache ==1.2.*
+    , mason >=0.2.6 && <0.3
     , memory ==0.18.*
     , minio-hs ==1.7.*
     , monad-control ==1.0.*
@@ -175,6 +177,7 @@ executable hs-hath
     , http-media ==0.8.*
     , http-types ==0.12.*
     , lrucache ==1.2.*
+    , mason >=0.2.6 && <0.3
     , memory ==0.18.*
     , minio-hs ==1.7.*
     , monad-control ==1.0.*
@@ -262,6 +265,7 @@ executable migrate-to-r2
     , http-media ==0.8.*
     , http-types ==0.12.*
     , lrucache ==1.2.*
+    , mason >=0.2.6 && <0.3
     , memory ==0.18.*
     , minio-hs ==1.7.*
     , monad-control ==1.0.*
@@ -354,6 +358,7 @@ test-suite hs-hath-test
     , http-media ==0.8.*
     , http-types ==0.12.*
     , lrucache ==1.2.*
+    , mason >=0.2.6 && <0.3
     , memory ==0.18.*
     , minio-hs ==1.7.*
     , monad-control ==1.0.*

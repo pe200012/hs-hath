@@ -53,6 +53,13 @@ packages:
       size: 1807
   original:
     hackage: digest-0.0.2.1
+- completed:
+    hackage: mason-0.2.6@sha256:87e6233cf21222c2bb3392e453ad9ee4257a850c75bfb2537461f60574ce87e9,1274
+    pantry-tree:
+      sha256: 1aa88dd022085f58cb5f5f32ea0f576522e507d3a5dbe962316b8a01487e88b2
+      size: 575
+  original:
+    hackage: mason-0.2.6
 snapshots:
 - completed:
     sha256: c320c36b8a392602c9076bdd0c656e12dcab30f294105a50c3f8ef963c4c3a0d
