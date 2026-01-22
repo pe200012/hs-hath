@@ -26,6 +26,8 @@ import           Data.Time.Clock                               ( UTCTime
                                                                , getCurrentTime
                                                                )
 
+import           GHC.Clock                                     ( getMonotonicTime )
+
 import           Polysemy
 import           Polysemy.Operators
 import           Polysemy.Reader                               ( Reader, ask )
@@ -42,7 +44,6 @@ import           System.Metrics.Prometheus.Metric.Counter      ( Counter )
 import qualified System.Metrics.Prometheus.Metric.Counter      as Counter
 import           System.Metrics.Prometheus.Metric.Gauge        ( Gauge )
 import qualified System.Metrics.Prometheus.Metric.Gauge        as Gauge
-import GHC.Clock (getMonotonicTime)
 
 data StatsEnv
   = StatsEnv
