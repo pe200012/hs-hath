@@ -37,6 +37,10 @@ main = do
   baseConfig <- readClientConfig (toText $ optConfigPath options)
   let config = applyOptionsToConfig options baseConfig
 
+  when (optValidateConfig options) $ do
+    putStrLn "Configuration is valid."
+    exitSuccess
+
   -- Initialize database and run startup verification unless skipped
   withConnection (T.unpack $ cachePath config) $ \conn -> do
     initializeDB conn
