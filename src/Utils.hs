@@ -46,15 +46,15 @@ hasParam = Map.member
 
 bufferSending :: Int -> StepT m ByteString
 bufferSending 0 = Source.Stop
-bufferSending n = Source.Yield (BS.take m preallocated) (bufferSending (n - m))
+bufferSending n
+  | n >= tcpBufferSize = Source.Yield preallocated (bufferSending (n - tcpBufferSize))
+  | otherwise = Source.Yield (BS.take n preallocated) Source.Stop
   where
-    m = min n tcpBufferSize
-
     tcpBufferSize :: Int
     tcpBufferSize = 1460
 
     preallocated :: ByteString
-    preallocated = BS.pack (replicate tcpBufferSize 54)
+    preallocated = BS.replicate tcpBufferSize 54
 
 -- msg :: sev -> Text -> Msg sev
 -- msg sev m = withFrozenCallStack (Msg { msgSeverity = sev, msgStack = callStack, msgText = m })
