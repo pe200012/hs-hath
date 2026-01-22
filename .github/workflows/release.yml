@@ -6,7 +6,7 @@ on:
       - 'v*.*.*'
 
 jobs:
-  build-and-release:
+  build:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -39,13 +39,55 @@ jobs:
 
       - name: Package binaries
         run: |
+          version="${GITHUB_REF#refs/tags/}"
           cd bin
-          tar -czf ../hs-hath-${{ matrix.os }}.tar.gz *
+          tar -czf ../hs-hath-${version}-${{ matrix.os }}.tar.gz *
 
-      - name: Upload Release Assets
-        uses: softprops/action-gh-release@v1
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
         with:
-          files: hs-hath-${{ matrix.os }}.tar.gz
-          generate_release_notes: true
+          name: hs-hath-${{ matrix.os }}
+          path: 'hs-hath-*.tar.gz'
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List assets
+        id: asset_names
+        run: |
+          cd artifacts
+          assets=$(ls hs-hath-*.tar.gz | tr '\n' ' ')
+          echo "LIST=${assets}" >> $GITHUB_OUTPUT
+
+      - name: Check if pre-release
+        id: is_pre_release
+        run: |
+          version="${GITHUB_REF#refs/tags/}"
+          if [[ "${version}" =~ -.*$ ]]; then
+            echo "IS_PRERELEASE=true" >> $GITHUB_OUTPUT
+          else
+            echo "IS_PRERELEASE=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: docker://antonyurchenko/git-release:v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRAFT_RELEASE: "false"
+          PRE_RELEASE: ${{ steps.is_pre_release.outputs.IS_PRERELEASE }}
+          CHANGELOG_FILE: "CHANGELOG.md"
+          ALLOW_EMPTY_CHANGELOG: "false"
+          ALLOW_TAG_PREFIX: "true"
+        with:
+          args: |
+            artifacts/${{ steps.asset_names.outputs.LIST }}
