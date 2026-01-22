@@ -13,169 +13,153 @@ module Server
   , GalleryTask(..)
   ) where
 
-import           Colog                                  ( Message
-                                                        , Severity(Info, Warning)
-                                                        , richMessageAction
-                                                        )
-import           Colog.Polysemy                         ( Log, runLogAction )
+import           Colog                                ( Message
+                                                      , Severity(Info, Warning)
+                                                      , richMessageAction
+                                                      )
+import           Colog.Polysemy                       ( Log, runLogAction )
 
-import           Control.Concurrent                     ( forkIO, threadDelay )
-import           Control.Concurrent.Suspend             ( mDelay )
-import           Control.Concurrent.Timer               ( repeatedTimer, stopTimer )
-import           Control.Exception                      ( finally, try )
+import           Control.Concurrent                   ( forkIO, threadDelay )
+import           Control.Concurrent.Suspend           ( mDelay )
+import           Control.Concurrent.Timer             ( repeatedTimer, stopTimer )
+import           Control.Exception                    ( finally, try )
 
-import qualified Crypto.Hash                            as Crypto
+import qualified Data.ByteString                      as BS
+import qualified Data.ByteString.Char8                as BSC
+import qualified Data.ByteString.Lazy                 as LBS
+import qualified Data.ByteString.Lazy.Char8           as LBS8
+import qualified Data.HashMap.Strict                  as HashMap
+import qualified Data.Map.Strict                      as Map
+import           Data.String.Interpolate              ( i )
+import qualified Data.Text                            as Text
+import           Data.Time.Clock                      ( addUTCTime, getCurrentTime )
+import           Data.Time.Clock.POSIX                ( POSIXTime, getPOSIXTime )
+import           Data.Time.Clock.System               ( SystemTime(systemSeconds), getSystemTime )
+import           Data.X509                            ( CertificateChain, PrivKey )
 
-import qualified Data.ByteString                        as BS
-import qualified Data.ByteString.Char8                  as BSC
-import qualified Data.ByteString.Lazy                   as LBS
-import qualified Data.HashMap.Strict                    as HashMap
-import qualified Data.Map.Strict                        as Map
-import           Data.String.Interpolate                ( i )
-import qualified Data.Text                              as Text
-import           Data.Time.Clock                        ( NominalDiffTime
-                                                        , UTCTime
-                                                        , addUTCTime
-                                                        , getCurrentTime
-                                                        )
-import           Data.Time.Clock.POSIX                  ( POSIXTime
-                                                        , getPOSIXTime
-                                                        , utcTimeToPOSIXSeconds
-                                                        )
-import           Data.Time.Clock.System                 ( SystemTime(systemSeconds)
-                                                        , getSystemTime
-                                                        )
-import           Data.X509                              ( CertificateChain, PrivKey )
-
-import           Database.SQLite.Simple                 ( withConnection )
+import           Database.SQLite.Simple               ( withConnection )
 
 import           HathNetwork.Genesis
-import           HathNetwork.RPC                        ( RPC
-                                                        , notifyGalleryCompletion
-                                                        , runRPC
-                                                        , runRPCIO
-                                                        , stillAlive
-                                                        )
+import           HathNetwork.RPC                      ( RPC
+                                                      , notifyGalleryCompletion
+                                                      , runRPC
+                                                      , runRPCIO
+                                                      , stillAlive
+                                                      )
 
-import           Interface.API                          ( API
-                                                        , EHentaiAPI
-                                                        , ServerCommand(..)
-                                                        , WithDynamicContentType(WithDynamicContentType)
-                                                        , api
-                                                        , downloadGalleryFile
-                                                        , fetchBlacklist
-                                                        , nextGalleryTask
-                                                        , runEHentaiAPI
-                                                        , runEHentaiAPIIO
-                                                        , startListening
-                                                        , stopListening
-                                                        )
+import           Interface.API                        ( API
+                                                      , EHentaiAPI
+                                                      , ServerCommand(..)
+                                                      , WithDynamicContentType(WithDynamicContentType)
+                                                      , api
+                                                      , downloadGalleryFile
+                                                      , fetchBlacklist
+                                                      , nextGalleryTask
+                                                      , runEHentaiAPI
+                                                      , runEHentaiAPIIO
+                                                      , startListening
+                                                      , stopListening
+                                                      )
+
+import qualified Mason.Builder                        as BD
 
 import           Middleware
 
-import           Network.HTTP.Client                    ( brReadSome
-                                                        , newManager
-                                                        , parseRequest
-                                                        , withResponse
-                                                        )
-import           Network.HTTP.Client.TLS                ( tlsManagerSettings )
-import           Network.HTTP.Simple                    ( getResponseBody )
-import           Network.HTTP.Types                     ( hAccept, mkStatus, status200, status404 )
-import           Network.Socket                         ( HostAddress, HostAddress6, SockAddr(..) )
-import           Network.TLS                            ( Credentials(Credentials) )
-import           Network.Wai                            ( Middleware
-                                                        , Request(requestMethod)
-                                                        , Response
-                                                        , rawPathInfo
-                                                        , remoteHost
-                                                        , requestHeaders
-                                                        , responseLBS
-                                                        )
-import           Network.Wai.Handler.Warp               ( defaultSettings, setPort )
-import           Network.Wai.Handler.WarpTLS            ( OnInsecure(AllowInsecure)
-                                                        , TLSSettings(..)
-                                                        , defaultTlsSettings
-                                                        , runTLS
-                                                        )
-import           Network.Wai.Middleware.RealIp          ( realIpHeader )
-import           Network.Wai.Middleware.RequestLogger   ( logStdout, logStdoutDev )
+import           Network.HTTP.Client                  ( brReadSome
+                                                      , newManager
+                                                      , parseRequest
+                                                      , withResponse
+                                                      )
+import           Network.HTTP.Client.TLS              ( tlsManagerSettings )
+import           Network.HTTP.Simple                  ( getResponseBody )
+import           Network.HTTP.Types                   ( status200, status404 )
+import           Network.TLS                          ( Credentials(Credentials) )
+import           Network.Wai                          ( Middleware
+                                                      , Request(requestMethod)
+                                                      , responseLBS
+                                                      )
+import           Network.Wai.Handler.Warp             ( defaultSettings, setPort )
+import           Network.Wai.Handler.WarpTLS          ( OnInsecure(AllowInsecure)
+                                                      , TLSSettings(..)
+                                                      , defaultTlsSettings
+                                                      , runTLS
+                                                      )
+import           Network.Wai.Middleware.RealIp        ( realIpHeader )
+import           Network.Wai.Middleware.RequestLogger ( logStdout, logStdoutDev )
 
-import           Polysemy                               ( Embed
-                                                        , Members
-                                                        , Sem
-                                                        , embed
-                                                        , embedToFinal
-                                                        , runFinal
-                                                        , runM
-                                                        )
-import           Polysemy.Async                         ( Async, async, asyncToIOFinal )
-import           Polysemy.Error                         ( Error, errorToIOFinal, mapError, throw )
-import           Polysemy.KVStore                       ( KVStore )
-import           Polysemy.Reader                        ( Reader, ask, runReader )
+import           Polysemy                             ( Embed
+                                                      , Members
+                                                      , Sem
+                                                      , embed
+                                                      , embedToFinal
+                                                      , runFinal
+                                                      )
+import           Polysemy.Async                       ( Async, asyncToIOFinal )
+import           Polysemy.Error                       ( Error, errorToIOFinal, mapError, throw )
+import           Polysemy.KVStore                     ( KVStore )
+import           Polysemy.Reader                      ( Reader, ask, runReader )
 
-import           Relude                                 hiding ( Reader, ask, get, runReader )
+import           Relude                               hiding ( Reader, ask, get, runReader )
 
 import           Servant
-import           Servant.Client                         ( ClientError )
-import qualified Servant.Types.SourceT                  as Source
+import           Servant.Client                       ( ClientError )
+import qualified Servant.Types.SourceT                as Source
 
-import           SettingM                               ( SettingM(..)
-                                                        , getSettings
-                                                        , runSettingM
-                                                        , updateSettings
-                                                        )
+import           SettingM                             ( SettingM(..)
+                                                      , getSettings
+                                                      , runSettingM
+                                                      , updateSettings
+                                                      )
 
-import           Stats                                  ( Stats
-                                                        , StatsEnv(..)
-                                                        , addDlBytes
-                                                        , addDownload
-                                                        , addUpload
-                                                        , incDlFile
-                                                        , incDlTask
-                                                        , incFetched
-                                                        , incServed
-                                                        , newStatsEnv
-                                                        , readPrometheus
-                                                        , runStats
-                                                        )
+import           Stats                                ( Stats
+                                                      , StatsEnv(..)
+                                                      , addDlBytes
+                                                      , addDownload
+                                                      , addUpload
+                                                      , incDlFile
+                                                      , incDlTask
+                                                      , incServed
+                                                      , newStatsEnv
+                                                      , readPrometheus
+                                                      , runStats
+                                                      )
 
-import           Storage.Database                       ( FileRecord, initializeDB, runCache )
-import           Storage.Filesystem                     ( runCacheFilesystem )
+import           Storage.Database                     ( FileRecord, initializeDB, runCache )
+import           Storage.Filesystem                   ( runCacheFilesystem )
 import           Storage.Locate
-import           Storage.R2                             ( mkR2Connection, runCacheR2 )
+import           Storage.R2                           ( mkR2Connection, runCacheR2 )
 
-import           System.Directory                       ( createDirectoryIfMissing, doesFileExist )
-import           System.FilePath                        ( takeDirectory )
-import           System.IO                              ( hPutStrLn )
-import qualified System.Metrics.Prometheus.Metric.Gauge as Gauge
+import           System.Directory                     ( createDirectoryIfMissing, doesFileExist )
+import           System.FilePath                      ( takeDirectory )
+import           System.IO                            ( hPutStrLn )
 
-import           Types                                  ( CacheBackend(..)
-                                                        , ClientConfig
-                                                        , ClientConfig(..)
-                                                        , FileURI(fileExt)
-                                                        , GalleryFile(..)
-                                                        , GalleryMetadata(..)
-                                                        , HathSettings(..)
-                                                        , RPCError
-                                                        , hentaiHeader
-                                                        , parseFileURI
-                                                        )
+import           Types                                ( CacheBackend(..)
+                                                      , ClientConfig
+                                                      , ClientConfig(..)
+                                                      , FileURI(fileExt)
+                                                      , GalleryFile(..)
+                                                      , GalleryMetadata(..)
+                                                      , HathSettings(..)
+                                                      , RPCError
+                                                      , hentaiHeader
+                                                      , parseFileURI
+                                                      )
 
-import           UnliftIO                               ( TChan
-                                                        , newTChanIO
-                                                        , race
-                                                        , readTChan
-                                                        , replicateConcurrently
-                                                        , withAsync
-                                                        , writeTChan
-                                                        )
+import           UnliftIO                             ( TChan
+                                                      , newTChanIO
+                                                      , race
+                                                      , readTChan
+                                                      , replicateConcurrently
+                                                      , withAsync
+                                                      , writeTChan
+                                                      )
 
-import           Utils                                  ( bufferSending
-                                                        , hash
-                                                        , log
-                                                        , lookupParam
-                                                        , parseURLParams
-                                                        )
+import           Utils                                ( bufferSending
+                                                      , hash
+                                                      , log
+                                                      , lookupParam
+                                                      , parseURLParams
+                                                      )
 
 maxTimeDrift :: Int64
 maxTimeDrift = 600
@@ -306,8 +290,18 @@ server
               ( fromIntegral $ maybe 0 fst $ BSC.readInteger t, BS.tail rk )
 
         {-# INLINE challange #-}
+        -- [i|#{timestamp}-#{fileid}-#{key cfg}-hotlinkthis|]
         challange :: ClientConfig -> ByteString
-        challange cfg = BS.take 10 (hash [i|#{timestamp}-#{fileid}-#{key cfg}-hotlinkthis|])
+        challange cfg
+          = BS.take 10
+          $ hash
+          $ BD.toStrictByteString
+            (BD.int64Dec timestamp
+             <> "-"
+             <> BD.byteString fileid
+             <> "-"
+             <> BD.textUtf8 (key cfg)
+             <> "-hotlinkthis")
 
     serverCmdHandler command (parseURLParams . encodeUtf8 -> additional) _time _key
       = case command of
@@ -324,7 +318,21 @@ server
               return
                 ( testCount
                 , testSize
-                , [i|#{protocol}://#{hostname}:#{port}/t/#{testSize}/#{testTime}/#{testKey}/0|]
+                  -- [i|#{protocol}://#{hostname}:#{port}/t/#{testSize}/#{testTime}/#{testKey}/randomkeyhere|]
+                , LBS8.unpack
+                  $ BD.toLazyByteString
+                    (BD.byteString protocol
+                     <> "://"
+                     <> BD.byteString hostname
+                     <> ":"
+                     <> BD.byteString port
+                     <> "/t/"
+                     <> BD.int64Dec testSize
+                     <> "/"
+                     <> BD.int64Dec testTime
+                     <> "/"
+                     <> BD.byteString testKey
+                     <> "/0")
                 )
           in 
             case args of
@@ -408,11 +416,19 @@ server
       return $ addHeader @"Content-Length" testSize $ Source.fromStepT $ bufferSending testSize
       where
         {-# INLINE challange #-}
+        -- [i|hentai@home-speedtest-#{testSize}-#{testTime}-#{clientId cfg}-#{key cfg}|]
         challange :: ClientConfig -> ByteString
         challange cfg
           = hash
-            @ByteString
-            [i|hentai@home-speedtest-#{testSize}-#{testTime}-#{clientId cfg}-#{key cfg}|]
+          $ BD.toStrictByteString
+            ("hentai@home-speedtest-"
+             <> BD.intDec testSize
+             <> "-"
+             <> BD.int64Dec testTime
+             <> "-"
+             <> BD.textUtf8 (clientId cfg)
+             <> "-"
+             <> BD.textUtf8 (key cfg))
 
     adminSettingsHandler = show <$> getSettings
 

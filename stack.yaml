@@ -14,10 +14,12 @@ extra-deps:
   - time-units-1.0.0
   - ini-0.4.2
   - digest-0.0.2.1
+  - mason-0.2.6
 
 allow-newer: true
 allow-newer-deps:
   - polysemy-zoo
+  - mason
 
 flags:
   cryptostore:
