@@ -1,23 +1,24 @@
 
 module Utils ( module Utils ) where
 
-import           Colog                 ( Message, Msg(..), Severity )
-import           Colog.Polysemy        ( Log )
-import qualified Colog.Polysemy        as Co
+import           Colog                   ( Message, Msg(..), Severity )
+import           Colog.Polysemy          ( Log )
+import qualified Colog.Polysemy          as Co
 
-import           Crypto.Hash           ( SHA1 )
-import qualified Crypto.Hash           as Crypto
+import           Crypto.Hash             ( SHA1 )
+import qualified Crypto.Hash             as Crypto
 
-import qualified Data.ByteString       as BS
-import qualified Data.ByteString.Char8 as BS8
-import qualified Data.Map.Strict       as Map
+import           Data.ByteArray.Encoding ( Base(Base16), convertToBase )
+import qualified Data.ByteString         as BS
+import qualified Data.ByteString.Char8   as BS8
+import qualified Data.Map.Strict         as Map
 
 import           Polysemy.Operators
 
 import           Relude
 
-import qualified Servant.Types.SourceT as Source
-import           Servant.Types.SourceT ( StepT )
+import qualified Servant.Types.SourceT   as Source
+import           Servant.Types.SourceT   ( StepT )
 
 type URLParams = Map.Map ByteString ByteString
 
@@ -63,9 +64,13 @@ log :: Severity -> Text -> Log Message -@> ()
 log sev msg
   = withFrozenCallStack (Co.log Msg { msgSeverity = sev, msgStack = callStack, msgText = msg })
 
-{-# INLINE hash #-}
-{-# SPECIALISE hash :: ByteString -> Text #-}
-{-# SPECIALISE hash :: ByteString -> ByteString #-}
--- | Hash a ByteString using SHA1 and convert to a hex string
-hash :: IsString a => ByteString -> a
-hash = show . Crypto.hash @ByteString @SHA1
+class HathHash a where
+  hash :: ByteString -> a
+
+instance HathHash Text where
+  {-# INLINABLE hash #-}
+  hash = decodeUtf8 @Text @ByteString . convertToBase Base16 . Crypto.hash @ByteString @SHA1
+
+instance HathHash ByteString where
+  {-# INLINABLE hash #-}
+  hash = convertToBase Base16 . Crypto.hash @ByteString @SHA1
