@@ -54,6 +54,8 @@ import           Prelude                 ( Show(show) )
 
 import           Relude                  hiding ( show )
 
+import           Text.Printf             ( printf )
+
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, Text ) ] #-}
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, ByteString ) ] #-}
 hentaiHeader :: IsString a => [ ( HeaderName, a ) ]
@@ -250,22 +252,44 @@ data FileURI
 
 instance Show FileURI where
   show (FileURI { fileHash, fileSize, fileXRes, fileYRes, fileExt })
-    = [i|#{fileHash}-#{fileSize}-#{fileXRes}-#{fileYRes}-#{fileExt}|]
+    = printf "%s-%d-%d-%d-%s" (BS.unpack fileHash) fileSize fileXRes fileYRes (BS.unpack fileExt)
 
 emptyFileURI :: FileURI
 emptyFileURI = FileURI { fileHash = "", fileSize = 0, fileXRes = 0, fileYRes = 0, fileExt = "" }
 
 parseFileURI :: ByteString -> FileURI
-parseFileURI bytes = case BS.split '-' bytes of
-  [ hash, size, xres, yres, ext ] -> FileURI
-    { fileHash = hash
-    , fileSize = conv size
-    , fileXRes = conv xres
-    , fileYRes = conv yres
-    , fileExt  = ext
-    }
-  _ -> emptyFileURI
+parseFileURI bytes = loop 0 0 0 0 0 0
   where
+    !len = BS.length bytes
+
+    loop !idx !cnt !i1 !i2 !i3 !i4
+      | idx >= len
+        = if cnt == (4 :: Int)
+          then mkURI i1 i2 i3 i4
+          else emptyFileURI
+      | BS.index bytes idx == '-' = case cnt of
+        0 -> loop (idx + 1) 1 idx 0 0 0
+        1 -> loop (idx + 1) 2 i1 idx 0 0
+        2 -> loop (idx + 1) 3 i1 i2 idx 0
+        3 -> loop (idx + 1) 4 i1 i2 i3 idx
+        _ -> emptyFileURI
+      | otherwise = loop (idx + 1) cnt i1 i2 i3 i4
+
+    mkURI i1 i2 i3 i4
+      = let
+          hash = BS.take i1 bytes
+          size = BS.take (i2 - i1 - 1) (BS.drop (i1 + 1) bytes)
+          xres = BS.take (i3 - i2 - 1) (BS.drop (i2 + 1) bytes)
+          yres = BS.take (i4 - i3 - 1) (BS.drop (i3 + 1) bytes)
+          ext  = BS.drop (i4 + 1) bytes
+        in 
+          FileURI { fileHash = hash
+                  , fileSize = conv size
+                  , fileXRes = conv xres
+                  , fileYRes = conv yres
+                  , fileExt  = ext
+                  }
+
     conv = maybe 0 fst . BS.readInt
 
 data RPCResponse
