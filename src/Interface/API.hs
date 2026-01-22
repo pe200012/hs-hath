@@ -300,7 +300,7 @@ runEHentaiAPI m = do
           add'      = fromMaybe "" (add params)
           clientId' = clientId cfg
           key'      = key cfg
-        in
+        in 
           hash [i|hentai@home-#{act'}-#{add'}-#{clientId'}-#{time}-#{key'}|]
 
 {-# INLINE checkServerStatus #-}
@@ -415,8 +415,9 @@ downloadGalleryFile metadata file = do
             }
 
         if null urls
-          then operate retries -- we did not get a valid URL, might be a network error
-          else asum <$> traverse (download . BSC.unpack) urls
+          then operate (retries + 1) -- we did not get a valid URL, might be a network error
+          else maybe (operate (retries + 1)) (pure . Just) . asum
+            =<< traverse (download . BSC.unpack) urls
 
 {-# INLINE reportFailures #-}
 reportFailures :: [ Text ] -> EHentaiAPI -@> ()
