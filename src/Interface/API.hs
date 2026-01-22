@@ -51,6 +51,7 @@ import           Data.X509                ( CertificateChain, PrivKey )
 import qualified Mason.Builder            as BD
 
 import           Network.HTTP.Client      ( HttpException
+                                          , Manager
                                           , Request(responseTimeout, host, requestHeaders)
                                           , Response(responseBody)
                                           , defaultManagerSettings
@@ -88,6 +89,8 @@ import           Servant.Client           ( BaseUrl(BaseUrl)
                                           , runClientM
                                           )
 import           Servant.Client.Core      ( addHeader )
+
+import           System.IO.Unsafe         ( unsafePerformIO )
 
 import           Types                    ( ClientConfig
                                           , ClientConfig(..)
@@ -247,6 +250,10 @@ data EHentaiAPI m a where
 
 makeSem ''EHentaiAPI
 
+{-# NOINLINE ehHttpManager #-}
+ehHttpManager :: Manager
+ehHttpManager = unsafePerformIO $ newManager defaultManagerSettings
+
 {-# INLINE runEHentaiAPIIO #-}
 runEHentaiAPIIO :: ClientConfig
                 -> [ EHentaiAPI, Reader ClientConfig, Error ClientError, Embed IO, Final IO ] @> a
@@ -260,7 +267,6 @@ runEHentaiAPI :: forall a r. Members [ Embed IO, Error ClientError, Reader Clien
               -> r @> a
 runEHentaiAPI m = do
   cfg <- ask @ClientConfig
-  manager <- embed $ newManager defaultManagerSettings
   currentTime <- embed (systemSeconds <$> getSystemTime)
   -- Internal: Override RPC host via HATH_RPC_HOST environment variable
   -- Format: "host" or "host:port" (default port: 80)
@@ -281,7 +287,7 @@ runEHentaiAPI m = do
                        , actkey      = Just $ makeKey params cfg currentTime
                        , cid         = Just (clientId cfg)
                        })
-             (mkClientEnv manager (BaseUrl Http rpcHostName rpcPort endpoint))
+             (mkClientEnv ehHttpManager (BaseUrl Http rpcHostName rpcPort endpoint))
              { makeClientRequest = \baseUrl req -> do
                  servantReq <- defaultMakeClientRequest
                    baseUrl
