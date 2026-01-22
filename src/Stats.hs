@@ -42,10 +42,11 @@ import           System.Metrics.Prometheus.Metric.Counter      ( Counter )
 import qualified System.Metrics.Prometheus.Metric.Counter      as Counter
 import           System.Metrics.Prometheus.Metric.Gauge        ( Gauge )
 import qualified System.Metrics.Prometheus.Metric.Gauge        as Gauge
+import GHC.Clock (getMonotonicTime)
 
 data StatsEnv
   = StatsEnv
-  { statsStart :: !UTCTime
+  { statsStart :: !Double
   , statsRegistry :: !Registry.Registry
   , statsUploadBytesCounter :: !Counter
   , statsDownloadBytesCounter :: !Counter
@@ -61,7 +62,7 @@ data StatsEnv
 
 newStatsEnv :: IO StatsEnv
 newStatsEnv = do
-  t0 <- getCurrentTime
+  t0 <- getMonotonicTime
   registry <- new
   uploadBytesCounter <- registerCounter "hath_cache_sent_bytes_total" mempty registry
   downloadBytesCounter <- registerCounter "hath_cache_received_bytes_total" mempty registry
@@ -130,8 +131,8 @@ runStats = interpret $ \case
   -- New uptime metric
   UpdateUptime -> do
     env <- ask
-    now <- embed getCurrentTime
-    let elapsed = realToFrac (diffUTCTime now (statsStart env)) :: Double
+    now <- embed getMonotonicTime
+    let elapsed = now - statsStart env
     embed $ Gauge.set elapsed (statsUptimeGauge env)
 
   -- Active connections
