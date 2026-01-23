@@ -37,7 +37,6 @@ module Types
 import qualified Data.ByteString.Char8   as BS
 import qualified Data.ByteString.Short   as SBS
 import qualified Data.HashSet            as HashSet
-import           Data.String.Interpolate ( i )
 import qualified Data.Text               as T
 
 import           Database.SQLite.Simple  ( FromRow, ToRow )
