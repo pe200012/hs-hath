@@ -26,7 +26,6 @@ dependencies:
   - async >= 2.2 && < 2.3
   - base64 >= 1.0 && < 1.1
   - bytestring >= 0.11 && < 0.13
-  - binary >= 0.8 && < 0.9
   - co-log-core >= 0.3 && < 0.4
   - co-log >= 0.6 && < 0.8
   - co-log-polysemy >= 0.0.1.5 && < 0.0.2
@@ -64,7 +63,6 @@ dependencies:
   - placeholder >= 0 && < 1
   - polysemy >= 1.9 && < 1.10
   - polysemy-zoo >= 0.8 && < 0.9
-  - prometheus >= 2.3.0 && < 2.4
   - process >= 1.6 && < 1.7
   - template-haskell >= 2.19 && < 2.24
   - filepath >= 1.4 && < 1.6

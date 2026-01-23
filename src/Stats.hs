@@ -20,35 +20,25 @@ module Stats
   , runStats
   ) where
 
-import           Data.Binary.Builder                           ( toLazyByteString )
-import           Data.Time.Clock                               ( UTCTime
-                                                               , diffUTCTime
-                                                               , getCurrentTime
-                                                               )
+import           GHC.Clock          ( getMonotonicTime )
 
-import           GHC.Clock                                     ( getMonotonicTime )
+import qualified Metrics.Counter    as Counter
+import qualified Metrics.Gauge      as Gauge
+import           Metrics.Registry   ( newRegistry, registerCounter, registerGauge )
+import           Metrics.Snapshot   ( getCachedSnapshot, startSnapshotWorker )
+-- Custom metrics implementation (replaces prometheus library)
+import           Metrics.Types      ( Counter, Gauge, Registry )
 
 import           Polysemy
 import           Polysemy.Operators
-import           Polysemy.Reader                               ( Reader, ask )
+import           Polysemy.Reader    ( Reader, ask )
 
-import           Relude                                        hiding ( Reader, ask )
-
-import qualified System.Metrics.Prometheus.Concurrent.Registry as Registry
-import           System.Metrics.Prometheus.Concurrent.Registry ( new
-                                                               , registerCounter
-                                                               , registerGauge
-                                                               )
-import           System.Metrics.Prometheus.Encode.Text         ( encodeMetrics )
-import           System.Metrics.Prometheus.Metric.Counter      ( Counter )
-import qualified System.Metrics.Prometheus.Metric.Counter      as Counter
-import           System.Metrics.Prometheus.Metric.Gauge        ( Gauge )
-import qualified System.Metrics.Prometheus.Metric.Gauge        as Gauge
+import           Relude             hiding ( Reader, ask )
 
 data StatsEnv
   = StatsEnv
   { statsStart :: !Double
-  , statsRegistry :: !Registry.Registry
+  , statsRegistry :: !Registry
   , statsUploadBytesCounter :: !Counter
   , statsDownloadBytesCounter :: !Counter
   , statsServedCounter :: !Counter
@@ -64,17 +54,30 @@ data StatsEnv
 newStatsEnv :: IO StatsEnv
 newStatsEnv = do
   t0 <- getMonotonicTime
-  registry <- new
-  uploadBytesCounter <- registerCounter "hath_cache_sent_bytes_total" mempty registry
-  downloadBytesCounter <- registerCounter "hath_cache_received_bytes_total" mempty registry
-  servedCounter <- registerCounter "hath_cache_sent_total" mempty registry
-  fetchedCounter <- registerCounter "hath_cache_received_total" mempty registry
-  activeConnectionsGauge <- registerGauge "hath_active_connections" mempty registry
-  uptimeGauge <- registerGauge "hath_uptime_seconds" mempty registry
-  dlTaskCounter <- registerCounter "hath_download_task_count_total" mempty registry
-  dlFileCounter <- registerCounter "hath_download_file_count_total" mempty registry
-  dlBytesCounter <- registerCounter "hath_download_size_bytes_total" mempty registry
-  errorCounter <- registerCounter "hath_errors_total" mempty registry
+  registry <- newRegistry
+  uploadBytesCounter
+    <- registerCounter "hath_cache_sent_bytes_total" "Total bytes sent from cache" registry
+  downloadBytesCounter
+    <- registerCounter "hath_cache_received_bytes_total" "Total bytes received into cache" registry
+  servedCounter <- registerCounter "hath_cache_sent_total" "Total number of cache hits" registry
+  fetchedCounter
+    <- registerCounter "hath_cache_received_total" "Total number of cache misses" registry
+  activeConnectionsGauge
+    <- registerGauge "hath_active_connections" "Number of active connections" registry
+  uptimeGauge <- registerGauge "hath_uptime_seconds" "Server uptime in seconds" registry
+  dlTaskCounter
+    <- registerCounter "hath_download_task_count_total" "Total gallery download tasks" registry
+  dlFileCounter
+    <- registerCounter "hath_download_file_count_total" "Total gallery files downloaded" registry
+  dlBytesCounter <- registerCounter
+    "hath_download_size_bytes_total"
+    "Total bytes downloaded from galleries"
+    registry
+  errorCounter <- registerCounter "hath_errors_total" "Total errors" registry
+
+  -- Start background snapshot worker (updates every 5 seconds)
+  startSnapshotWorker registry (5 * 1000000)
+
   pure
     $ StatsEnv
       t0
@@ -134,7 +137,7 @@ runStats = interpret $ \case
     env <- ask
     now <- embed getMonotonicTime
     let elapsed = now - statsStart env
-    embed $ Gauge.set elapsed (statsUptimeGauge env)
+    embed $ Gauge.set (round elapsed) (statsUptimeGauge env)
 
   -- Active connections
   IncActiveConnections -> do
@@ -163,5 +166,6 @@ runStats = interpret $ \case
 
   ReadPrometheus -> do
     env <- ask
-    sample <- embed $ Registry.sample (statsRegistry env)
-    pure $ decodeUtf8 $ toLazyByteString $ encodeMetrics sample
+    snapshot <- embed $ getCachedSnapshot (statsRegistry env)
+    pure $ decodeUtf8 snapshot
+
