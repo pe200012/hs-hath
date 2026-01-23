@@ -160,7 +160,6 @@ import           Utils                                ( bufferSending
                                                       , log
                                                       , lookupParam
                                                       , parseURLParams
-                                                      , tooManyRequestsResponse
                                                       )
 
 maxTimeDrift :: Int64
