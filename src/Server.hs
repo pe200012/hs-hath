@@ -32,7 +32,6 @@ import qualified Data.HashMap.Strict                  as HashMap
 import qualified Data.Map.Strict                      as Map
 import           Data.String.Interpolate              ( i )
 import qualified Data.Text                            as Text
-import           Data.Time.Clock                      ( addUTCTime, getCurrentTime )
 import           Data.Time.Clock.POSIX                ( POSIXTime, getPOSIXTime )
 import           Data.Time.Clock.System               ( SystemTime(systemSeconds), getSystemTime )
 import           Data.X509                            ( CertificateChain, PrivKey )
@@ -146,6 +145,7 @@ import           Types                                ( CacheBackend(..)
                                                       )
 
 import           UnliftIO                             ( TChan
+                                                      , getMonotonicTime
                                                       , newTChanIO
                                                       , race
                                                       , readTChan
@@ -444,16 +444,17 @@ tictok config ipMap ksVar = do
   -- ipmap cleanup
   cleanupHandle <- repeatedTimer
     (do
-       now <- getCurrentTime
+       now <- getMonotonicTime
        atomically $ do
          m <- readTVar ipMap
-         let windowStart = addUTCTime (-timeWindow) now
-         let filtered = HashMap.filter (\record -> case bannedUntil record of
-                                          Just banTime
-                                            | banTime > now -> True
-                                          _ -> case requestTimes record of
-                                            (t : _) -> t > windowStart
-                                            []      -> False) m
+         --  let windowStart = addUTCTime (-timeWindow) now
+         let windowStart = now - timeWindow
+             filtered    = HashMap.filter (\record -> case bannedUntil record of
+                                             Just banTime
+                                               | banTime > now -> True
+                                             _ -> case requestTimes record of
+                                               (t : _) -> t > windowStart
+                                               []      -> False) m
          writeTVar ipMap filtered)
     (mDelay 1)
 
