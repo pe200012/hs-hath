@@ -18,6 +18,8 @@ import qualified Data.HashMap.Strict   as HashMap
 import qualified Data.Map.Strict       as Map
 import           Data.Time.Clock       ( NominalDiffTime, UTCTime, addUTCTime, getCurrentTime )
 
+import           GHC.Clock             ( getMonotonicTime )
+
 import qualified Metrics.Gauge         as Gauge
 
 import           Network.HTTP.Types    ( hAccept, mkStatus )
@@ -34,10 +36,12 @@ import           Relude                hiding ( Reader, ask, get, runReader )
 
 import           Stats                 ( StatsEnv(..) )
 
+import           System.IO.Unsafe      ( unsafePerformIO )
+
 import           Utils                 ( parseURLParams )
 
-timeWindow :: NominalDiffTime
-timeWindow = 10
+timeWindow :: Double
+timeWindow = 10 * 60 -- 10 minutes in seconds
 
 maxRequests :: Int
 maxRequests = 5
@@ -45,8 +49,8 @@ maxRequests = 5
 -- Data types for tracking requests
 -- Note: Lists cannot be unpacked, so we use strict spine with explicit strictness
 data IPRecord
-  = IPRecord { requestTimes :: ![ UTCTime ]       -- ^ Times of recent requests (strict spine)
-             , bannedUntil  :: !(Maybe UTCTime) -- ^ When the ban expires
+  = IPRecord { requestTimes :: ![ Double ]       -- ^ Times of recent requests (strict spine)
+             , bannedUntil  :: !(Maybe Double) -- ^ When the ban expires
              }
   deriving ( Show )
 
@@ -69,7 +73,7 @@ getIP _ = Nothing
 rateLimitMiddleware :: TVar IPMap -> Middleware
 rateLimitMiddleware ipMap app req k
   | "/h/" `BS.isPrefixOf` rawPathInfo req = do
-    now <- getCurrentTime
+    now <- getMonotonicTime
     let sockAddr = remoteHost req
     case getIP sockAddr of
       Nothing -> app req k  -- If we can't get IP, just allow the request
@@ -81,7 +85,7 @@ rateLimitMiddleware ipMap app req k
   | otherwise = app req k  -- Skip rate limiting for non-resource paths
 
 -- Check if request is allowed and update rate limit state
-checkRateLimit :: TVar IPMap -> IP -> UTCTime -> IO Bool
+checkRateLimit :: TVar IPMap -> IP -> Double -> IO Bool
 checkRateLimit ipMap ip now = atomically $ do
   m <- readTVar ipMap
   maybe firstRequest existingRequest (HashMap.lookup ip m)
@@ -99,7 +103,7 @@ checkRateLimit ipMap ip now = atomically $ do
 
     -- Check if requests are within rate limit window and update accordingly
     checkAndUpdateRequests record = do
-      let windowStart = addUTCTime (-timeWindow) now
+      let windowStart = now - timeWindow
           -- Use filter and force strict evaluation to avoid space leaks
           -- The list spine and length are evaluated immediately, preventing thunk accumulation
           !recentRequests = filter (> windowStart) (requestTimes record)
@@ -112,7 +116,7 @@ checkRateLimit ipMap ip now = atomically $ do
 
     -- Ban IP for 10 minutes if too many requests
     banIP newRequests = do
-      let banUntil = addUTCTime (10 * 60) now  -- 10 minute ban
+      let banUntil = now + (10 * 60)  -- 10 minute ban
       modifyTVar' ipMap $ HashMap.insert ip (IPRecord newRequests (Just banUntil))
       return False
 
