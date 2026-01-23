@@ -8,6 +8,26 @@ and this project adheres to the
 
 ## Unreleased
 
+## [1.0.3] - 2026-01-24
+
+### Added
+- Custom Prometheus metrics implementation with counters and gauges
+- Metrics registry and snapshot mechanism for efficient metrics collection
+- Non-blocking metrics retrieval endpoint with background worker
+- stack-release.yaml for optimized release builds with LLVM support
+- Aggressive optimization options for release builds
+
+### Changed
+- **Performance:** Improved rate limiting by removing TVar dependency and simplifying architecture
+- **Performance:** Refactored to use monotonic time, avoiding complex UTCTime calculations
+- Removed development logging statements
+- Removed redundant imports
+- Automated release process with GitHub Actions (separate build and release jobs)
+- Removed dependency on `prometheus` and `binary` packages in favor of custom implementation
+
+### Fixed
+- Fixed config validation option to take effect properly
+
 ## [1.0.2] - 2026-01-23
 
 ### Added
