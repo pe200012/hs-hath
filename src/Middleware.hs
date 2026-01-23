@@ -10,35 +10,31 @@ module Middleware
   , timeWindow
   ) where
 
-import           Control.Exception                      ( finally )
+import           Control.Exception     ( finally )
 
-import qualified Data.ByteString                        as BS
-import qualified Data.ByteString.Char8                  as BSC
-import qualified Data.HashMap.Strict                    as HashMap
-import qualified Data.Map.Strict                        as Map
-import           Data.Time.Clock                        ( NominalDiffTime
-                                                        , UTCTime
-                                                        , addUTCTime
-                                                        , getCurrentTime
-                                                        )
+import qualified Data.ByteString       as BS
+import qualified Data.ByteString.Char8 as BSC
+import qualified Data.HashMap.Strict   as HashMap
+import qualified Data.Map.Strict       as Map
+import           Data.Time.Clock       ( NominalDiffTime, UTCTime, addUTCTime, getCurrentTime )
 
-import           Network.HTTP.Types                     ( hAccept, mkStatus )
-import           Network.Socket                         ( HostAddress, HostAddress6, SockAddr(..) )
-import           Network.Wai                            ( Middleware
-                                                        , Response
-                                                        , rawPathInfo
-                                                        , remoteHost
-                                                        , requestHeaders
-                                                        , responseLBS
-                                                        )
+import qualified Metrics.Gauge         as Gauge
 
-import           Relude                                 hiding ( Reader, ask, get, runReader )
+import           Network.HTTP.Types    ( hAccept, mkStatus )
+import           Network.Socket        ( HostAddress, HostAddress6, SockAddr(..) )
+import           Network.Wai           ( Middleware
+                                       , Response
+                                       , rawPathInfo
+                                       , remoteHost
+                                       , requestHeaders
+                                       , responseLBS
+                                       )
 
-import           Stats                                  ( StatsEnv(..) )
+import           Relude                hiding ( Reader, ask, get, runReader )
 
-import qualified System.Metrics.Prometheus.Metric.Gauge as Gauge
+import           Stats                 ( StatsEnv(..) )
 
-import           Utils                                  ( parseURLParams )
+import           Utils                 ( parseURLParams )
 
 timeWindow :: NominalDiffTime
 timeWindow = 10
