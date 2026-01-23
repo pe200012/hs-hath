@@ -96,9 +96,6 @@ ghc-options:
   - -Wmissing-home-modules
   - -Wpartial-fields
   - -Wredundant-constraints
-  - -O2
-#  - -static
-#  - -optl-static
 
 default-extensions:
   - NoImplicitPrelude

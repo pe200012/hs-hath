@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
 
 jobs:
   build:
@@ -19,6 +19,11 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt install libsqlite3-dev
 
+      - name: Setup LLVM
+        uses: ZhongRuoyu/setup-llvm@v0
+        with:
+          llvm-version: 19
+
       - uses: haskell-actions/setup@v2
         with:
           ghc-version: "9.12.2"
@@ -26,8 +31,7 @@ jobs:
 
       - name: Build
         run: |
-          stack build --system-ghc
-          stack install --system-ghc --local-bin-path ./bin/
+          stack install --stack-yaml stack-release.yaml --system-ghc --local-bin-path ./bin/
 
       - name: Compress binaries (Unix)
         if: runner.os != 'Windows'
@@ -47,12 +51,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hs-hath-${{ matrix.os }}
-          path: 'hs-hath-*.tar.gz'
+          path: "hs-hath-*.tar.gz"
 
   release:
     needs: build
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v2
 
