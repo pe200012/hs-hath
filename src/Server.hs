@@ -85,7 +85,7 @@ import           Network.Wai.Handler.WarpTLS          ( OnInsecure(AllowInsecure
                                                       , runTLS
                                                       )
 import           Network.Wai.Middleware.RealIp        ( realIpHeader )
-import           Network.Wai.Middleware.RequestLogger ( logStdout, logStdoutDev )
+import           Network.Wai.Middleware.RequestLogger ( logStdout )
 
 import           Polysemy                             ( Embed
                                                       , Members
@@ -593,7 +593,6 @@ serverLoop ctx certs = do
       (defaultTlsSettings
        { tlsCredentials = Just (Credentials [ certs ]), onInsecure = AllowInsecure })
       (setPort (clientPort st) defaultSettings)
-    $ logStdoutDev
     $ logStdout app
 
   case result of
