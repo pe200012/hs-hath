@@ -1,6 +1,5 @@
 module Middleware
   ( rateLimitMiddleware
-  , keystampLimitMiddleware
   , tracingConnections
   , normalizeAcceptMiddleware
   , IPMap
@@ -10,47 +9,39 @@ module Middleware
   , timeWindow
   ) where
 
-import           Control.Exception     ( finally )
+import           Control.Exception   ( finally )
 
-import qualified Data.ByteString       as BS
-import qualified Data.ByteString.Char8 as BSC
-import qualified Data.HashMap.Strict   as HashMap
-import qualified Data.Map.Strict       as Map
-import           Data.Time.Clock       ( NominalDiffTime, UTCTime, addUTCTime, getCurrentTime )
+import qualified Data.ByteString     as BS
+import qualified Data.HashMap.Strict as HashMap
 
-import           GHC.Clock             ( getMonotonicTime )
+import           GHC.Clock           ( getMonotonicTime )
 
-import qualified Metrics.Gauge         as Gauge
+import qualified Metrics.Gauge       as Gauge
 
-import           Network.HTTP.Types    ( hAccept, mkStatus )
-import           Network.Socket        ( HostAddress, HostAddress6, SockAddr(..) )
-import           Network.Wai           ( Middleware
-                                       , Response
-                                       , rawPathInfo
-                                       , remoteHost
-                                       , requestHeaders
-                                       , responseLBS
-                                       )
+import           Network.HTTP.Types  ( hAccept )
+import           Network.Socket      ( HostAddress, HostAddress6, SockAddr(..) )
+import           Network.Wai         ( Middleware, rawPathInfo, remoteHost, requestHeaders )
 
-import           Relude                hiding ( Reader, ask, get, runReader )
+import           Relude              hiding ( Reader, ask, get, runReader )
 
-import           Stats                 ( StatsEnv(..) )
+import           Stats               ( StatsEnv(..) )
 
-import           System.IO.Unsafe      ( unsafePerformIO )
+import           System.IO.Unsafe    ( unsafePerformIO )
 
-import           Utils                 ( parseURLParams )
+import           Utils               ( tooManyRequestsResponse )
 
 timeWindow :: Double
 timeWindow = 10 * 60 -- 10 minutes in seconds
 
-maxRequests :: Int
+maxRequests :: Int8
 maxRequests = 5
 
 -- Data types for tracking requests
 -- Note: Lists cannot be unpacked, so we use strict spine with explicit strictness
 data IPRecord
-  = IPRecord { requestTimes :: ![ Double ]       -- ^ Times of recent requests (strict spine)
-             , bannedUntil  :: !(Maybe Double) -- ^ When the ban expires
+  = IPRecord { earlistRequestTime :: !Double   -- ^ Time of the first request
+             , requestTimes       :: !Int8     -- ^ Number of requests in the time window
+             , bannedUntil        :: !Double -- ^ When the ban expires
              }
   deriving ( Show )
 
@@ -69,103 +60,70 @@ getIP (SockAddrInet _ ha) = Just $ IPv4 ha
 getIP (SockAddrInet6 _ _ ha _) = Just $ IPv6 ha
 getIP _ = Nothing
 
+{-# NOINLINE globalIPMap #-}
+globalIPMap :: IORef IPMap
+globalIPMap = unsafePerformIO $ newIORef HashMap.empty
+
+{-# NOINLINE globalIPMapCounter #-}
+globalIPMapCounter :: IORef Int
+globalIPMapCounter = unsafePerformIO $ newIORef 0
+
 -- Create a new rate limiting middleware
-rateLimitMiddleware :: TVar IPMap -> Middleware
-rateLimitMiddleware ipMap app req k
+rateLimitMiddleware :: Middleware
+rateLimitMiddleware app req k
   | "/h/" `BS.isPrefixOf` rawPathInfo req = do
     now <- getMonotonicTime
     let sockAddr = remoteHost req
     case getIP sockAddr of
       Nothing -> app req k  -- If we can't get IP, just allow the request
       Just ip -> do
-        allowed <- checkRateLimit ipMap ip now
+        allowed <- checkRateLimit ip now
         if allowed
           then app req k
           else k tooManyRequestsResponse
   | otherwise = app req k  -- Skip rate limiting for non-resource paths
 
 -- Check if request is allowed and update rate limit state
-checkRateLimit :: TVar IPMap -> IP -> Double -> IO Bool
-checkRateLimit ipMap ip now = atomically $ do
-  m <- readTVar ipMap
-  maybe firstRequest existingRequest (HashMap.lookup ip m)
+--
+-- return False if the request should be blocked
+checkRateLimit :: IP -> Double -> IO Bool
+checkRateLimit ip now = do
+  cnt <- readIORef globalIPMapCounter
+  if cnt > 100
+    then do
+      writeIORef globalIPMapCounter 0
+      writeIORef globalIPMap HashMap.empty
+      pure True
+    else do
+      writeIORef globalIPMapCounter (cnt + 1)
+      m <- readIORef globalIPMap
+      maybe firstRequest existingRequest (HashMap.lookup ip m)
   where
     -- Handle first request from an IP by creating new record
     firstRequest = do
-      modifyTVar' ipMap $ HashMap.insert ip (IPRecord [ now ] Nothing)
+      modifyIORef' globalIPMap $ HashMap.insert ip (IPRecord now 1 0)
       return True
 
     -- Check if IP is banned, otherwise check request count
-    existingRequest record = case bannedUntil record of
-      Just banTime
-        | banTime > now -> return False
-      _ -> checkAndUpdateRequests record
+    existingRequest record
+      | bannedUntil record > now = return False
+      | otherwise = checkAndUpdateRequests record
 
     -- Check if requests are within rate limit window and update accordingly
-    checkAndUpdateRequests record = do
-      let windowStart = now - timeWindow
-          -- Use filter and force strict evaluation to avoid space leaks
-          -- The list spine and length are evaluated immediately, preventing thunk accumulation
-          !recentRequests = filter (> windowStart) (requestTimes record)
-          !len = length recentRequests
-          !newRequests = now : recentRequests
+    checkAndUpdateRequests record
+      = if now - earlistRequestTime record <= timeWindow
+        then if requestTimes record > maxRequests
+          then do
+            -- Ban the IP for 5 minutes
+            modifyIORef' globalIPMap $ HashMap.insert ip (record { bannedUntil = now + 5 * 60 })
+            return False
+          else do
+            modifyIORef' globalIPMap
+              $ HashMap.insert ip (record { requestTimes = requestTimes record + 1 })
+            return True
+        else return True
 
-      if len >= maxRequests
-        then banIP newRequests
-        else allowRequest newRequests
-
-    -- Ban IP for 10 minutes if too many requests
-    banIP newRequests = do
-      let banUntil = now + (10 * 60)  -- 10 minute ban
-      modifyTVar' ipMap $ HashMap.insert ip (IPRecord newRequests (Just banUntil))
-      return False
-
-    -- Allow request and update record with new request time
-    allowRequest newRequests = do
-      modifyTVar' ipMap $ HashMap.insert ip (IPRecord newRequests Nothing)
-      return True
-
-{-# INLINE tooManyRequestsResponse #-}
--- Standard 429 response
-tooManyRequestsResponse :: Response
-tooManyRequestsResponse
-  = responseLBS
-    (mkStatus 429 "Too Many Requests")
-    [ ( "Content-Type", "text/plain" ) ]
-    "Too Many Requests"
-
-type KeystampMap = HashMap ByteString ( Int, UTCTime )
-
--- | Keystamp rate limiting middleware
-keystampLimitMiddleware :: TVar KeystampMap -> Middleware
-keystampLimitMiddleware ksVar app req sendResponse
-  | "/h/" `BS.isPrefixOf` path = do
-    let parts = BS.split 47 (BS.drop 1 path) -- 47 is '/'
-    case parts of
-      (_h : fileid : optsRaw : _) -> do
-        let opts = parseURLParams optsRaw
-        case Map.lookup "keystamp" opts of
-          Just ksRaw -> do
-            let ( timestamp, _ ) = BSC.span (/= '-') ksRaw
-                checkKey         = fileid <> timestamp
-            now <- getCurrentTime
-            allowed <- atomically $ do
-              m <- readTVar ksVar
-              let ( count, _ ) = HashMap.lookupDefault ( 0, now ) checkKey m
-              if count >= 10  -- Undocumented limit
-                then return False
-                else do
-                  let !newM = HashMap.insert checkKey ( count + 1, now ) m
-                  writeTVar ksVar newM
-                  return True
-            if allowed
-              then app req sendResponse
-              else sendResponse tooManyRequestsResponse
-          Nothing    -> app req sendResponse
-      _ -> app req sendResponse
-  | otherwise = app req sendResponse
-  where
-    path = rawPathInfo req
+type KeystampMap = HashMap ByteString ( Int, Double )
 
 -- | Track active connections
 tracingConnections :: StatsEnv -> Middleware

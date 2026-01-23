@@ -131,6 +131,7 @@ import           Storage.R2                           ( mkR2Connection, runCache
 import           System.Directory                     ( createDirectoryIfMissing, doesFileExist )
 import           System.FilePath                      ( takeDirectory )
 import           System.IO                            ( hPutStrLn )
+import           System.IO.Unsafe                     ( unsafePerformIO )
 
 import           Types                                ( CacheBackend(..)
                                                       , ClientConfig
@@ -159,10 +160,22 @@ import           Utils                                ( bufferSending
                                                       , log
                                                       , lookupParam
                                                       , parseURLParams
+                                                      , tooManyRequestsResponse
                                                       )
 
 maxTimeDrift :: Int64
 maxTimeDrift = 600
+
+{-# NOINLINE globalKeystampMap #-}
+globalKeystampMap :: IORef KeystampMap
+globalKeystampMap = unsafePerformIO $ newIORef HashMap.empty
+
+{-# NOINLINE globalKeystampMapCounter #-}
+globalKeystampMapCounter :: IORef Int
+globalKeystampMapCounter = unsafePerformIO $ newIORef 0
+
+maxSameKeystampRequests :: Int
+maxSameKeystampRequests = 10
 
 data ServerAction = Reload | Cert | GracefulShutdown
 
@@ -181,16 +194,11 @@ data ServerChannels
 -- | Server runtime state containing all mutable variables.
 -- These TVars are shared across threads and updated during server operation.
 data ServerState
-  = ServerState
-  { serverSettings :: !(TVar HathSettings)
-    -- ^ Dynamic server settings that can be updated via RPC
-  , serverIPMap    :: !(TVar IPMap)
-    -- ^ Rate limiting state tracking IPs and request counts
-  , serverKSMap    :: !(TVar KeystampMap)
-    -- ^ Keystamp tracking to prevent duplicate requests with same keystamp
-  , serverStatsEnv :: !StatsEnv
-    -- ^ Prometheus metrics environment (gauges, counters, histograms)
-  }
+  = ServerState { serverSettings :: !(TVar HathSettings)
+                  -- ^ Dynamic server settings that can be updated via RPC
+                , serverStatsEnv :: !StatsEnv
+                  -- ^ Prometheus metrics environment (gauges, counters, histograms)
+                }
 
 -- | Server configuration flags controlling middleware behavior.
 data ServerFlags
@@ -260,14 +268,19 @@ server
       when (abs (timestamp - systemSeconds currentTime) > maxTimeDrift)
         $ throw err403 { errBody = "Your time is out of sync. Please update your system time." }
       when (answer /= challange cfg) $ throw err403 { errBody = "Invalid key." }
-      res <- locateResource
-        LocateURI { locateURIFilename = filename, locateURI = uri, locateURIOptions = opts }
-      case res of
-        Nothing -> throw err404
-        Just bs -> do
-          incServed
-          addUpload (BS.length bs)
-          return $ addHeader @"Content-Length" (BS.length bs) $ WithDynamicContentType mimeType bs
+      isSimpleLimited <- checkKeystampRateLimit
+      if not isSimpleLimited
+        then throw $ err429 { errBody = "Too Many Requests" }
+        else locateResource
+          LocateURI { locateURIFilename = filename, locateURI = uri, locateURIOptions = opts }
+          >>= \case
+            Nothing -> throw err404
+            Just bs -> do
+              incServed
+              addUpload (BS.length bs)
+              return
+                $ addHeader @"Content-Length" (BS.length bs)
+                $ WithDynamicContentType mimeType bs
       where
         mimeType = case fileExt uri of
           "jpg" -> "image/jpeg"
@@ -286,7 +299,7 @@ server
           = let
               rs        = fromMaybe "" (Map.lookup "keystamp" opts)
               ( t, rk ) = BSC.span (/= '-') rs
-            in 
+            in
               ( fromIntegral $ maybe 0 fst $ BSC.readInteger t, BS.tail rk )
 
         {-# INLINE challange #-}
@@ -302,6 +315,31 @@ server
              <> "-"
              <> BD.textUtf8 (key cfg)
              <> "-hotlinkthis")
+
+        -- return True if over limit
+        checkKeystampRateLimit = embed @IO $ do
+          cnt <- readIORef globalKeystampMapCounter
+          if cnt > 100
+            then do
+              writeIORef globalKeystampMapCounter 0
+              writeIORef globalKeystampMap HashMap.empty
+              pure False
+            else do
+              writeIORef globalKeystampMapCounter (cnt + 1)
+              now <- getMonotonicTime
+              m <- readIORef globalKeystampMap
+              let checkKey = fileid <> show timestamp
+              case HashMap.lookup checkKey m of
+                Nothing -> modifyIORef' globalKeystampMap (HashMap.insert checkKey ( 1, now ))
+                  >> pure False
+                Just ( times, stamp ) -> if now - stamp > timeWindow
+                  then modifyIORef' globalKeystampMap (HashMap.delete checkKey) >> pure False
+                  else if times >= maxSameKeystampRequests
+                    then pure True
+                    else modifyIORef'
+                      globalKeystampMap
+                      (HashMap.insert checkKey ( times + 1, stamp ))
+                      >> pure False
 
     serverCmdHandler command (parseURLParams . encodeUtf8 -> additional) _time _key
       = case command of
@@ -334,7 +372,7 @@ server
                      <> BD.byteString testKey
                      <> "/0")
                 )
-          in 
+          in
             case args of
               Nothing -> throw err403
               Just ( testCount, testSize, url ) -> do
@@ -355,7 +393,7 @@ server
                 1000000
                 (fromIntegral . fst)
                 (BSC.readInteger =<< lookupParam "testsize" additional)
-          in 
+          in
             do
               addDownload testSize
               return
@@ -439,28 +477,8 @@ server
       _      -> k $ responseLBS status404 [] ""
 
 -- | Set up periodic timers for various housekeeping tasks
-tictok :: ClientConfig -> TVar IPMap -> TVar KeystampMap -> IO (IO ())
-tictok config ipMap ksVar = do
-  -- ipmap cleanup
-  cleanupHandle <- repeatedTimer
-    (do
-       now <- getMonotonicTime
-       atomically $ do
-         m <- readTVar ipMap
-         --  let windowStart = addUTCTime (-timeWindow) now
-         let windowStart = now - timeWindow
-             filtered    = HashMap.filter (\record -> case bannedUntil record of
-                                             Just banTime
-                                               | banTime > now -> True
-                                             _ -> case requestTimes record of
-                                               (t : _) -> t > windowStart
-                                               []      -> False) m
-         writeTVar ipMap filtered)
-    (mDelay 1)
-
-  -- keystamp cleanup (every minute, remove entries older than 2 hours)
-  ksCleanupHandle <- repeatedTimer (atomically $ writeTVar ksVar mempty) (mDelay 10)
-
+tictok :: ClientConfig -> IO (IO ())
+tictok config = do
   -- heartbeat
   heartbeatHandle <- repeatedTimer (void $ runRPCIO config stillAlive) (mDelay 1)
 
@@ -470,8 +488,6 @@ tictok config ipMap ksVar = do
                                       print res) (mDelay 36)
 
   return $ do
-    stopTimer cleanupHandle
-    stopTimer ksCleanupHandle
     stopTimer heartbeatHandle
     stopTimer blacklistHandle
 
@@ -503,12 +519,7 @@ makeApplication serverCxt
     ServerLoopContext
       { loopConfig = cfg
       , loopChannels = ServerChannels { serverActionChan = action, galleryTaskChan = gallery }
-      , loopState = ServerState
-        { serverSettings = settings
-        , serverIPMap = ipMap
-        , serverKSMap = ksVar
-        , serverStatsEnv = statsEnv
-        }
+      , loopState = ServerState { serverSettings = settings, serverStatsEnv = statsEnv }
       , loopFlags = ServerFlags { disableRateLimit = disableRL, trustProxyHeaders = trustProxy }
       , loopCacheRunner = cacheRunner
       } = serverCxt
@@ -523,13 +534,10 @@ makeApplication serverCxt
     applyRateLimit
       = if disableRL
         then id
-        else rateLimitMiddleware ipMap
-
-    applyKeystampLimit :: Middleware
-    applyKeystampLimit = keystampLimitMiddleware ksVar
+        else rateLimitMiddleware
 
     finalMiddleware :: Middleware
-    finalMiddleware = applyRealIp . applyKeystampLimit . applyRateLimit
+    finalMiddleware = applyRealIp . applyRateLimit
 
     interpretServer :: Sem _ a -> Handler a
     interpretServer
@@ -652,8 +660,6 @@ startServer :: ClientConfig
             -> Bool
             -> IO ()
 startServer config settings certs chan disableRateLimit trustProxyHeaders = do
-  ipMap <- newTVarIO HashMap.empty
-  ksVar <- newTVarIO HashMap.empty
   ssVar <- newTVarIO settings
   galleryHandler <- newTChanIO
   statsEnv <- newStatsEnv
@@ -679,12 +685,7 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
         { loopConfig      = config
         , loopChannels    = ServerChannels
             { serverActionChan = chan, galleryTaskChan = galleryHandler }
-        , loopState       = ServerState
-            { serverSettings = ssVar
-            , serverIPMap    = ipMap
-            , serverKSMap    = ksVar
-            , serverStatsEnv = statsEnv
-            }
+        , loopState       = ServerState { serverSettings = ssVar, serverStatsEnv = statsEnv }
         , loopFlags       = ServerFlags
             { disableRateLimit = disableRateLimit, trustProxyHeaders = trustProxyHeaders }
         , loopCacheRunner = runner
@@ -694,7 +695,7 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
       withConnection (Text.unpack $ cachePath config) $ \conn -> do
         initializeDB conn
         let cacheRunner = CacheRunner { runCacheWith = runCache conn }
-        stopTictok <- tictok config ipMap ksVar
+        stopTictok <- tictok config
         finally (serverLoopMain (ctx cacheRunner) certs) stopTictok
     CacheBackendR2         -> do
       case r2Config config of
@@ -705,14 +706,14 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
             Left err     -> error $ "Failed to initialize R2: " <> err
             Right r2Conn -> do
               let cacheRunner = CacheRunner { runCacheWith = runCacheR2 r2Conn }
-              stopTictok <- tictok config ipMap ksVar
+              stopTictok <- tictok config
               finally (serverLoopMain (ctx cacheRunner) certs) stopTictok
     CacheBackendFilesystem -> do
       let root = Text.unpack $ cachePath config
       -- Ensure cache root exists
       createDirectoryIfMissing True root
       let cacheRunner = CacheRunner { runCacheWith = runCacheFilesystem root }
-      stopTictok <- tictok config ipMap ksVar
+      stopTictok <- tictok config
       finally (serverLoopMain (ctx cacheRunner) certs) stopTictok
   where
     startsDownloader = do

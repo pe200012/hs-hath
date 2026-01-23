@@ -13,6 +13,9 @@ import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Char8   as BS8
 import qualified Data.Map.Strict         as Map
 
+import           Network.HTTP.Types      ( mkStatus )
+import           Network.Wai             ( Response, responseLBS )
+
 import           Polysemy.Operators
 
 import           Relude
@@ -74,3 +77,12 @@ instance HathHash Text where
 instance HathHash ByteString where
   {-# INLINABLE hash #-}
   hash = convertToBase Base16 . Crypto.hash @ByteString @SHA1
+
+{-# INLINE tooManyRequestsResponse #-}
+-- Standard 429 response
+tooManyRequestsResponse :: Response
+tooManyRequestsResponse
+  = responseLBS
+    (mkStatus 429 "Too Many Requests")
+    [ ( "Content-Type", "text/plain" ) ]
+    "Too Many Requests"
