@@ -1,0 +1,32 @@
+resolver: lts-24.27
+compiler: ghc-9.12.2
+
+packages:
+  - .
+
+extra-deps:
+  - polysemy-zoo-0.8.2.0
+  - suspend-0.2.0.0
+  - timers-0.2.0.4
+  - cryptostore-0.3.0.1
+  - vendor/placeholder
+  - vendor/minio-hs
+  - time-units-1.0.0
+  - ini-0.4.2
+  - digest-0.0.2.1
+  - mason-0.2.6
+
+allow-newer: true
+allow-newer-deps:
+  - polysemy-zoo
+  - mason
+
+flags:
+  cryptostore:
+    use_crypton: True
+
+nix:
+  enable: false
+
+ghc-options:
+  "*": -O2 -fllvm -split-sections -fdicts-strict -fexcess-precision -fexpose-all-unfoldings -flate-dmd-anal -fspec-constr-keen -flate-specialise -optc-O3 -fPIC
