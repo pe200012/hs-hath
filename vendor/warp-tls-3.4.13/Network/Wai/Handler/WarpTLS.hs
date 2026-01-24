@@ -312,6 +312,7 @@ runTLSSocket' tlsset@TLSSettings{..} set credentials mgr sock =
             , TLS.supportedSession = True
             , TLS.supportedFallbackScsv = True
             , TLS.supportedHashSignatures = tlsSupportedHashSignatures
+            , TLS.supportedExtendedMainSecret = TLS.AllowEMS
 #if MIN_VERSION_tls(1,5,0)
             , TLS.supportedGroups = [TLS.X25519,TLS.P256,TLS.P384]
 #endif
