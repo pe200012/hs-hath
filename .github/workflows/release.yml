@@ -91,7 +91,6 @@ jobs:
           PRE_RELEASE: ${{ steps.is_pre_release.outputs.IS_PRERELEASE }}
           CHANGELOG_FILE: "CHANGELOG.md"
           ALLOW_EMPTY_CHANGELOG: "false"
-          ALLOW_TAG_PREFIX: "true"
         with:
           args: |
             artifacts/${{ steps.asset_names.outputs.LIST }}
