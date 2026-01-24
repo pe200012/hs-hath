@@ -2,6 +2,7 @@ module Middleware
   ( rateLimitMiddleware
   , tracingConnections
   , normalizeAcceptMiddleware
+  , tracingTimeUsage
   , IPMap
   , KeystampMap
   , IP(..)
@@ -139,4 +140,12 @@ normalizeAcceptMiddleware app req = app req { requestHeaders = normalizedHeaders
     normalizeHeader ( name, value )
       | name == hAccept = ( name, "*/*" )
       | otherwise = ( name, value )
+
+tracingTimeUsage :: StatsEnv -> Middleware
+tracingTimeUsage statsEnv app req k = do
+  startTime <- getMonotonicTime
+  finally (app req k) (do
+                         endTime <- getMonotonicTime
+                         let latency = endTime - startTime
+                         Gauge.set (round (latency * 1000000)) (statsLatency statsEnv))
 

@@ -49,6 +49,7 @@ data StatsEnv
   , statsDlFileCounter :: !Counter
   , statsDlBytesCounter :: !Counter
   , statsErrorCounter :: !Counter
+  , statsLatency :: !Gauge
   }
 
 newStatsEnv :: IO StatsEnv
@@ -74,6 +75,7 @@ newStatsEnv = do
     "Total bytes downloaded from galleries"
     registry
   errorCounter <- registerCounter "hath_errors_total" "Total errors" registry
+  latencyGauge <- registerGauge "hath_latency_seconds" "Request latency in seconds" registry
 
   -- Start background snapshot worker (updates every 5 seconds)
   startSnapshotWorker registry (5 * 1000000)
@@ -92,7 +94,7 @@ newStatsEnv = do
       dlFileCounter
       dlBytesCounter
       errorCounter
-
+      latencyGauge
 data Stats m a where
   AddUpload :: Int -> Stats m ()
   AddDownload :: Int -> Stats m ()
