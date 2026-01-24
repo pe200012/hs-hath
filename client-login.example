@@ -18,12 +18,14 @@ let ClientConfig =
           , cachePath : Text
           , cacheBackend : CacheBackend
           , r2Config : Optional R2Config
+          , lruCacheSize : Integer
           }
       , default =
           { version = ""
           , proxy = None ClientProxy
           , cacheBackend = CacheBackend.CacheBackendSQLite
           , r2Config = None R2Config
+          , lruCacheSize = Natural/toInteger (100 * 1024 * 1024)
           }
       }
 
