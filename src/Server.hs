@@ -60,6 +60,8 @@ import           Interface.API                        ( API
                                                       , stopListening
                                                       )
 
+import           LegacyCiphers
+
 import qualified Mason.Builder                        as BD
 
 import           Middleware
@@ -72,7 +74,8 @@ import           Network.HTTP.Client                  ( brReadSome
 import           Network.HTTP.Client.TLS              ( tlsManagerSettings )
 import           Network.HTTP.Simple                  ( getResponseBody )
 import           Network.HTTP.Types                   ( status200, status404 )
-import           Network.TLS                          ( Credentials(Credentials) )
+import           Network.TLS                          ( Credentials(Credentials), Version (..) )
+import           Network.TLS.Extra                    ( ciphersuite_all )
 import           Network.Wai                          ( Middleware
                                                       , Request(requestMethod)
                                                       , responseLBS
@@ -599,7 +602,15 @@ serverLoop ctx certs = do
   result <- withAsync (notifyStart cfg) $ \_ -> race (atomically $ readTChan chan)
     $ runTLS
       (defaultTlsSettings
-       { tlsCredentials = Just (Credentials [ certs ]), onInsecure = AllowInsecure })
+       { tlsCredentials = Just (Credentials [ certs ])
+       , onInsecure     = AllowInsecure
+       , tlsCiphers     = ciphersuite_all
+           ++ [ cipher_ECDHE_ECDSA_AES128CBC_SHA
+              , cipher_ECDHE_RSA_AES128CBC_SHA
+              , cipher_ECDHE_RSA_AES256CBC_SHA
+              ]
+       , tlsAllowedVersions = [ TLS10, TLS11, TLS12, TLS13 ]
+       })
       (setPort (clientPort st) defaultSettings)
     $ logStdout app
 
