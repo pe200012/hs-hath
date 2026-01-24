@@ -15,6 +15,7 @@ extra-deps:
   - ini-0.4.2
   - digest-0.0.2.1
   - mason-0.2.6
+  - vendor/warp-tls-3.4.13
 
 allow-newer: true
 allow-newer-deps:
