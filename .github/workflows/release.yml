@@ -24,14 +24,25 @@ jobs:
         with:
           llvm-version: 19
 
-      - uses: haskell-actions/setup@v2
+      - name: Install Stack
+        run: |
+          curl -sSL https://get.haskellstack.org/ | sh -s - -f
+
+      - uses: actions/cache@v4
+        ## Looks like caching in macOS causes weird failures in the steps later.
+        if: runner.os != 'macOS'
         with:
-          ghc-version: "9.12.2"
-          enable-stack: true
+          path: |
+            ~/.stack
+            .stack-work
+          key: ${{ runner.os }}-stack-${{ matrix.plan.ghc }}-${{ hashFiles('stack-release.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-stack-${{ matrix.plan.ghc }}-
+            ${{ runner.os }}-stack-
 
       - name: Build
         run: |
-          stack install --stack-yaml stack-release.yaml --system-ghc --local-bin-path ./bin/
+          stack install --stack-yaml stack-release.yaml --local-bin-path ./bin/
 
       - name: Compress binaries (Unix)
         if: runner.os != 'Windows'
