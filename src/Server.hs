@@ -271,7 +271,7 @@ server
         $ throw err403 { errBody = "Your time is out of sync. Please update your system time." }
       when (answer /= challange cfg) $ throw err403 { errBody = "Invalid key." }
       isSimpleLimited <- checkKeystampRateLimit
-      if not isSimpleLimited
+      if isSimpleLimited
         then throw $ err429 { errBody = "Too Many Requests" }
         else locateResource
           LocateURI { locateURIFilename = filename, locateURI = uri, locateURIOptions = opts }
