@@ -516,6 +516,7 @@ makeApplication serverCxt
   = finalMiddleware
   $ normalizeAcceptMiddleware
   $ tracingConnections statsEnv
+  $ tracingTimeUsage statsEnv
   $ serve api (hoistServer api interpretServer server)
   where
     ServerLoopContext
