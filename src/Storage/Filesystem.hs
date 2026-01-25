@@ -28,7 +28,7 @@ import           Storage.Database   ( FileRecord(..) )
 import           System.Directory   ( createDirectoryIfMissing, doesFileExist, removeFile )
 import           System.FilePath    ( (</>), takeDirectory, takeFileName )
 
-import           Types              ( ClientConfig, FileURI(..), RPCError(..) )
+import           Types              ( ClientConfig, FileURI(..), RPCError(..), StorageResult(..) )
 import qualified Types              as Ty
 
 import           Utils              ( log )
@@ -46,7 +46,7 @@ fileURIToPath root uri = root </> s4 </> fileId
 -- | Run the cache with Filesystem backend
 runCacheFilesystem :: Members '[ Embed IO, Log Message, Reader ClientConfig, Error RPCError ] r
                    => FilePath -- ^ Cache root directory
-                   -> KVStore FileURI FileRecord : r @> a
+                   -> KVStore FileURI StorageResult : r @> a
                    -> r @> a
 runCacheFilesystem root m = do
   lruSize <- asks Ty.lruCacheSize
@@ -56,12 +56,12 @@ runCacheFilesystem root m = do
   where
     phi :: forall r r1 x. Members '[ Embed IO, Log Message, Error RPCError ] r1
         => AtomicLRU FileURI FileRecord
-        -> KVStore FileURI FileRecord (Sem r) x
+        -> KVStore FileURI StorageResult (Sem r) x
         -> Sem r1 x
     phi cache (LookupKV uri) = do
       let path = fileURIToPath root uri
       embed (LRU.lookup uri cache) >>= \case
-        Just res -> pure $ Just res
+        Just res -> pure $ Just $ Record res
         Nothing  -> do
           result <- embed $ try @SomeException $ BS.readFile path
           case result of
@@ -69,9 +69,12 @@ runCacheFilesystem root m = do
             Right bytes -> do
               let recd = Ty.reconstructRecord uri bytes
               embed $ LRU.insert uri recd cache
-              pure $ Just recd
+              pure $ Just $ Record recd
 
-    phi cache (UpdateKV uri (Just record)) = do
+    phi _cache (UpdateKV _uri (Just (Redirect _url)))
+      = error "impossible: cannot store Redirect in Filesystem backend"
+
+    phi cache (UpdateKV uri (Just (Record record))) = do
       let path    = fileURIToPath root uri
           content = fileRecordBytes record
       result <- embed $ try @SomeException $ do

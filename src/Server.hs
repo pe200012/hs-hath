@@ -74,7 +74,7 @@ import           Network.HTTP.Client                  ( brReadSome
 import           Network.HTTP.Client.TLS              ( tlsManagerSettings )
 import           Network.HTTP.Simple                  ( getResponseBody )
 import           Network.HTTP.Types                   ( status200, status404 )
-import           Network.TLS                          ( Credentials(Credentials), Version (..) )
+import           Network.TLS                          ( Credentials(Credentials), Version(..) )
 import           Network.TLS.Extra                    ( ciphersuite_all )
 import           Network.Wai                          ( Middleware
                                                       , Request(requestMethod)
@@ -126,7 +126,10 @@ import           Stats                                ( Stats
                                                       , runStats
                                                       )
 
-import           Storage.Database                     ( FileRecord, initializeDB, runCache )
+import           Storage.Database                     ( FileRecord(fileRecordBytes)
+                                                      , initializeDB
+                                                      , runCache
+                                                      )
 import           Storage.Filesystem                   ( runCacheFilesystem )
 import           Storage.Locate
 import           Storage.R2                           ( mkR2Connection, runCacheR2 )
@@ -144,6 +147,7 @@ import           Types                                ( CacheBackend(..)
                                                       , GalleryMetadata(..)
                                                       , HathSettings(..)
                                                       , RPCError
+                                                      , StorageResult(..)
                                                       , hentaiHeader
                                                       , parseFileURI
                                                       )
@@ -277,7 +281,8 @@ server
           LocateURI { locateURIFilename = filename, locateURI = uri, locateURIOptions = opts }
           >>= \case
             Nothing -> throw err404
-            Just bs -> do
+            Just (Redirect url) -> throw $ err302 { errHeaders = [ ( "Location", url ) ] }
+            Just (Record (fileRecordBytes -> bs)) -> do
               incServed
               addUpload (BS.length bs)
               return
@@ -301,7 +306,7 @@ server
           = let
               rs        = fromMaybe "" (Map.lookup "keystamp" opts)
               ( t, rk ) = BSC.span (/= '-') rs
-            in
+            in 
               ( fromIntegral $ maybe 0 fst $ BSC.readInteger t, BS.tail rk )
 
         {-# INLINE challange #-}
@@ -374,7 +379,7 @@ server
                      <> BD.byteString testKey
                      <> "/0")
                 )
-          in
+          in 
             case args of
               Nothing -> throw err403
               Just ( testCount, testSize, url ) -> do
@@ -395,7 +400,7 @@ server
                 1000000
                 (fromIntegral . fst)
                 (BSC.readInteger =<< lookupParam "testsize" additional)
-          in
+          in 
             do
               addDownload testSize
               return
@@ -506,7 +511,7 @@ newtype CacheRunner
   = CacheRunner
   { runCacheWith
       :: forall r a. Members '[ Embed IO, Log Message, Reader ClientConfig, Error RPCError ] r
-      => Sem (KVStore FileURI FileRecord : r) a
+      => Sem (KVStore FileURI StorageResult : r) a
       -> Sem r a
   }
 
@@ -603,9 +608,9 @@ serverLoop ctx certs = do
   result <- withAsync (notifyStart cfg) $ \_ -> race (atomically $ readTChan chan)
     $ runTLS
       (defaultTlsSettings
-       { tlsCredentials = Just (Credentials [ certs ])
-       , onInsecure     = AllowInsecure
-       , tlsCiphers     = ciphersuite_all
+       { tlsCredentials     = Just (Credentials [ certs ])
+       , onInsecure         = AllowInsecure
+       , tlsCiphers         = ciphersuite_all
            ++ [ cipher_ECDHE_ECDSA_AES128CBC_SHA
               , cipher_ECDHE_RSA_AES128CBC_SHA
               , cipher_ECDHE_RSA_AES256CBC_SHA

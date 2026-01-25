@@ -16,7 +16,7 @@ import           Polysemy.Operators
 
 import           Relude                  hiding ( Reader, State, ask, evalState, get, modify, put )
 
-import           Types                   ( FileRecord(..), FileURI )
+import           Types                   ( FileRecord(..), FileURI, StorageResult(..) )
 
 {-# INLINE initializeDB #-}
 -- | Initialize database with required schema
@@ -38,7 +38,8 @@ initializeDB conn = do
     -- execute_ conn "pragma cache_size=100000"
     -- execute_ conn "pragma mmap_size=65536"
 -- | Run the cache with SQLite
-runCache :: Members '[ Embed IO ] r => Connection -> KVStore FileURI FileRecord : r @> a -> r @> a
+runCache
+  :: Members '[ Embed IO ] r => Connection -> KVStore FileURI StorageResult : r @> a -> r @> a
 runCache conn = interpret $ \case
   LookupKV uri -> do
     let fid = show @Text uri
@@ -49,9 +50,14 @@ runCache conn = interpret $ \case
         conn
         "SELECT lru_counter, s4, file_id, file_name, bytes FROM files WHERE file_id = ?"
         (Only fid)
-    return $ listToMaybe results
+    case listToMaybe results of
+      Just record -> return $ Just (Record record)
+      Nothing     -> return Nothing
 
-  UpdateKV _ (Just record) -> do
+  UpdateKV _uri (Just (Redirect _url))
+    -> error "impossible: cannot store Redirect in Database backend"
+
+  UpdateKV _ (Just (Record record)) -> do
     embed
       $ execute
         conn

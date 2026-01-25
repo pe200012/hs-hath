@@ -27,6 +27,7 @@ import           Network.Minio           ( AccessKey(..)
                                          , defaultGetObjectOptions
                                          , defaultPutObjectOptions
                                          , getObject
+                                         , presignedGetObjectUrl
                                          , removeObject
                                          , setCreds
                                          , setRegion
@@ -43,7 +44,11 @@ import           Relude                  hiding ( Reader, ask, asks )
 
 import           Storage.Database        ( FileRecord(..) )
 
-import           Types                   ( ClientConfig, FileURI(..), RPCError(..) )
+import           Types                   ( ClientConfig
+                                         , FileURI(..)
+                                         , RPCError(..)
+                                         , StorageResult(..)
+                                         )
 import qualified Types                   as Ty
 
 import           Utils                   ( log )
@@ -89,7 +94,7 @@ fileURIToKey uri = s4 <> "/" <> fileId
 -- Write/delete operations propagate errors
 runCacheR2 :: Members '[ Embed IO, Log Message, Reader ClientConfig, Error RPCError ] r
            => R2Connection
-           -> KVStore FileURI FileRecord : r @> a
+           -> KVStore FileURI StorageResult : r @> a
            -> r @> a
 runCacheR2 conn m = do
   lruSize <- asks Ty.lruCacheSize
@@ -101,31 +106,49 @@ runCacheR2 conn m = do
 
     phi :: forall r r1 x. Members '[ Embed IO, Log Message, Error RPCError ] r1
         => AtomicLRU FileURI FileRecord
-        -> KVStore FileURI FileRecord (Sem r) x
+        -> KVStore FileURI StorageResult (Sem r) x
         -> Sem r1 x
-    phi cache (LookupKV uri@(fileURIToKey -> key)) = do
+    phi cache (LookupKV uri@(fileURIToKey -> key))         = do
       embed (LRU.lookup uri cache) >>= \case
-        Just res -> pure $ Just res
+        Just res -> pure $ Just $ Record res
         Nothing  -> do
-          result <- embed $ try @SomeException $ Minio.runMinioWith (r2MinioConn conn) $ do
-            resp <- getObject bucket key defaultGetObjectOptions
-            -- Consume the response body
-            let src = Minio.gorObjectStream resp
-            lbs <- C.runConduit $ src C..| C.sinkLazy
-            pure $ BL.toStrict lbs
-          case result of
-            Left err -> do
-              log Warning ("R2 lookup failed for " <> key <> ": " <> T.pack (show err))
-              pure Nothing
-            Right (Left minioErr) -> do
-              log Warning ("R2 lookup failed for " <> key <> ": " <> T.pack (show minioErr))
-              pure Nothing
-            Right (Right bytes) -> do
-              let recd = Ty.reconstructRecord uri bytes
-              embed $ LRU.insert uri recd cache
-              pure $ Just recd
+          -- Try to generate presigned URL (60 seconds expiry)
+          presignedResult <- embed
+            $ try @SomeException
+            $ Minio.runMinioWith (r2MinioConn conn)
+            $ presignedGetObjectUrl bucket key 60 [] []
+          case presignedResult of
+            Right (Right url) -> do
+              -- Successfully generated presigned URL
+              pure $ Just (Redirect url)
+            _ -> do
+              -- Fallback: presigned URL generation failed, download file instead
+              log
+                Warning
+                ("Presigned URL generation failed for " <> key <> ", falling back to proxy mode")
+              downloadResult
+                <- embed $ try @SomeException $ Minio.runMinioWith (r2MinioConn conn) $ do
+                  resp <- getObject bucket key defaultGetObjectOptions
+                  -- Consume the response body
+                  let src = Minio.gorObjectStream resp
+                  lbs <- C.runConduit $ src C..| C.sinkLazy
+                  pure $ BL.toStrict lbs
+              case downloadResult of
+                Left err -> do
+                  log Warning ("R2 download failed for " <> key <> ": " <> T.pack (show err))
+                  pure Nothing
+                Right (Left minioErr) -> do
+                  log Warning ("R2 download failed for " <> key <> ": " <> T.pack (show minioErr))
+                  pure Nothing
+                Right (Right (Ty.reconstructRecord uri -> record)) -> do
+                  -- Cache the downloaded file
+                  embed $ LRU.insert uri record cache
+                  pure $ Just (Record record)
 
-    phi cache (UpdateKV uri (Just record)) = do
+    phi _cache (UpdateKV _uri (Just (Redirect _url)))
+      = error "impossible: cannot store Redirect in R2 backend"
+
+    phi cache (UpdateKV uri (Just (Record record)))        = do
       let key     = fileURIToKey uri
           content = fileRecordBytes record
           siz     = fromIntegral (BS.length content) :: Int64
