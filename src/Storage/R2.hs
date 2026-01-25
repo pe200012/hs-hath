@@ -14,7 +14,6 @@ import           Control.Exception       ( try )
 
 import qualified Data.ByteArray          as BA
 import qualified Data.ByteString         as BS
-import qualified Data.ByteString.Lazy    as BL
 import           Data.Cache.LRU.IO
 import qualified Data.Cache.LRU.IO       as LRU
 import qualified Data.Text               as T
@@ -24,15 +23,14 @@ import           Network.HTTP.Client.TLS ( tlsManagerSettings )
 import           Network.Minio           ( AccessKey(..)
                                          , CredentialValue(..)
                                          , SecretKey(..)
-                                         , defaultGetObjectOptions
                                          , defaultPutObjectOptions
-                                         , getObject
                                          , presignedGetObjectUrl
                                          , removeObject
                                          , setCreds
                                          , setRegion
                                          )
 import qualified Network.Minio           as Minio
+import           Network.Minio.S3API     ( headObject )
 
 import           Polysemy
 import           Polysemy.Error          ( Error, throw )
@@ -112,38 +110,20 @@ runCacheR2 conn m = do
       embed (LRU.lookup uri cache) >>= \case
         Just res -> pure $ Just $ Record res
         Nothing  -> do
-          -- Try to generate presigned URL (60 seconds expiry)
-          presignedResult <- embed
+          -- First, check if object exists using HEAD request
+          headResult <- embed
             $ try @SomeException
             $ Minio.runMinioWith (r2MinioConn conn)
-            $ presignedGetObjectUrl bucket key 60 [] []
-          case presignedResult of
-            Right (Right url) -> do
-              -- Successfully generated presigned URL
-              pure $ Just (Redirect url)
+            $ headObject bucket key []
+          case headResult of
+              -- Object exists, try to generate presigned URL (60 seconds expiry)
+            Right (Right _info) -> embed
+              $ either (const Nothing) (Just . Redirect)
+              <$> Minio.runMinioWith (r2MinioConn conn) (presignedGetObjectUrl bucket key 60 [] [])
+              -- Object does not exist in R2 storage
             _ -> do
-              -- Fallback: presigned URL generation failed, download file instead
-              log
-                Warning
-                ("Presigned URL generation failed for " <> key <> ", falling back to proxy mode")
-              downloadResult
-                <- embed $ try @SomeException $ Minio.runMinioWith (r2MinioConn conn) $ do
-                  resp <- getObject bucket key defaultGetObjectOptions
-                  -- Consume the response body
-                  let src = Minio.gorObjectStream resp
-                  lbs <- C.runConduit $ src C..| C.sinkLazy
-                  pure $ BL.toStrict lbs
-              case downloadResult of
-                Left err -> do
-                  log Warning ("R2 download failed for " <> key <> ": " <> T.pack (show err))
-                  pure Nothing
-                Right (Left minioErr) -> do
-                  log Warning ("R2 download failed for " <> key <> ": " <> T.pack (show minioErr))
-                  pure Nothing
-                Right (Right (Ty.reconstructRecord uri -> record)) -> do
-                  -- Cache the downloaded file
-                  embed $ LRU.insert uri record cache
-                  pure $ Just (Record record)
+              log Warning ("Object not found in R2 storage: " <> key)
+              pure Nothing
 
     phi _cache (UpdateKV _uri (Just (Redirect _url)))
       = error "impossible: cannot store Redirect in R2 backend"
