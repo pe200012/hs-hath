@@ -8,7 +8,6 @@ import           Colog.Polysemy          ( Log )
 
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Short   as SBS
-import qualified Data.HashSet            as HashSet
 import qualified Data.Map                as Map
 import           Data.String.Interpolate ( i )
 
@@ -18,7 +17,7 @@ import           Polysemy
 import           Polysemy.Error          ( Error )
 import           Polysemy.KVStore        ( KVStore, lookupKV, updateKV )
 import           Polysemy.Operators
-import           Polysemy.Reader         ( Reader, ask )
+import           Polysemy.Reader         ( Reader )
 
 import           Relude                  hiding ( Reader, ask )
 
@@ -38,13 +37,13 @@ data LocateURI
 
 data Locate m a where
   -- | Fetch a specific resource from the server
-  LocateResource :: LocateURI -> Locate m (Maybe ByteString)
+  LocateResource :: LocateURI -> Locate m (Maybe StorageResult)
 
 makeSem ''Locate
 
 runLocate
   :: Members
-    '[ KVStore FileURI FileRecord
+    '[ KVStore FileURI StorageResult
      , SettingM
      , Error RPCError
      , Reader ClientConfig
@@ -64,25 +63,28 @@ runLocate = interpret $ \case
     -- if HashSet.member s4 (staticRanges settings) <-- we have a bug in setting parsing. wait for fix
     if True
       then lookupKV fileURI >>= \case
-        Just record -> return $ Just $ fileRecordBytes record
-        Nothing     -> case ( Map.lookup "fileindex" (locateURIOptions uri)
-                            , Map.lookup "xres" (locateURIOptions uri)
-                            ) of
+        Just x@Redirect {} -> return $ Just x
+        Just x@Record {} -> return $ Just x
+        Nothing -> case ( Map.lookup "fileindex" (locateURIOptions uri)
+                        , Map.lookup "xres" (locateURIOptions uri)
+                        ) of
           ( Just fileIndex, Just xres ) -> log Info [i|Fetching resource: #{fileURI}|]
             >> fetchResource fileURI ( fileIndex, xres )
             >>= \case
               Just content -> do
                 incFetched
                 addDownload (BS.length content)
-                updateKV fileURI
-                  $ Just
-                  $ FileRecord { fileRecordLRUCounter = 1
-                               , fileRecordS4         = decodeUtf8 s4
-                               , fileRecordFileId     = show fileURI
-                               , fileRecordFileName   = Just $ decodeUtf8 $ locateURIFilename uri
-                               , fileRecordBytes      = content
-                               }
-                pure $ Just content
+                let record
+                      = Record
+                        FileRecord
+                        { fileRecordLRUCounter = 1
+                        , fileRecordS4         = decodeUtf8 s4
+                        , fileRecordFileId     = show fileURI
+                        , fileRecordFileName   = Just $ decodeUtf8 $ locateURIFilename uri
+                        , fileRecordBytes      = content
+                        }
+                updateKV fileURI $ Just record
+                pure $ Just record
               Nothing      -> do
                 log Warning [i|Failed to fetch resource, sorry for you|]
                 pure Nothing

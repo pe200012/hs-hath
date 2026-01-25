@@ -15,6 +15,7 @@ module Types
   , CacheBackend(..)
   , R2Config(..)
   , FileRecord(..)
+  , StorageResult(..)
     -- * Globals
   , hentaiHeader
     -- * Default values
@@ -34,26 +35,26 @@ module Types
   , getPayload
   ) where
 
-import qualified Data.ByteString.Char8   as BS
-import qualified Data.ByteString.Short   as SBS
-import qualified Data.HashSet            as HashSet
-import qualified Data.Text               as T
+import qualified Data.ByteString.Char8  as BS
+import qualified Data.ByteString.Short  as SBS
+import qualified Data.HashSet           as HashSet
+import qualified Data.Text              as T
 
-import           Database.SQLite.Simple  ( FromRow, ToRow )
+import           Database.SQLite.Simple ( FromRow, ToRow )
 
-import           Dhall                   ( FromDhall(..), ToDhall(..), auto, input )
+import           Dhall                  ( FromDhall(..), ToDhall(..), auto, input )
 
-import           Network.HTTP.Types      ( HeaderName )
+import           Network.HTTP.Types     ( HeaderName )
 
-import           Polysemy                ( Member, Sem )
-import           Polysemy.Error          ( Error )
-import qualified Polysemy.Error          as Error
+import           Polysemy               ( Member, Sem )
+import           Polysemy.Error         ( Error )
+import qualified Polysemy.Error         as Error
 
-import           Prelude                 ( Show(show) )
+import           Prelude                ( Show(show) )
 
-import           Relude                  hiding ( show )
+import           Relude                 hiding ( show )
 
-import           Text.Printf             ( printf )
+import           Text.Printf            ( printf )
 
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, Text ) ] #-}
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, ByteString ) ] #-}
@@ -167,7 +168,7 @@ parseSettings
   = foldl' (\s kv -> let
                 ( k, rest ) = BS.span (/= '=') kv
                 v           = BS.drop 1 rest
-              in 
+              in
                 case ( k, readMaybe @Int64 (BS.unpack v) ) of
                   ( "host", _ ) -> s { clientHost = SBS.toShort v }
                   ( "port", Just p ) -> s { clientPort = fromIntegral p }
@@ -281,7 +282,7 @@ parseFileURI bytes = loop 0 0 0 0 0 0
           xres = BS.take (i3 - i2 - 1) (BS.drop (i2 + 1) bytes)
           yres = BS.take (i4 - i3 - 1) (BS.drop (i3 + 1) bytes)
           ext  = BS.drop (i4 + 1) bytes
-        in 
+        in
           FileURI { fileHash = hash
                   , fileSize = conv size
                   , fileXRes = conv xres
@@ -348,3 +349,5 @@ reconstructRecord uri bytes
                }
   where
     fileId = T.pack $ show uri
+
+data StorageResult = Record FileRecord | Redirect ByteString
