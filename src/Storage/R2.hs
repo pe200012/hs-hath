@@ -18,6 +18,8 @@ import           Data.Cache.LRU.IO
 import qualified Data.Cache.LRU.IO       as LRU
 import qualified Data.Text               as T
 
+import           GHC.Clock               ( getMonotonicTime )
+
 import           Network.HTTP.Client     ( newManager )
 import           Network.HTTP.Client.TLS ( tlsManagerSettings )
 import           Network.Minio           ( AccessKey(..)
@@ -96,39 +98,47 @@ runCacheR2 :: Members '[ Embed IO, Log Message, Reader ClientConfig, Error RPCEr
            -> r @> a
 runCacheR2 conn m = do
   lruSize <- asks Ty.lruCacheSize
-  let entries = Just (fromIntegral (lruSize `div` 300000)) -- Approximate number of entries based on avg file size ~300 KiB
+  let entries = Just (fromIntegral (lruSize `div` 300)) -- Approximate number of entries based on avg url link size ~300 bytes
   memCache <- embed $ newAtomicLRU entries
   interpret (phi memCache) m
   where
     bucket = r2ConnBucket conn
 
     phi :: forall r r1 x. Members '[ Embed IO, Log Message, Error RPCError ] r1
-        => AtomicLRU FileURI FileRecord
+        => AtomicLRU FileURI ( Double, ByteString )
         -> KVStore FileURI StorageResult (Sem r) x
         -> Sem r1 x
     phi cache (LookupKV uri@(fileURIToKey -> key))         = do
+      now <- embed getMonotonicTime
       embed (LRU.lookup uri cache) >>= \case
-        Just res -> pure $ Just $ Record res
-        Nothing  -> do
+        Just ( expireTime, link )
+          | now < expireTime -> pure $ Just $ Redirect link
+        _ -> do
           -- First, check if object exists using HEAD request
           headResult <- embed
             $ try @SomeException
             $ Minio.runMinioWith (r2MinioConn conn)
             $ headObject bucket key []
           case headResult of
+            Right (Right _info) ->
               -- Object exists, try to generate presigned URL (60 seconds expiry)
-            Right (Right _info) -> embed
-              $ either (const Nothing) (Just . Redirect)
-              <$> Minio.runMinioWith (r2MinioConn conn) (presignedGetObjectUrl bucket key 60 [] [])
-              -- Object does not exist in R2 storage
+              embed
+                (Minio.runMinioWith (r2MinioConn conn) (presignedGetObjectUrl bucket key 600 [] []))
+                >>= \case
+                  Left _minioErr -> pure Nothing
+                  Right link     -> do
+                    let expireTime = now + 590 -- 10 seconds buffer
+                    embed $ LRU.insert uri ( expireTime, link ) cache
+                    pure $ Just $ Redirect link
             _ -> do
+              -- Object does not exist in R2 storage
               log Warning ("Object not found in R2 storage: " <> key)
               pure Nothing
 
     phi _cache (UpdateKV _uri (Just (Redirect _url)))
       = error "impossible: cannot store Redirect in R2 backend"
 
-    phi cache (UpdateKV uri (Just (Record record)))        = do
+    phi _cache (UpdateKV uri (Just (Record record)))        = do
       let key     = fileURIToKey uri
           content = fileRecordBytes record
           siz     = fromIntegral (BS.length content) :: Int64
@@ -144,7 +154,7 @@ runCacheR2 conn m = do
         Right (Left minioErr) -> do
           log Error ("R2 write failed for " <> key <> ": " <> T.pack (show minioErr))
           throw $ Ty.StorageError (T.pack $ show minioErr)
-        Right (Right _) -> embed $ LRU.insert uri record cache
+        Right (Right _) -> pure ()
 
     phi cache (UpdateKV uri@(fileURIToKey -> key) Nothing) = do
       result <- embed
