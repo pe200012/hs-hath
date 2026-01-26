@@ -3,6 +3,7 @@ module Middleware
   , tracingConnections
   , normalizeAcceptMiddleware
   , tracingTimeUsage
+  , withHentaiHeaders
   , IPMap
   , KeystampMap
   , IP(..)
@@ -21,13 +22,20 @@ import qualified Metrics.Gauge       as Gauge
 
 import           Network.HTTP.Types  ( hAccept )
 import           Network.Socket      ( HostAddress, HostAddress6, SockAddr(..) )
-import           Network.Wai         ( Middleware, rawPathInfo, remoteHost, requestHeaders )
+import           Network.Wai         ( Middleware
+                                     , mapResponseHeaders
+                                     , rawPathInfo
+                                     , remoteHost
+                                     , requestHeaders
+                                     )
 
 import           Relude              hiding ( Reader, ask, get, runReader )
 
 import           Stats               ( StatsEnv(..) )
 
 import           System.IO.Unsafe    ( unsafePerformIO )
+
+import           Types               ( hentaiHeader )
 
 import           Utils               ( tooManyRequestsResponse )
 
@@ -148,4 +156,10 @@ tracingTimeUsage statsEnv app req k = do
                          endTime <- getMonotonicTime
                          let latency = endTime - startTime
                          Gauge.set (round (latency * 1000000)) (statsLatency statsEnv))
+
+withHentaiHeaders :: Middleware
+withHentaiHeaders app req k = app req (k . mapResponseHeaders addHeaders)
+  where
+    addHeaders headers@(map fst -> names)
+      = filter ((`notElem` names) . fst) hentaiHeader ++ headers
 
