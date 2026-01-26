@@ -522,6 +522,7 @@ makeApplication serverCxt
   $ normalizeAcceptMiddleware
   $ tracingConnections statsEnv
   $ tracingTimeUsage statsEnv
+  $ withHentaiHeaders
   $ serve api (hoistServer api interpretServer server)
   where
     ServerLoopContext
