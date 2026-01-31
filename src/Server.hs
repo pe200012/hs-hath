@@ -172,17 +172,6 @@ import           Utils                                ( bufferSending
 maxTimeDrift :: Int64
 maxTimeDrift = 600
 
-{-# NOINLINE globalKeystampMap #-}
-globalKeystampMap :: IORef KeystampMap
-globalKeystampMap = unsafePerformIO $ newIORef HashMap.empty
-
-{-# NOINLINE globalKeystampMapCounter #-}
-globalKeystampMapCounter :: IORef Int
-globalKeystampMapCounter = unsafePerformIO $ newIORef 0
-
-maxSameKeystampRequests :: Int
-maxSameKeystampRequests = 10
-
 data ServerAction = Reload | Cert | GracefulShutdown
 
 data GalleryTask = GalleryTask
@@ -274,20 +263,19 @@ server
       when (abs (timestamp - systemSeconds currentTime) > maxTimeDrift)
         $ throw err403 { errBody = "Your time is out of sync. Please update your system time." }
       when (answer /= challange cfg) $ throw err403 { errBody = "Invalid key." }
-      isSimpleLimited <- checkKeystampRateLimit
-      if isSimpleLimited
-        then throw $ err429 { errBody = "Too Many Requests" }
-        else locateResource
-          LocateURI { locateURIFilename = filename, locateURI = uri, locateURIOptions = opts }
-          >>= \case
-            Nothing -> throw err404
-            Just (Redirect url) -> throw $ err302 { errHeaders = [ ( "Location", url ) ] }
-            Just (Record (fileRecordBytes -> bs)) -> do
-              incServed
-              addUpload (BS.length bs)
-              return
-                $ addHeader @"Content-Length" (BS.length bs)
-                $ WithDynamicContentType mimeType bs
+      locateResource
+        LocateURI { locateURIFilename = filename, locateURI = uri, locateURIOptions = opts }
+        >>= \case
+          Nothing -> throw err404
+          Just (Redirect url) -> throw
+            $ err302
+            { errHeaders = [ ( "Location", url ), ( "Cache-Control", "public, max-age=600" ) ] }
+          Just (Record (fileRecordBytes -> bs)) -> do
+            incServed
+            addUpload (BS.length bs)
+            return
+              $ addHeader @"Content-Length" (BS.length bs)
+              $ WithDynamicContentType mimeType bs
       where
         mimeType = case fileExt uri of
           "jpg" -> "image/jpeg"
@@ -322,31 +310,6 @@ server
              <> "-"
              <> BD.textUtf8 (key cfg)
              <> "-hotlinkthis")
-
-        -- return True if over limit
-        checkKeystampRateLimit = embed @IO $ do
-          cnt <- readIORef globalKeystampMapCounter
-          if cnt > 100
-            then do
-              writeIORef globalKeystampMapCounter 0
-              writeIORef globalKeystampMap HashMap.empty
-              pure False
-            else do
-              writeIORef globalKeystampMapCounter (cnt + 1)
-              now <- getMonotonicTime
-              m <- readIORef globalKeystampMap
-              let checkKey = fileid <> show timestamp
-              case HashMap.lookup checkKey m of
-                Nothing -> modifyIORef' globalKeystampMap (HashMap.insert checkKey ( 1, now ))
-                  >> pure False
-                Just ( times, stamp ) -> if now - stamp > timeWindow
-                  then modifyIORef' globalKeystampMap (HashMap.delete checkKey) >> pure False
-                  else if times >= maxSameKeystampRequests
-                    then pure True
-                    else modifyIORef'
-                      globalKeystampMap
-                      (HashMap.insert checkKey ( times + 1, stamp ))
-                      >> pure False
 
     serverCmdHandler command (parseURLParams . encodeUtf8 -> additional) _time _key
       = case command of
