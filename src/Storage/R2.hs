@@ -120,16 +120,18 @@ runCacheR2 conn m = do
             $ Minio.runMinioWith (r2MinioConn conn)
             $ headObject bucket key []
           case headResult of
-            Right (Right _info) ->
-              -- Object exists, try to generate presigned URL (60 seconds expiry)
-              embed
-                (Minio.runMinioWith (r2MinioConn conn) (presignedGetObjectUrl bucket key 600 [] []))
-                >>= \case
-                  Left _minioErr -> pure Nothing
-                  Right link     -> do
-                    let expireTime = now + 590 -- 10 seconds buffer
-                    embed $ LRU.insert uri ( expireTime, link ) cache
-                    pure $ Just $ Redirect link
+            Right (Right _info) -> do
+              -- Object exists, try to generate presigned URL (1200 seconds expiry = 20 mins)
+              maybeLink <- embed
+                (Minio.runMinioWith
+                   (r2MinioConn conn)
+                   (presignedGetObjectUrl bucket key 1200 [] []))
+              case maybeLink of
+                Left _minioErr -> pure Nothing
+                Right link     -> do
+                  let expireTime = now + 600 -- 10 minutes cache TTL to ensure fresh links
+                  embed $ LRU.insert uri ( expireTime, link ) cache
+                  pure $ Just $ Redirect link
             _ -> do
               -- Object does not exist in R2 storage
               log Warning ("Object not found in R2 storage: " <> key)
@@ -138,7 +140,7 @@ runCacheR2 conn m = do
     phi _cache (UpdateKV _uri (Just (Redirect _url)))
       = error "impossible: cannot store Redirect in R2 backend"
 
-    phi _cache (UpdateKV uri (Just (Record record)))        = do
+    phi _cache (UpdateKV uri (Just (Record record)))       = do
       let key     = fileURIToKey uri
           content = fileRecordBytes record
           siz     = fromIntegral (BS.length content) :: Int64
