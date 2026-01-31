@@ -5,13 +5,6 @@
 
 packages:
 - completed:
-    hackage: polysemy-zoo-0.8.2.0@sha256:bd8f802cb0402082053b3b0b97c8b551b071a14960e6b271a5b78be728b73a24,3952
-    pantry-tree:
-      sha256: 6ba0b1b3b7390946be95267809be44377b2c15da2fae9904fa763f1cbfcb39fd
-      size: 2904
-  original:
-    hackage: polysemy-zoo-0.8.2.0
-- completed:
     hackage: suspend-0.2.0.0@sha256:0d98526558b773c3ff792664bc45d7a083a32eedb6206d4101a7570869c75a28,1115
     pantry-tree:
       sha256: 70600cf9fc141612dcfb21573c4ccbec59922fb218b384ed380458cf6b0c67e6
@@ -60,6 +53,13 @@ packages:
       size: 575
   original:
     hackage: mason-0.2.6
+- completed:
+    hackage: random-1.3.1@sha256:0b4f649c3e78713b2ccad1535251ee34b148237fb2229d7058c2b1d9ccc324b8,6004
+    pantry-tree:
+      sha256: 9e92209c00b0c00b7d1c503e15a27b67b74ac2e3b48269a9255893b06de6836c
+      size: 1667
+  original:
+    hackage: random-1.3.1
 snapshots:
 - completed:
     sha256: c320c36b8a392602c9076bdd0c656e12dcab30f294105a50c3f8ef963c4c3a0d

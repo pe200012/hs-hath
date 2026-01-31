@@ -8,9 +8,11 @@ copyright: "2024 pe200012"
 
 extra-source-files:
   - README.md
+
+extra-doc-files:
   - CHANGELOG.md
 
-synopsis: A Haskell implementation of the Hath client
+synopsis: A Haskell implementation of the Hentai@Home client
 category: Web
 
 description: Please see the README on GitHub at <https://github.com/pe200012/hs-hath#readme>
@@ -18,7 +20,7 @@ description: Please see the README on GitHub at <https://github.com/pe200012/hs-
 language: GHC2021
 
 tested-with:
-  - GHC == 9.6.6
+  - GHC == 9.12.2
 
 dependencies:
   - base >= 4.7 && < 4.22
@@ -60,9 +62,7 @@ dependencies:
   - mtl >= 2.3 && < 2.4
   - memory >= 0.18 && < 0.19
   - optparse-applicative >= 0.18 && < 0.19
-  - placeholder >= 0 && < 1
   - polysemy >= 1.9 && < 1.10
-  - polysemy-zoo >= 0.8 && < 0.9
   - process >= 1.6 && < 1.7
   - template-haskell >= 2.19 && < 2.24
   - filepath >= 1.4 && < 1.6
@@ -81,8 +81,6 @@ dependencies:
   - wai >= 3.2 && < 3.3
   - wai-extra >= 3.1 && < 3.2
   - warp >= 3.4 && < 3.5
-  - warp-tls >= 3.4 && < 3.5
-  - minio-hs >= 1.7 && < 1.8
   - conduit >= 1.3 && < 1.4
   - resourcet >= 1.3 && < 1.4
 
@@ -97,24 +95,145 @@ ghc-options:
   - -Wpartial-fields
   - -Wredundant-constraints
 
-default-extensions:
-  - NoImplicitPrelude
-  - TypeApplications
-  - OverloadedStrings
-  - ScopedTypeVariables
-  - QuasiQuotes
-  - LambdaCase
-  - ViewPatterns
-  - MultiParamTypeClasses
-  - GADTs
+internal-libraries:
+  hs-hath-placeholder:
+    source-dirs: vendor/placeholder-0/src
+    dependencies:
+      - ghc-prim >= 0 && < 10
+
+  hs-hath-warp-tls:
+    source-dirs: vendor/warp-tls-3.4.13
+    default-extensions:
+      - Strict
+      - StrictData
+    dependencies:
+      - wai >= 3 && < 4
+      - warp >= 3 && < 4
+      - tls >= 1 && < 3
+      - network >= 3 && < 4
+      - streaming-commons >= 0 && < 1
+      - tls-session-manager >= 0 && < 1
+      - recv >= 0 && < 1
+      - bytestring >= 0 && < 1
+      - text >= 1 && < 3
+
+  hs-hath-minio:
+    source-dirs: vendor/minio-hs-1.7.0/src
+    default-extensions:
+      - BangPatterns
+      - DerivingStrategies
+      - FlexibleContexts
+      - FlexibleInstances
+      - LambdaCase
+      - MultiParamTypeClasses
+      - MultiWayIf
+      - OverloadedStrings
+      - RankNTypes
+      - ScopedTypeVariables
+      - TupleSections
+    dependencies:
+      - name: base
+        version: ">= 4.7 && < 5"
+        mixin:
+          - hiding (Prelude)
+      - name: relude
+        version: ">= 1 && < 2"
+        mixin:
+          - (Relude as Prelude)
+          - ""
+      - aeson >= 1 && < 3
+      - base64-bytestring >= 1 && < 2
+      - binary >= 0 && < 1
+      - case-insensitive >= 1 && < 2
+      - conduit >= 1 && < 2
+      - conduit-extra >= 1 && < 2
+      - crypton >= 0 && < 2
+      - crypton-connection >= 0 && < 1
+      - data-default-class >= 0 && < 1
+      - digest >= 0 && < 1
+      - directory >= 1 && < 2
+      - http-client >= 0 && < 1
+      - http-client-tls >= 0 && < 1
+      - http-conduit >= 2 && < 3
+      - http-types >= 0 && < 1
+      - ini >= 0 && < 1
+      - memory >= 0 && < 1
+      - network-uri >= 2 && < 3
+      - resourcet >= 1 && < 2
+      - retry >= 0 && < 1
+      - text >= 1 && < 3
+      - time >= 1 && < 2
+      - time-units >= 1 && < 2
+      - transformers >= 0 && < 1
+      - unliftio >= 0 && < 1
+      - unliftio-core >= 0 && < 1
+      - unordered-containers >= 0 && < 1
+      - xml-conduit >= 1 && < 2
+      - name: base64
+        version: ">= 0 && < 2"
+        mixin:
+          - hiding (Data.ByteString.Base64)
+
+  hs-hath-polysemy-zoo:
+    source-dirs: vendor/polysemy-zoo-0.8.2.0/src
+    default-extensions:
+      - DataKinds
+      - DeriveFunctor
+      - FlexibleContexts
+      - GADTs
+      - LambdaCase
+      - PolyKinds
+      - RankNTypes
+      - ScopedTypeVariables
+      - StandaloneDeriving
+      - TypeApplications
+      - TypeOperators
+      - TypeFamilies
+      - UnicodeSyntax
+    ghc-options:
+      - -Wall
+    dependencies:
+      - base >= 4.21 && < 4.22
+      - ghc-prim >= 0.13 && < 0.14
+      - containers >= 0.7 && < 0.8
+      - random >= 1.3 && < 1.4
+      - mtl >= 2.3 && < 2.4
+      - transformers >= 0.6 && < 0.7
+      - exceptions >= 0.10 && < 0.11
+      - text >= 2.1 && < 2.2
+      - optparse-applicative >= 0.18.1 && < 0.19
+      - directory >= 1.3 && < 1.4
+      - contravariant >= 1.5 && < 1.6
+      - async >= 2.2 && < 2.3
+      - constraints >= 0.14 && < 0.16
+      - polysemy >= 1.9 && < 1.10
+      - ghc-compact >= 0.1 && < 0.2
+      - reflection >= 2.1 && < 2.2
+      - streaming >= 0.2 && < 0.3
 
 library:
   source-dirs: src
+  dependencies:
+    - hs-hath-placeholder
+    - hs-hath-warp-tls
+    - hs-hath-minio
+    - hs-hath-polysemy-zoo
+  default-extensions:
+    - NoImplicitPrelude
+    - TypeApplications
+    - OverloadedStrings
+    - ScopedTypeVariables
+    - QuasiQuotes
+    - LambdaCase
+    - ViewPatterns
+    - MultiParamTypeClasses
+    - GADTs
 
 executables:
   hs-hath:
     main: Main.hs
     source-dirs: app
+    other-modules: []
     ghc-options:
       - -threaded
       - -rtsopts
@@ -122,10 +241,21 @@ executables:
       - -fpedantic-bottoms
     dependencies:
       - hs-hath
+    default-extensions:
+      - NoImplicitPrelude
+      - TypeApplications
+      - OverloadedStrings
+      - ScopedTypeVariables
+      - QuasiQuotes
+      - LambdaCase
+      - ViewPatterns
+      - MultiParamTypeClasses
+      - GADTs
 
   migrate-to-r2:
     main: Migrate.hs
     source-dirs: app
+    other-modules: []
     ghc-options:
       - -threaded
       - -rtsopts
@@ -134,8 +264,20 @@ executables:
       - Migrate
     dependencies:
       - hs-hath
+      - hs-hath-minio
+      - hs-hath-polysemy-zoo
       - optparse-applicative
       - directory
+    default-extensions:
+      - NoImplicitPrelude
+      - TypeApplications
+      - OverloadedStrings
+      - ScopedTypeVariables
+      - QuasiQuotes
+      - LambdaCase
+      - ViewPatterns
+      - MultiParamTypeClasses
+      - GADTs
 
 tests:
   hs-hath-test:
@@ -156,3 +298,13 @@ tests:
       - directory
       - filepath
       - temporary
+    default-extensions:
+      - NoImplicitPrelude
+      - TypeApplications
+      - OverloadedStrings
+      - ScopedTypeVariables
+      - QuasiQuotes
+      - LambdaCase
+      - ViewPatterns
+      - MultiParamTypeClasses
+      - GADTs
