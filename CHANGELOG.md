@@ -6,7 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to the
 [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
-## Unreleased
+## [1.1.2] - 2026-01-31
+
+### Changed
+- Now vendors `minio-hs`, `placeholder`, `polysemy-zoo`, and `warp-tls` as internal libraries for finer version control and local modifications
+- Update tested GHC version
+- Increased presigned URL expiry from 10 to 20 minutes and adjusted local cache TTL to 10 minutes
+- Removed custom keystamp-based rate limiting
+- Updated to lts-24.27
+
+## [1.1.1] - 2026-01-26
+### Added
+- R2 Object Storage support with client-side caching
+- Presigned URL generation for R2 redirects
+### Changed
+- Refactored time handling to use MonotonicTime for better precision
+- Fix rate limiting logic
+- Drop macOS support (removed logic-macos.hs)
 
 ## [1.0.3] - 2026-01-24
 
