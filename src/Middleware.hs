@@ -121,7 +121,7 @@ checkRateLimit ip now = do
     -- Check if requests are within rate limit window and update accordingly
     checkAndUpdateRequests record
       = if now - earlistRequestTime record <= timeWindow
-        then if requestTimes record > maxRequests
+        then if requestTimes record >= maxRequests
           then do
             -- Ban the IP for 5 minutes
             modifyIORef' globalIPMap $ HashMap.insert ip (record { bannedUntil = now + 5 * 60 })

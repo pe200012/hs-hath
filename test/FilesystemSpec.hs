@@ -13,10 +13,11 @@ import           Storage.Database     ( FileRecord(..) )
 import           Polysemy
 import           Polysemy.Error       ( Error, runError )
 import           Polysemy.KVStore     ( KVStore, lookupKV, updateKV )
+import           Polysemy.Reader      ( Reader, runReader )
 
 import           Storage.Filesystem   ( runCacheFilesystem )
 
-import           Relude               hiding ( Reader )
+import           Relude               hiding ( Reader, runReader )
 
 import           System.Directory     ( doesFileExist )
 import           System.FilePath      ( (</>) )
@@ -24,7 +25,13 @@ import           System.IO.Temp       ( withSystemTempDirectory )
 
 import           Test.Hspec
 
-import           Types                ( FileURI, RPCError, parseFileURI )
+import           Types                ( ClientConfig
+                                      , FileURI
+                                      , RPCError
+                                      , StorageResult(..)
+                                      , defaultClientConfig
+                                      , parseFileURI
+                                      )
 
 -- | Sample file record for testing
 sampleRecord :: FileRecord
@@ -51,21 +58,22 @@ silentLogAction = LogAction $ \_ -> pure ()
 
 -- | Run a program with Filesystem cache effect (silent logging)
 runWithFilesystemSilent :: FilePath
-                        -> Sem '[KVStore FileURI FileRecord, Log Message, Error RPCError, Embed IO] a 
+                        -> Sem '[KVStore FileURI StorageResult, Log Message, Reader ClientConfig, Error RPCError, Embed IO] a 
                         -> IO (Either RPCError a)
 runWithFilesystemSilent root program = 
   runM
   . runError @RPCError
+  . runReader defaultClientConfig
   . runLogAction @IO @Message silentLogAction
   . runCacheFilesystem root
   $ program
 
 -- | Lookup with explicit type
-lookupFile :: Member (KVStore FileURI FileRecord) r => FileURI -> Sem r (Maybe FileRecord)
+lookupFile :: Member (KVStore FileURI StorageResult) r => FileURI -> Sem r (Maybe StorageResult)
 lookupFile = lookupKV
 
 -- | Update with explicit type
-updateFile :: Member (KVStore FileURI FileRecord) r => FileURI -> Maybe FileRecord -> Sem r ()
+updateFile :: Member (KVStore FileURI StorageResult) r => FileURI -> Maybe StorageResult -> Sem r ()
 updateFile = updateKV
 
 filesystemSpecs :: Spec
@@ -76,7 +84,7 @@ filesystemSpecs = describe "Filesystem Cache Effect" $ do
       let root = tempDir </> "cache"
       
       -- Store
-      storeResult <- runWithFilesystemSilent root $ updateFile sampleURI (Just sampleRecord)
+      storeResult <- runWithFilesystemSilent root $ updateFile sampleURI (Just $ Record sampleRecord)
       storeResult `shouldBe` Right ()
       
       -- Verify file exists on disk (impl detail check)
@@ -93,8 +101,9 @@ filesystemSpecs = describe "Filesystem Cache Effect" $ do
       case retrieveResult of
         Left err -> expectationFailure $ "Error: " <> show err
         Right Nothing -> expectationFailure "Expected file record but got Nothing"
-        Right (Just record) -> do
+        Right (Just (Record record)) -> do
           fileRecordBytes record `shouldBe` fileRecordBytes sampleRecord
+        Right (Just (Redirect _)) -> expectationFailure "Expected cached record but got redirect"
 
   it "should return Nothing for non-existent file" $ do
     withSystemTempDirectory "hath-test" $ \tempDir -> do
@@ -112,7 +121,7 @@ filesystemSpecs = describe "Filesystem Cache Effect" $ do
       let root = tempDir </> "cache"
       
       -- Store first
-      _ <- runWithFilesystemSilent root $ updateFile sampleURI (Just sampleRecord)
+      _ <- runWithFilesystemSilent root $ updateFile sampleURI (Just $ Record sampleRecord)
       
       -- Delete
       deleteResult <- runWithFilesystemSilent root $ updateFile sampleURI Nothing
@@ -125,4 +134,7 @@ filesystemSpecs = describe "Filesystem Cache Effect" $ do
       
       -- Verify lookup returns Nothing
       lookupResult <- runWithFilesystemSilent root $ lookupFile sampleURI
-      lookupResult `shouldBe` Right Nothing
+      case lookupResult of
+        Left err -> expectationFailure $ "Error: " <> show err
+        Right Nothing -> pure ()
+        Right (Just _) -> expectationFailure "Expected Nothing after delete"

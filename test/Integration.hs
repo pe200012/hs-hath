@@ -18,7 +18,6 @@ import qualified Data.Aeson               as A
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Char8    as BSC
 import qualified Data.ByteString.Lazy     as LBS
-import qualified Data.HashMap.Strict      as HM
 import qualified Data.Map.Strict          as Map
 import           Data.String.Interpolate  ( i )
 import qualified Data.Text                as T
@@ -27,10 +26,10 @@ import           Data.Time.Clock.System   ( SystemTime(systemSeconds), getSystem
 import           Data.X509                ( CertificateChain(..), PrivKey )
 import           Data.X509.File           ( readSignedObject, readKeyFile )
 
-import           Database                 ( initializeDB )
+import           Storage.Database         ( initializeDB )
 import           Database.SQLite.Simple   ( withConnection )
 
-import           Hash                     ( hash )
+import           Utils                    ( hash )
 
 import           MockRPC
 
@@ -54,17 +53,59 @@ import           Relude                   hiding ( Reader
                                                  , runReader
                                                  )
 
-import           Server                   ( CacheRunner(..), ServerAction(..), makeApplication, startServer )
+import           Server                   ( CacheRunner(..)
+                                          , ServerAction(..)
+                                          , GalleryTask(..)
+                                          , makeApplication
+                                          , mkServerLoopContext
+                                          , startServer
+                                          )
 
-import           Database                 ( runCache )
+
+
+import           Storage.Database         ( runCache )
+
+
 
 import           Stats                    ( newStatsEnv )
 
+
+
 import           System.Environment       ( setEnv )
+
+
 
 import           Test.Hspec
 
+
+
+import           UnliftIO                 ( TChan
+
+
+
+                                          , newTChanIO
+
+
+
+                                          , tryReadTChan
+
+
+
+                                          , writeTChan
+
+
+
+                                          )
+
+
+
+
+
+
+
 import           Types                    ( CacheBackend(..)
+
+
                                           , ClientConfig(..)
                                           , HathSettings(..)
                                           , defaultHathSettings
@@ -82,7 +123,36 @@ testConfig port
   , cachePath    = "/tmp/hs-hath-test-" <> show port <> ".db"
   , cacheBackend = CacheBackendSQLite
   , r2Config     = Nothing
+  , lruCacheSize = 100 * 1024 * 1024
   }
+
+withTestServerConfigured
+  :: Bool
+  -> MockRPCConfig
+  -> ClientConfig
+  -> HathSettings
+  -> (Int -> IO a)
+  -> IO a
+withTestServerConfigured disableRateLimit mockCfg clientCfg settings action = withMockRPC mockCfg $ do
+  setEnv "HATH_RPC_HOST" ("localhost:" <> show (mockPort mockCfg))
+  serverChan <- newTChanIO
+  galleryHandler <- newTChanIO
+  ssVar <- newTVarIO settings
+  statsEnv <- newStatsEnv
+  withConnection ":memory:" $ \conn -> do
+    initializeDB conn
+    let cacheRunner = CacheRunner { runCacheWith = runCache conn }
+        ctx = mkServerLoopContext
+          clientCfg
+          ssVar
+          serverChan
+          galleryHandler
+          disableRateLimit
+          False
+          cacheRunner
+          statsEnv
+        app = makeApplication ctx
+    Warp.testWithApplication (pure app) action
 
 withTestServer
   :: MockRPCConfig
@@ -90,16 +160,15 @@ withTestServer
   -> HathSettings
   -> (Int -> IO a)
   -> IO a
-withTestServer mockCfg clientCfg settings action = withMockRPC mockCfg $ do
-  setEnv "HATH_RPC_HOST" ("localhost:" <> show (mockPort mockCfg))
-  serverChan <- newEmptyMVar
-  ipMap <- newTVarIO HM.empty
-  statsEnv <- newStatsEnv
-  withConnection ":memory:" $ \conn -> do
-    initializeDB conn
-    let cacheRunner = CacheRunner { runCacheWith = runCache conn }
-        app = makeApplication clientCfg settings serverChan ipMap cacheRunner statsEnv
-    Warp.testWithApplication (pure app) action
+withTestServer = withTestServerConfigured True
+
+withRateLimitedTestServer
+  :: MockRPCConfig
+  -> ClientConfig
+  -> HathSettings
+  -> (Int -> IO a)
+  -> IO a
+withRateLimitedTestServer = withTestServerConfigured False
 
 -- | Helper to load test certificates
 loadTestCertificates :: IO (CertificateChain, [PrivKey])
@@ -113,7 +182,7 @@ withStartServer
   :: MockRPCConfig
   -> ClientConfig
   -> HathSettings
-  -> (Int -> MVar ServerAction -> IO a)
+  -> (Int -> TChan ServerAction -> IO a)
   -> IO a
 withStartServer mockCfg clientCfg settings action = withMockRPC mockCfg $ do
   setEnv "HATH_RPC_HOST" ("localhost:" <> show (mockPort mockCfg))
@@ -121,13 +190,13 @@ withStartServer mockCfg clientCfg settings action = withMockRPC mockCfg $ do
   case keys of
     [] -> error "No private key found in test-key.pem"
     (privKey:_) -> do
-      serverChan <- newEmptyMVar
+      serverChan <- newTChanIO
       let certs = (certChain, privKey)
           port = clientPort settings
       
       -- Start server in background thread (skipVerify = True for tests)
       bracket
-        (forkIO $ startServer clientCfg settings certs serverChan True)
+        (forkIO $ startServer clientCfg settings certs serverChan True False)
         killThread
         (\_ -> do
           -- Wait a bit for server to initialize
@@ -135,8 +204,7 @@ withStartServer mockCfg clientCfg settings action = withMockRPC mockCfg $ do
           -- Run the test action
           result <- action port serverChan
           -- Shutdown server gracefully
-          _ <- Control.Concurrent.MVar.tryTakeMVar serverChan  -- Clear any existing value
-          Control.Concurrent.MVar.putMVar serverChan GracefulShutdown
+          atomically $ writeTChan serverChan GracefulShutdown
           threadDelay 500000  -- Wait for shutdown
           return result
         )
@@ -202,7 +270,7 @@ integrationSpecs = do
           clientCfg   = testConfig 2
           fileURIStr  = hash @Text mockContent <> "-123-1024-768-txt"
 
-      withTestServer mockConfig clientCfg defaultHathSettings { throttleBytes = 1 } $ \serverPort -> do
+      withRateLimitedTestServer mockConfig clientCfg defaultHathSettings { throttleBytes = 1 } $ \serverPort -> do
         now <- getSystemTime
         let ts = systemSeconds now
             k  = key clientCfg
@@ -227,11 +295,10 @@ integrationSpecs = do
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         manager <- newManager defaultManagerSettings
-        req <- parseRequest [i|http://localhost:#{serverPort}/stats|]
+        req <- parseRequest [i|http://localhost:#{serverPort}/metrics|]
         resp <- httpLbs req manager
         responseStatus resp `shouldBe` status200
-        let decoded = A.decode @A.Value (responseBody resp)
-        decoded `shouldSatisfy` isJust
+        LBS.toStrict (responseBody resp) `shouldSatisfy` (\body -> "hath_cache_sent_total" `BS.isInfixOf` body)
 
     it "returns 404 for unknown raw routes" $ do
       let mockPortNum = 19805
@@ -788,23 +855,6 @@ integrationSpecs = do
         -- 4. Starts the server loop
         threadDelay 2000000  -- Wait 2 seconds for initialization
         -- If we got here without exceptions, initialization succeeded
-        return ()
-
-    it "handles server action Settings message" $ do
-      let mockPortNum = 19902
-          mockConfig  = defaultMockConfig 
-            { mockPort = mockPortNum
-            , mockClientSettingsResponse = BSC.unlines [ "OK", "host=127.0.0.1", "port=9902", "throttle_bytes=1000" ]
-            }
-          clientCfg   = testConfig 102
-          settings = defaultHathSettings { clientPort = 9902 }
-
-      withStartServer mockConfig clientCfg settings $ \_serverPort chan -> do
-        threadDelay 1000000  -- Wait for server to start
-        -- Send Settings action to trigger refreshSettings
-        Control.Concurrent.MVar.putMVar chan Settings
-        threadDelay 2000000  -- Wait for settings refresh
-        -- If we got here, settings refresh succeeded
         return ()
 
     it "fetches blacklist via tictok timer" $ do

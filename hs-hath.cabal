@@ -747,6 +747,7 @@ test-suite hs-hath-test
     , filepath
     , hex-text ==0.1.*
     , hs-hath
+    , hs-hath-polysemy-zoo
     , hspec ==2.11.*
     , http-client ==0.7.*
     , http-client-tls ==0.3.*

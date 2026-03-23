@@ -7,6 +7,7 @@ module Server
   ( startServer
   , ServerAction(..)
   , makeApplication
+  , mkServerLoopContext
   , CacheRunner(..)
   , IPMap
   , KeystampMap
@@ -218,6 +219,34 @@ data ServerLoopContext
     -- ^ Configuration flags controlling middleware behavior
   , loopCacheRunner :: !CacheRunner
     -- ^ Cache backend interpreter (SQLite, R2, or Filesystem)
+  }
+
+mkServerLoopContext
+  :: ClientConfig
+  -> TVar HathSettings
+  -> TChan ServerAction
+  -> TChan GalleryTask
+  -> Bool
+  -> Bool
+  -> CacheRunner
+  -> StatsEnv
+  -> ServerLoopContext
+mkServerLoopContext cfg settings action gallery disableRL trustProxy cacheRunner statsEnv
+  = ServerLoopContext
+  { loopConfig      = cfg
+  , loopChannels    = ServerChannels
+      { serverActionChan = action
+      , galleryTaskChan  = gallery
+      }
+  , loopState       = ServerState
+      { serverSettings = settings
+      , serverStatsEnv = statsEnv
+      }
+  , loopFlags       = ServerFlags
+      { disableRateLimit  = disableRL
+      , trustProxyHeaders = trustProxy
+      }
+  , loopCacheRunner = cacheRunner
   }
 
 -- Server implementation
