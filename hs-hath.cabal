@@ -703,7 +703,9 @@ test-suite hs-hath-test
   main-is: Spec.hs
   other-modules:
       FilesystemSpec
+      FileURIRenderSpec
       Integration
+      InterfaceAPIOptimizationSpec
       MockRPC
       R2Spec
       Paths_hs_hath

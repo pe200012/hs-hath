@@ -28,6 +28,8 @@ module Types
   , parseMetadata
   , readClientConfig
   , parseFileURI
+  , renderFileURIBytes
+  , renderFileURIText
   , parseRPCResponse
   , parseRPCResponse'
   , reconstructRecord
@@ -39,6 +41,8 @@ import qualified Data.ByteString.Char8  as BS
 import qualified Data.ByteString.Short  as SBS
 import qualified Data.HashSet           as HashSet
 import qualified Data.Text              as T
+
+import qualified Mason.Builder          as BD
 
 import           Database.SQLite.Simple ( FromRow, ToRow )
 
@@ -53,8 +57,6 @@ import qualified Polysemy.Error         as Error
 import           Prelude                ( Show(show) )
 
 import           Relude                 hiding ( show )
-
-import           Text.Printf            ( printf )
 
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, Text ) ] #-}
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, ByteString ) ] #-}
@@ -168,7 +170,7 @@ parseSettings
   = foldl' (\s kv -> let
                 ( k, rest ) = BS.span (/= '=') kv
                 v           = BS.drop 1 rest
-              in
+              in 
                 case ( k, readMaybe @Int64 (BS.unpack v) ) of
                   ( "host", _ ) -> s { clientHost = SBS.toShort v }
                   ( "port", Just p ) -> s { clientPort = fromIntegral p }
@@ -250,9 +252,24 @@ data FileURI
             }
   deriving ( Ord, Eq )
 
+renderFileURIBytes :: FileURI -> ByteString
+renderFileURIBytes (FileURI { fileHash, fileSize, fileXRes, fileYRes, fileExt })
+  = BD.toStrictByteString
+    (BD.byteString fileHash
+     <> "-"
+     <> BD.intDec fileSize
+     <> "-"
+     <> BD.intDec fileXRes
+     <> "-"
+     <> BD.intDec fileYRes
+     <> "-"
+     <> BD.byteString fileExt)
+
+renderFileURIText :: FileURI -> Text
+renderFileURIText = decodeUtf8 . renderFileURIBytes
+
 instance Show FileURI where
-  show (FileURI { fileHash, fileSize, fileXRes, fileYRes, fileExt })
-    = printf "%s-%d-%d-%d-%s" (BS.unpack fileHash) fileSize fileXRes fileYRes (BS.unpack fileExt)
+  show = toString . renderFileURIText
 
 emptyFileURI :: FileURI
 emptyFileURI = FileURI { fileHash = "", fileSize = 0, fileXRes = 0, fileYRes = 0, fileExt = "" }
@@ -282,7 +299,7 @@ parseFileURI bytes = loop 0 0 0 0 0 0
           xres = BS.take (i3 - i2 - 1) (BS.drop (i2 + 1) bytes)
           yres = BS.take (i4 - i3 - 1) (BS.drop (i3 + 1) bytes)
           ext  = BS.drop (i4 + 1) bytes
-        in
+        in 
           FileURI { fileHash = hash
                   , fileSize = conv size
                   , fileXRes = conv xres
@@ -348,6 +365,6 @@ reconstructRecord uri bytes
                , fileRecordBytes      = bytes
                }
   where
-    fileId = T.pack $ show uri
+    fileId = renderFileURIText uri
 
 data StorageResult = Record FileRecord | Redirect ByteString

@@ -7,10 +7,12 @@ import           Data.Text        ( Text )
 
 import           Storage.Database ( FileRecord(..), runCachePure )
 
-import           FilesystemSpec   ( filesystemSpecs )
-import           Integration      ( integrationSpecs )
+import           FileURIRenderSpec           ( fileURIRenderSpecs )
+import           FilesystemSpec              ( filesystemSpecs )
+import           Integration                 ( integrationSpecs )
+import           InterfaceAPIOptimizationSpec ( interfaceAPIOptimizationSpecs )
 
-import           R2Spec           ( r2Specs )
+import           R2Spec                      ( r2Specs )
 
 import           Polysemy
 import           Polysemy.KVStore ( KVStore, lookupKV, updateKV )
@@ -24,6 +26,8 @@ import           Types            ( FileURI, parseFileURI )
 main :: IO ()
 main = hspec $ do
   cacheSpecs
+  interfaceAPIOptimizationSpecs
+  fileURIRenderSpecs
   integrationSpecs
   r2Specs
   filesystemSpecs

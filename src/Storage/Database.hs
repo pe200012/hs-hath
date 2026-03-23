@@ -16,7 +16,12 @@ import           Polysemy.Operators
 
 import           Relude                  hiding ( Reader, State, ask, evalState, get, modify, put )
 
-import           Types                   ( FileRecord(..), FileURI, StorageResult(..) )
+import           Types                   ( FileRecord(..)
+                                         , FileURI
+                                         , StorageResult(..)
+                                         , renderFileURIBytes
+                                         , renderFileURIText
+                                         )
 
 {-# INLINE initializeDB #-}
 -- | Initialize database with required schema
@@ -42,7 +47,7 @@ runCache
   :: Members '[ Embed IO ] r => Connection -> KVStore FileURI StorageResult : r @> a -> r @> a
 runCache conn = interpret $ \case
   LookupKV uri -> do
-    let fid = show @Text uri
+    let fid = renderFileURIText uri
     embed
       $ execute conn "UPDATE files SET lru_counter = lru_counter + 1 WHERE file_id = ?" (Only fid)
     results <- embed
@@ -67,7 +72,7 @@ runCache conn = interpret $ \case
         record
 
   UpdateKV uri Nothing -> let
-      fid = show @ByteString uri
+      fid = renderFileURIBytes uri
     in 
       embed $ execute conn "DELETE FROM files WHERE file_id = ?" (Only fid)
 

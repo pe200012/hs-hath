@@ -59,7 +59,7 @@ runLocate = interpret $ \case
   LocateResource uri -> do
     settings <- getSettings
     let fileURI = locateURI uri
-        s4      = SBS.take 4 . show $ fileURI
+        s4      = SBS.toShort $ BS.take 4 $ renderFileURIBytes fileURI
     -- if HashSet.member s4 (staticRanges settings) <-- we have a bug in setting parsing. wait for fix
     if True
       then lookupKV fileURI >>= \case
@@ -79,7 +79,7 @@ runLocate = interpret $ \case
                         FileRecord
                         { fileRecordLRUCounter = 1
                         , fileRecordS4         = decodeUtf8 s4
-                        , fileRecordFileId     = show fileURI
+                        , fileRecordFileId     = renderFileURIText fileURI
                         , fileRecordFileName   = Just $ decodeUtf8 $ locateURIFilename uri
                         , fileRecordBytes      = content
                         }

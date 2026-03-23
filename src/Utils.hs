@@ -48,6 +48,12 @@ lookupParam = Map.lookup
 hasParam :: ByteString -> URLParams -> Bool
 hasParam = Map.member
 
+{-# INLINE firstJustM #-}
+-- | Run effects from left to right and stop at the first successful result.
+firstJustM :: Monad m => (a -> m (Maybe b)) -> [ a ] -> m (Maybe b)
+firstJustM _ [] = pure Nothing
+firstJustM f (x : xs) = f x >>= maybe (firstJustM f xs) (pure . Just)
+
 bufferSending :: Int -> StepT m ByteString
 bufferSending 0 = Source.Stop
 bufferSending n

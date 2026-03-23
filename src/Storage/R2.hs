@@ -48,6 +48,7 @@ import           Types                   ( ClientConfig
                                          , FileURI(..)
                                          , RPCError(..)
                                          , StorageResult(..)
+                                         , renderFileURIText
                                          )
 import qualified Types                   as Ty
 
@@ -85,7 +86,7 @@ mkR2Connection cfg = do
 fileURIToKey :: FileURI -> Text
 fileURIToKey uri = s4 <> "/" <> fileId
   where
-    fileId = show uri
+    fileId = renderFileURIText uri
 
     s4     = T.take 4 fileId
 

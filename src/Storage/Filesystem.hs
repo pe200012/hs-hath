@@ -28,7 +28,12 @@ import           Storage.Database   ( FileRecord(..) )
 import           System.Directory   ( createDirectoryIfMissing, doesFileExist, removeFile )
 import           System.FilePath    ( (</>), takeDirectory, takeFileName )
 
-import           Types              ( ClientConfig, FileURI(..), RPCError(..), StorageResult(..) )
+import           Types              ( ClientConfig
+                                   , FileURI(..)
+                                   , RPCError(..)
+                                   , StorageResult(..)
+                                   , renderFileURIText
+                                   )
 import qualified Types              as Ty
 
 import           Utils              ( log )
@@ -39,7 +44,7 @@ fileURIToPath :: FilePath -> FileURI -> FilePath
 fileURIToPath root uri = root </> s4 </> fileId
   where
     -- Sanitize to prevent directory traversal
-    fileId = takeFileName (show uri)
+    fileId = takeFileName (toString $ renderFileURIText uri)
 
     s4     = T.unpack $ T.take 4 (T.pack fileId)
 

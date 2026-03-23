@@ -106,11 +106,12 @@ import           Types                    ( ClientConfig
                                           , parseRPCResponse
                                           , parseRPCResponse'
                                           , parseSettings
+                                          , renderFileURIBytes
                                           )
 
 import           UnliftIO                 ( try )
 
-import           Utils                    ( hash )
+import           Utils                    ( firstJustM, hash )
 
 -- | Available server commands
 data ServerCommand
@@ -436,8 +437,10 @@ downloadGalleryFile metadata file = do
 
         if null urls
           then operate (retries + 1) -- we did not get a valid URL, might be a network error
-          else maybe (operate (retries + 1)) (pure . Just) . asum
-            =<< traverse (download . BSC.unpack) urls
+          else do
+            -- `traverse` would execute every fallback download eagerly.
+            -- We need monadic short-circuiting to stop after the first success.
+            firstJustM (download . BSC.unpack) urls >>= maybe (operate (retries + 1)) (pure . Just)
 
 {-# INLINE reportFailures #-}
 reportFailures :: [ Text ] -> EHentaiAPI -@> ()
@@ -452,11 +455,12 @@ fetchResource fileURI ( fileIndex, xres ) = do
     =<< ehRPC
       emptyRPCParams { act = Just "srfetch", add = Just [i|#{fileIndex};#{xres};#{fileURI}|] }
   cfg <- ask @ClientConfig
-  asum
-    <$> traverse
-      (download [i|#{clientId cfg}-#{hash @ByteString $ encodeUtf8 (key cfg) <> show fileURI}|]
-       . BSC.unpack)
-      urls
+  -- `traverse` would execute every fallback download eagerly.
+  -- We need monadic short-circuiting to stop after the first success.
+  firstJustM
+    (download [i|#{clientId cfg}-#{hash @ByteString $ encodeUtf8 (key cfg) <> renderFileURIBytes fileURI}|]
+     . BSC.unpack)
+    urls
   where
     download token url = case parseRequest url of
       Nothing  -> pure Nothing

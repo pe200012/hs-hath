@@ -42,7 +42,7 @@ import           Storage.R2             ( R2Connection(..), mkR2Connection, runC
 import           System.Directory       ( doesDirectoryExist, doesFileExist, listDirectory )
 import           System.FilePath        ( (</>), takeFileName )
 
-import           Types                  ( FileURI, R2Config(..), RPCError(..), parseFileURI )
+import           Types                  ( FileURI, R2Config(..), RPCError(..), parseFileURI, renderFileURIText )
 
 -- | Command line options
 data MigrateOptions
@@ -274,6 +274,6 @@ uploadToR2 conn uri record = do
 fileURIToKey :: FileURI -> Text
 fileURIToKey uri = s4 <> "/" <> fileId
   where
-    fileId = show uri
+    fileId = renderFileURIText uri
 
     s4     = T.take 4 fileId
