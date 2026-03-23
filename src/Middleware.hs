@@ -9,9 +9,14 @@ module Middleware
   , IP(..)
   , IPRecord(..)
   , timeWindow
+  , checkRateLimit
+  , isLocalIP
+  , parseIPv4
   ) where
 
 import           Control.Exception   ( finally )
+
+import           Data.Bits           ( shiftR, (.&.) )
 
 import qualified Data.ByteString     as BS
 import qualified Data.HashMap.Strict as HashMap
@@ -21,7 +26,13 @@ import           GHC.Clock           ( getMonotonicTime )
 import qualified Metrics.Gauge       as Gauge
 
 import           Network.HTTP.Types  ( hAccept )
-import           Network.Socket      ( HostAddress, HostAddress6, SockAddr(..) )
+import           Network.Socket      ( HostAddress
+                                     , HostAddress6
+                                     , SockAddr(..)
+                                     , hostAddress6ToTuple
+                                     , hostAddressToTuple
+                                     , tupleToHostAddress
+                                     )
 import           Network.Wai         ( Middleware
                                      , mapResponseHeaders
                                      , rawPathInfo
@@ -39,18 +50,23 @@ import           Types               ( hentaiHeader )
 
 import           Utils               ( tooManyRequestsResponse )
 
+-- | Mirrors the official client's flood control (HTTPServer.FloodControlEntry):
+-- every request adds one hit, hits drain at one per second, and more than
+-- 'floodLimit' hits blocks the IP for 'blockSeconds'.
+floodLimit :: Int
+floodLimit = 10
+
+blockSeconds :: Double
+blockSeconds = 60
+
+-- | Entries idle for this long carry no state worth keeping (any block has expired).
 timeWindow :: Double
-timeWindow = 10 * 60 -- 10 minutes in seconds
+timeWindow = 60
 
-maxRequests :: Int8
-maxRequests = 5
-
--- Data types for tracking requests
--- Note: Lists cannot be unpacked, so we use strict spine with explicit strictness
 data IPRecord
-  = IPRecord { earlistRequestTime :: !Double   -- ^ Time of the first request
-             , requestTimes       :: !Int8     -- ^ Number of requests in the time window
-             , bannedUntil        :: !Double -- ^ When the ban expires
+  = IPRecord { hitCount    :: !Int     -- ^ Hits left after draining
+             , lastHit     :: !Double  -- ^ Monotonic time of the last counted hit
+             , bannedUntil :: !Double  -- ^ When the block expires
              }
   deriving ( Show )
 
@@ -73,64 +89,79 @@ getIP _ = Nothing
 globalIPMap :: IORef IPMap
 globalIPMap = unsafePerformIO $ newIORef HashMap.empty
 
-{-# NOINLINE globalIPMapCounter #-}
-globalIPMapCounter :: IORef Int
-globalIPMapCounter = unsafePerformIO $ newIORef 0
-
--- Create a new rate limiting middleware
-rateLimitMiddleware :: Middleware
-rateLimitMiddleware app req k
+-- | Flood control for /h/. Local addresses and those the predicate exempts
+-- (the RPC servers, as in the official client) are never limited.
+rateLimitMiddleware :: (IP -> IO Bool) -> Middleware
+rateLimitMiddleware exempt app req k
   | "/h/" `BS.isPrefixOf` rawPathInfo req = do
     now <- getMonotonicTime
     let sockAddr = remoteHost req
     case getIP sockAddr of
       Nothing -> app req k  -- If we can't get IP, just allow the request
-      Just ip -> do
-        allowed <- checkRateLimit ip now
-        if allowed
-          then app req k
-          else k tooManyRequestsResponse
+      Just ip
+        | isLocalIP ip -> app req k
+        | otherwise -> do
+          skip <- exempt ip
+          allowed <- if skip then pure True else checkRateLimit ip now
+          if allowed
+            then app req k
+            else k tooManyRequestsResponse
   | otherwise = app req k  -- Skip rate limiting for non-resource paths
 
--- Check if request is allowed and update rate limit state
---
--- return False if the request should be blocked
-checkRateLimit :: IP -> Double -> IO Bool
-checkRateLimit ip now = do
-  cnt <- readIORef globalIPMapCounter
-  if cnt > 100
-    then do
-      writeIORef globalIPMapCounter 0
-      writeIORef globalIPMap HashMap.empty
-      pure True
-    else do
-      writeIORef globalIPMapCounter (cnt + 1)
-      m <- readIORef globalIPMap
-      maybe firstRequest existingRequest (HashMap.lookup ip m)
+-- | "a.b.c.d" or "::ffff:a.b.c.d", the form rpc_server_ip uses.
+-- ponytail: IPv4 only; the RPC servers have no IPv6 addresses.
+parseIPv4 :: ByteString -> Maybe IP
+parseIPv4 s = case traverse (readMaybe @Int . decodeUtf8) (BS.split 46 v4) of
+  Just [ a, b, c, d ]
+    | all (\x -> x >= 0 && x <= 255) [ a, b, c, d ] -> Just
+      (IPv4 (tupleToHostAddress ( fromIntegral a, fromIntegral b, fromIntegral c, fromIntegral d )))
+  _ -> Nothing
   where
-    -- Handle first request from an IP by creating new record
-    firstRequest = do
-      modifyIORef' globalIPMap $ HashMap.insert ip (IPRecord now 1 0)
-      return True
+    v4 = fromMaybe s (BS.stripPrefix "::ffff:" s)
 
-    -- Check if IP is banned, otherwise check request count
-    existingRequest record
-      | bannedUntil record > now = return False
-      | otherwise = checkAndUpdateRequests record
+-- | Loopback, private and link-local addresses, which the official client
+-- exempts from flood control (HTTPServer.localNetworkPattern).
+isLocalIP :: IP -> Bool
+isLocalIP (IPv4 ha) = localV4 (hostAddressToTuple ha)
+isLocalIP (IPv6 ha) = case hostAddress6ToTuple ha of
+  ( 0, 0, 0, 0, 0, 0, 0, 1 ) -> True
+  -- IPv4-mapped (::ffff:a.b.c.d), as seen on dual-stack sockets
+  ( 0, 0, 0, 0, 0, 0xffff, hi, lo ) -> localV4 ( byte hi 8, byte hi 0, byte lo 8, byte lo 0 )
+  ( w, _, _, _, _, _, _, _ ) -> (w .&. 0xfe00) == 0xfc00 -- fc00::/7
+  where
+    byte w n = fromIntegral (w `shiftR` n)
 
-    -- Check if requests are within rate limit window and update accordingly
-    checkAndUpdateRequests record
-      = if now - earlistRequestTime record <= timeWindow
-        then if requestTimes record >= maxRequests
-          then do
-            -- Ban the IP for 5 minutes
-            modifyIORef' globalIPMap $ HashMap.insert ip (record { bannedUntil = now + 5 * 60 })
-            return False
-          else do
-            modifyIORef' globalIPMap
-              $ HashMap.insert ip (record { requestTimes = requestTimes record + 1 })
-            return True
-        else return True
+localV4 :: ( Word8, Word8, Word8, Word8 ) -> Bool
+localV4 = \case
+  ( 127, _, _, _ ) -> True
+  ( 10, _, _, _ ) -> True
+  ( 192, 168, _, _ ) -> True
+  ( 172, b, _, _ ) -> b >= 16 && b <= 31
+  ( 169, 254, _, _ ) -> True
+  _ -> False
+
+-- | Count a hit for the IP; False if the request should be blocked.
+checkRateLimit :: IP -> Double -> IO Bool
+checkRateLimit ip now = atomicModifyIORef' globalIPMap $ \m0 ->
+  let
+    -- ponytail: O(n) prune once the map is large; fine for the few hundred IPs a client sees per minute
+    m = if HashMap.size m0 > 1000
+          then HashMap.filter ((> now - timeWindow) . lastHit) m0
+          else m0
+  in 
+    case HashMap.lookup ip m of
+      Just r
+        | bannedUntil r > now -> ( m, False ) -- blocked requests are not counted, as in the official client
+      old -> let
+          r0      = fromMaybe (IPRecord 0 now 0) old
+          hits    = max 0 (hitCount r0 - floor (now - lastHit r0)) + 1
+          blocked = hits > floodLimit
+          r       = IPRecord { hitCount    = hits
+                             , lastHit     = now
+                             , bannedUntil = if blocked then now + blockSeconds else bannedUntil r0
+                             }
+        in 
+          ( HashMap.insert ip r m, not blocked )
 
 type KeystampMap = HashMap ByteString ( Int, Double )
 

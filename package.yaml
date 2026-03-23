@@ -1,5 +1,5 @@
 name: hs-hath
-version: 1.1.2
+version: 1.2.0
 github: "pe200012/hs-hath"
 license: GPL-3
 author: "pe200012"
@@ -32,7 +32,6 @@ dependencies:
   - co-log >= 0.6 && < 0.8
   - co-log-polysemy >= 0.0.1.5 && < 0.0.2
   - containers >= 0.6 && < 0.8
-  - cryptostore >= 0.3 && < 0.4
   - crypton >= 1.0 && < 1.1
   - crypton-connection >= 0.4 && < 0.5
   - crypton-x509 >= 1.7 && < 1.8
@@ -101,15 +100,33 @@ internal-libraries:
     dependencies:
       - ghc-prim >= 0 && < 10
 
+  # cryptostore-0.3.0.1 with its manual use_crypton flag baked in: tls and our
+  # code use crypton-x509 types, and a package cannot set a dependency's flag
+  hs-hath-cryptostore:
+    source-dirs: vendor/cryptostore-0.3.0.1/src
+    ghc-options:
+      - -w
+    dependencies:
+      - basement >= 0.0.16 && < 0.1
+      - memory >= 0.18 && < 0.19
+      - pem >= 0.1 && < 0.3
+      - asn1-types >= 0.3.1 && < 0.4
+      - asn1-encoding >= 0.9 && < 0.10
+      - hourglass >= 0.2 && < 0.3
+      - crypton >= 1.0 && < 1.1
+      - crypton-x509 >= 1.7 && < 1.8
+      - crypton-x509-validation >= 1.6 && < 1.7
+
   hs-hath-warp-tls:
     source-dirs: vendor/warp-tls-3.4.13
     default-extensions:
       - Strict
       - StrictData
     dependencies:
-      - wai >= 3 && < 4
-      - warp >= 3 && < 4
-      - tls >= 1 && < 3
+      # bounds of upstream warp-tls-3.4.13 (latest Hackage revision); warp 3.4.13 changed Connection
+      - wai >= 3.2 && < 3.3
+      - warp >= 3.3.29 && < 3.4.13
+      - tls >= 2.1.3 && < 2.5
       - network >= 3 && < 4
       - streaming-commons >= 0 && < 1
       - tls-session-manager >= 0 && < 1
@@ -193,8 +210,8 @@ internal-libraries:
     ghc-options:
       - -Wall
     dependencies:
-      - base >= 4.21 && < 4.22
-      - ghc-prim >= 0.13 && < 0.14
+      - base >= 4.18 && < 4.22
+      - ghc-prim >= 0.10 && < 0.14
       - containers >= 0.7 && < 0.8
       - random >= 1.3 && < 1.4
       - mtl >= 2.3 && < 2.4
@@ -214,6 +231,7 @@ internal-libraries:
 library:
   source-dirs: src
   dependencies:
+    - hs-hath-cryptostore
     - hs-hath-placeholder
     - hs-hath-warp-tls
     - hs-hath-minio
@@ -268,6 +286,29 @@ executables:
       - hs-hath-polysemy-zoo
       - optparse-applicative
       - directory
+    default-extensions:
+      - NoImplicitPrelude
+      - TypeApplications
+      - OverloadedStrings
+      - ScopedTypeVariables
+      - QuasiQuotes
+      - LambdaCase
+      - ViewPatterns
+      - MultiParamTypeClasses
+      - GADTs
+
+  hath-bench:
+    main: Bench.hs
+    source-dirs: app
+    other-modules: []
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+      - -main-is
+      - Bench
+    dependencies:
+      - hs-hath
     default-extensions:
       - NoImplicitPrelude
       - TypeApplications

@@ -75,7 +75,7 @@ runRPC = interpret $ \case
   ClientStart -> log Info "Trying to start a session" >> startListening
   ClientStop -> log Info "Stopping a session" >> stopListening
   ClientLogin -> log Info "Logging in" >> login
-  CheckGalleryTask -> log Info "Checking for a gallery task" >> nextGalleryTask
+  CheckGalleryTask -> log Info "Checking for a gallery task" >> (rightToMaybe <$> nextGalleryTask)
   NotifyGalleryCompletion
     metadata -> log Info "Notifying server that a gallery task has been completed"
     >> completeGalleryTask metadata

@@ -10,8 +10,6 @@ module Interface.API
     API
   , api
   , ServerCommand(..)
-  , DynCT
-  , WithDynamicContentType(..)
     -- * EHentai RPC
   , EHentaiAPI(..)
   , ehRPC
@@ -29,9 +27,10 @@ module Interface.API
   , completeGalleryTask
   , downloadGalleryFile
   , reportFailures
-  , fetchResource
+  , openResource
   , fetchBlacklist
   , runEHentaiAPIIO
+  , renderServerCommand
   ) where
 
 import           Crypto.Store.PKCS12      ( readP12FileFromMemory
@@ -43,6 +42,7 @@ import           Crypto.Store.PKCS12      ( readP12FileFromMemory
 
 import qualified Data.ByteString.Char8    as BSC
 import qualified Data.ByteString.Lazy     as LBS
+import qualified Data.List                as List
 import           Data.String.Interpolate  ( i )
 import qualified Data.Text                as T
 import           Data.Time.Clock.System   ( SystemTime(systemSeconds), getSystemTime )
@@ -50,17 +50,23 @@ import           Data.X509                ( CertificateChain, PrivKey )
 
 import qualified Mason.Builder            as BD
 
-import           Network.HTTP.Client      ( HttpException
+import           Network.HTTP.Client      ( BodyReader
+                                          , HttpException
                                           , Manager
                                           , Request(responseTimeout, host, requestHeaders)
-                                          , Response(responseBody)
+                                          , Response(responseBody, responseHeaders, responseStatus)
+                                          , responseClose
+                                          , responseOpen
                                           , defaultManagerSettings
                                           , newManager
                                           , parseRequest
                                           , responseTimeoutMicro
                                           )
 import           Network.HTTP.Media       ( (//), (/:) )
+import           Network.HTTP.Client.TLS  ( getGlobalManager )
 import           Network.HTTP.Simple      ( httpLbs )
+import           Network.HTTP.Types       ( hContentLength )
+import qualified Network.HTTP.Types       as HT
 
 import           Polysemy
 import           Polysemy.Error           ( Error, errorToIOFinal, throw )
@@ -100,13 +106,14 @@ import           Types                    ( ClientConfig
                                           , HathSettings
                                           , RPCError(CertificateFailure)
                                           , RPCResponse(statusCode)
-                                          , emptyMetadata
+                                          , clientBuild
                                           , hentaiHeader
                                           , parseMetadata
                                           , parseRPCResponse
                                           , parseRPCResponse'
                                           , parseSettings
                                           , renderFileURIBytes
+                                          , verifyRPCResponse
                                           )
 
 import           UnliftIO                 ( try )
@@ -124,40 +131,22 @@ data ServerCommand
   deriving ( Show, Eq )
 
 -- Custom type conversion for ServerCommand
+serverCommandNames :: [ ( Text, ServerCommand ) ]
+serverCommandNames
+  = [ ( "still_alive", StillAlive )
+    , ( "threaded_proxy_test", ThreadedProxyTest )
+    , ( "speed_test", SpeedTest )
+    , ( "refresh_settings", RefreshSettings )
+    , ( "start_downloader", StartDownloader )
+    , ( "refresh_certs", RefreshCerts )
+    ]
+
 instance FromHttpApiData ServerCommand where
-  {-# INLINE parseUrlPiece #-}
-  parseUrlPiece = \case
-    "still_alive" -> Right StillAlive
-    "threaded_proxy_test" -> Right ThreadedProxyTest
-    "speed_test" -> Right SpeedTest
-    "refresh_settings" -> Right RefreshSettings
-    "start_downloader" -> Right StartDownloader
-    "refresh_certs" -> Right RefreshCerts
-    cmd -> Left $ "Invalid command: " <> cmd
+  parseUrlPiece cmd = maybeToRight ("Invalid command: " <> cmd) (List.lookup cmd serverCommandNames)
 
-data DynCT
-  deriving ( Typeable )
-
-instance MimeRender DynCT ByteString where
-  {-# INLINE mimeRender #-}
-  mimeRender _ = LBS.fromStrict
-
-instance Accept DynCT where
-  {-# INLINE contentType #-}
-  contentType _ = ""
-
-data WithDynamicContentType
-  = WithDynamicContentType
-  { contentType :: {-# UNPACK #-} !ByteString, content :: {-# UNPACK #-} !ByteString }
-
-instance MimeRender DynCT WithDynamicContentType where
-  {-# INLINE mimeRender #-}
-  mimeRender _ = LBS.fromStrict . content
-
-instance AllCTRender '[ DynCT ] WithDynamicContentType where
-  {-# INLINE handleAcceptH #-}
-  handleAcceptH _ _ (WithDynamicContentType ct content)
-    = Just ( LBS.fromStrict ct, LBS.fromStrict content )
+-- | Wire name of a command, needed to verify the servercmd signature.
+renderServerCommand :: ServerCommand -> Text
+renderServerCommand c = maybe "" fst (find ((== c) . snd) serverCommandNames)
 
 data SpeedTest
   deriving ( Typeable )
@@ -181,7 +170,7 @@ type API
         :> Capture "info" Text
         :> Capture "opts" Text
         :> Capture "filename" Text
-        :> Get '[DynCT] (Headers '[Header "Content-Length" Int] WithDynamicContentType)
+        :> RawM
     :<|> "metrics" :> Get '[PlainText] Text
     :<|> "servercmd"
         :> Capture "command" ServerCommand
@@ -284,7 +273,7 @@ runEHentaiAPI m = do
           (runClientM
              (ehAPIM
                 params { acttime     = Just (show currentTime)
-                       , clientbuild = Just (version cfg)
+                       , clientbuild = Just clientBuild
                        , actkey      = Just $ makeKey params cfg currentTime
                        , cid         = Just (clientId cfg)
                        })
@@ -296,8 +285,12 @@ runEHentaiAPI m = do
                  pure servantReq { responseTimeout = responseTimeoutMicro rpcTimeout } })
       {-# INLINE k #-}
   interpret (\case
-               EhRPC params     -> k params "/15/rpc"
-               EhGallery params -> k params "/15/dl") m
+               -- get_cert is the raw PKCS#12 file, not a signed reply
+               EhRPC params
+                 | act params == Just "get_cert" -> k params "/16/rpc"
+                 | otherwise -> verifyRPCResponse (encodeUtf8 (key cfg)) <$> k params "/16/rpc"
+               -- the gallery list carries its own signature, checked by parseMetadata
+               EhGallery params -> k params "/16/dl") m
   where
     rpcTimeout :: Int
     rpcTimeout = 60 * 1000000  -- 60 seconds in microseconds
@@ -383,12 +376,11 @@ getSettings = do
   parseSettings <$> parseRPCResponse' x
 
 {-# INLINE nextGalleryTask #-}
-nextGalleryTask :: EHentaiAPI -@> Maybe GalleryMetadata
+-- | Left says why there is nothing to download (NO_PENDING_DOWNLOADS, or a refused list).
+nextGalleryTask :: [ EHentaiAPI, Reader ClientConfig ] >@> Either Text GalleryMetadata
 nextGalleryTask = do
-  m <- parseMetadata <$> ehGallery emptyRPCParams { act = Just "fetchqueue" }
-  if m == emptyMetadata
-    then return Nothing
-    else return $ Just m
+  cfg <- ask @ClientConfig
+  parseMetadata (encodeUtf8 (key cfg)) <$> ehGallery emptyRPCParams { act = Just "fetchqueue" }
 
 {-# INLINE completeGalleryTask #-}
 completeGalleryTask :: GalleryMetadata -> EHentaiAPI -@> ()
@@ -416,7 +408,7 @@ downloadGalleryFile metadata file = do
         >>= \case
           Left _      -> pure Nothing
           Right bytes -> do
-            if hash bytes /= galleryFileHash file
+            if maybe False (/= hash bytes) (galleryFileHash file)
               then do
                 modify
                   @[ Text ]
@@ -447,30 +439,34 @@ reportFailures :: [ Text ] -> EHentaiAPI -@> ()
 reportFailures reports
   = void $ ehRPC emptyRPCParams { act = Just "dlfails", add = Just $ T.intercalate ";" reports }
 
-fetchResource :: FileURI
-              -> ( ByteString, ByteString )
-              -> [ EHentaiAPI, Reader ClientConfig, Error RPCError, Embed IO ] >@> Maybe ByteString
-fetchResource fileURI ( fileIndex, xres ) = do
+-- | Ask the RPC server where a static-range file lives and open the first source
+-- that answers 200 with the expected length, as the official ProxyFileDownloader
+-- does. The caller streams the body and must close the response.
+openResource :: FileURI
+             -> ( ByteString, ByteString )
+             -> [ EHentaiAPI, Reader ClientConfig, Error RPCError, Embed IO ] >@> Maybe (Response BodyReader)
+openResource fileURI ( fileIndex, xres ) = do
   urls <- parseRPCResponse'
     =<< ehRPC
       emptyRPCParams { act = Just "srfetch", add = Just [i|#{fileIndex};#{xres};#{fileURI}|] }
   cfg <- ask @ClientConfig
-  -- `traverse` would execute every fallback download eagerly.
-  -- We need monadic short-circuiting to stop after the first success.
-  firstJustM
-    (download [i|#{clientId cfg}-#{hash @ByteString $ encodeUtf8 (key cfg) <> renderFileURIBytes fileURI}|]
-     . BSC.unpack)
-    urls
+  let token = [i|#{clientId cfg}-#{hash @ByteString $ encodeUtf8 (key cfg) <> renderFileURIBytes fileURI}|]
+  embed $ do
+    mgr <- getGlobalManager
+    firstJustM (open mgr token . BSC.unpack) urls
   where
-    download token url = case parseRequest url of
+    open mgr token url = case parseRequest url of
       Nothing  -> pure Nothing
-      Just req -> do
-        bytes <- embed
-          $ LBS.toStrict . responseBody
-          <$> httpLbs @IO req { requestHeaders = ( "Hath-Request", token ) : hentaiHeader }
-        if hash bytes /= fileHash fileURI
-          then pure Nothing
-          else return $ Just bytes
+      Just req -> try @IO @HttpException
+        (responseOpen req { requestHeaders = ( "Hath-Request", token ) : hentaiHeader } mgr)
+        >>= \case
+          Right resp
+            | HT.statusCode (responseStatus resp) == 200
+            , List.lookup hContentLength (responseHeaders resp) == Just (show (fileSize fileURI)) ->
+              pure (Just resp)
+            | otherwise -> responseClose resp $> Nothing
+          -- connection error or wrong answer: firstJustM tries the next source
+          Left _ -> pure Nothing
 
 fetchBlacklist :: Int -> [ EHentaiAPI, Error RPCError ] >@> [ Text ]
 fetchBlacklist deltaTime = do

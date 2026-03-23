@@ -38,14 +38,12 @@ import           Polysemy
 import           Polysemy.Error          ( Error, throw )
 import           Polysemy.KVStore        ( KVStore(..) )
 import           Polysemy.Operators
-import           Polysemy.Reader         ( Reader, asks )
 
 import           Relude                  hiding ( Reader, ask, asks )
 
 import           Storage.Database        ( FileRecord(..) )
 
-import           Types                   ( ClientConfig
-                                         , FileURI(..)
+import           Types                   ( FileURI(..)
                                          , RPCError(..)
                                          , StorageResult(..)
                                          , renderFileURIText
@@ -55,7 +53,13 @@ import qualified Types                   as Ty
 import           Utils                   ( log )
 
 -- | R2 connection configuration built at runtime
-data R2Connection = R2Connection { r2MinioConn :: !Minio.MinioConn, r2ConnBucket :: !Text }
+data R2Connection
+  = R2Connection
+  { r2MinioConn  :: !Minio.MinioConn
+  , r2ConnBucket :: !Text
+  , r2UrlCache   :: !(AtomicLRU FileURI ( Double, ByteString ))
+    -- ^ Presigned links. Lives here because runCacheR2 runs once per request.
+  }
 
 -- | Build R2 connection from config + environment variables
 -- Reads R2_ACCESS_KEY and R2_SECRET_KEY from environment
@@ -79,7 +83,12 @@ mkR2Connection cfg = do
       minioConn <- liftIO $ do
         manager <- newManager tlsManagerSettings
         Minio.mkMinioConn (setCreds creds $ setRegion "auto" baseConnInfo) manager
-      pure $ Right R2Connection { r2MinioConn = minioConn, r2ConnBucket = Ty.r2Bucket cfg }
+      -- ponytail: fixed capacity; links expire after 10 min, so it only has to hold ~10 min of distinct hits
+      urlCache <- newAtomicLRU (Just 100000)
+      pure
+        $ Right
+          R2Connection
+          { r2MinioConn = minioConn, r2ConnBucket = Ty.r2Bucket cfg, r2UrlCache = urlCache }
 
 -- | Generate R2 object key from FileURI
 -- Format: s4/hash-size-xres-yres-ext
@@ -93,15 +102,11 @@ fileURIToKey uri = s4 <> "/" <> fileId
 -- | Run the cache with Cloudflare R2
 -- Read operations silently degrade to Nothing on failure (with warning log)
 -- Write/delete operations propagate errors
-runCacheR2 :: Members '[ Embed IO, Log Message, Reader ClientConfig, Error RPCError ] r
+runCacheR2 :: Members '[ Embed IO, Log Message, Error RPCError ] r
            => R2Connection
            -> KVStore FileURI StorageResult : r @> a
            -> r @> a
-runCacheR2 conn m = do
-  lruSize <- asks Ty.lruCacheSize
-  let entries = Just (fromIntegral (lruSize `div` 300)) -- Approximate number of entries based on avg url link size ~300 bytes
-  memCache <- embed $ newAtomicLRU entries
-  interpret (phi memCache) m
+runCacheR2 conn = interpret (phi (r2UrlCache conn))
   where
     bucket = r2ConnBucket conn
 

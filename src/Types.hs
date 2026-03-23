@@ -18,11 +18,11 @@ module Types
   , StorageResult(..)
     -- * Globals
   , hentaiHeader
+  , clientBuild
     -- * Default values
   , defaultHathSettings
   , defaultClientConfig
   , emptyFileURI
-  , emptyMetadata
     -- * Parsing
   , parseSettings
   , parseMetadata
@@ -32,12 +32,14 @@ module Types
   , renderFileURIText
   , parseRPCResponse
   , parseRPCResponse'
+  , verifyRPCResponse
   , reconstructRecord
     -- * Selectors
   , getPayload
   ) where
 
 import qualified Data.ByteString.Char8  as BS
+import           Data.Char              ( isAsciiLower, isAsciiUpper, isDigit )
 import qualified Data.ByteString.Short  as SBS
 import qualified Data.HashSet           as HashSet
 import qualified Data.Text              as T
@@ -58,16 +60,22 @@ import           Prelude                ( Show(show) )
 
 import           Relude                 hiding ( show )
 
+import           Utils                  ( hash )
+
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, Text ) ] #-}
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, ByteString ) ] #-}
 hentaiHeader :: IsString a => [ ( HeaderName, a ) ]
 hentaiHeader
   = [ ( "Connection", "close" )
-    , ( "User-Agent", "Hentai@Home 176" )
+    , ( "User-Agent", "Hentai@Home 1.6.6" )
     , ( "Cache-Control", "public, max-age=31536000" )
-    , ( "Server", "Genetic Lifeform and Distributed Open Server 1.6.4" )
+    , ( "Server", "Genetic Lifeform and Distributed Open Server 1.6.6" )
     , ( "X-Content-Type-Options", "nosniff" )
     ]
+
+-- | The protocol level this client implements (official 1.6.6), sent as clientbuild.
+clientBuild :: Text
+clientBuild = "181"
 
 data ClientProxy
   = ClientProxy { host :: {-# UNPACK #-} !Text
@@ -100,7 +108,7 @@ data ClientConfig
   = ClientConfig
   { clientId     :: {-# UNPACK #-} !Text
   , key          :: {-# UNPACK #-} !Text
-  , version      :: {-# UNPACK #-} !Text
+  , version      :: {-# UNPACK #-} !Text -- ^ unused, kept so existing configs load; see 'clientBuild'
   , proxy        :: {-# UNPACK #-} !(Maybe ClientProxy)
   , downloadDir  :: {-# UNPACK #-} !Text
   , cachePath    :: {-# UNPACK #-} !Text
@@ -145,6 +153,8 @@ data HathSettings
   , checkIPOrigin      :: {-# UNPACK #-} !Bool
   , floodControl       :: {-# UNPACK #-} !Bool
   , staticRanges       :: {-# UNPACK #-} !(HashSet ShortByteString)
+  , rpcServerIPs       :: ![ ByteString ]
+    -- ^ As sent by the server, e.g. "::ffff:192.0.2.10"
   }
   deriving ( Show )
 
@@ -163,6 +173,7 @@ defaultHathSettings
   , checkIPOrigin      = True
   , floodControl       = True
   , staticRanges       = mempty
+  , rpcServerIPs       = []
   }
 
 parseSettings :: [ ByteString ] -> HathSettings
@@ -179,6 +190,7 @@ parseSettings
                   ( "diskremaining_bytes", Just bytes ) -> s { diskRemainingBytes = bytes }
                   ( "static_ranges", _ ) -> s
                     { staticRanges = HashSet.fromList (SBS.toShort <$> BS.split ';' v) }
+                  ( "rpc_server_ip", _ ) -> s { rpcServerIPs = BS.split ';' v }
                   _ -> s) defaultHathSettings
 
 data GalleryFile
@@ -186,7 +198,7 @@ data GalleryFile
                 , galleryFileIndex :: {-# UNPACK #-} !Int
                 , galleryFileName  :: {-# UNPACK #-} !ByteString
                 , galleryFileXRes  :: {-# UNPACK #-} !ByteString
-                , galleryFileHash  :: {-# UNPACK #-} !ByteString
+                , galleryFileHash  :: !(Maybe ByteString) -- ^ Nothing: generated on demand, unverifiable
                 , galleryFileExt   :: {-# UNPACK #-} !ByteString
                 }
   deriving ( Eq )
@@ -200,48 +212,55 @@ data GalleryMetadata
                     }
   deriving ( Eq )
 
-emptyMetadata :: GalleryMetadata
-emptyMetadata
-  = GalleryMetadata
-  { galleryID        = 0
-  , galleryFileCount = 0
-  , galleryMinXRes   = ""
-  , galleryTitle     = ""
-  , galleryFileList  = []
-  }
-
-{-# NOINLINE emptyMetadata #-}
-
-parseMetadata :: ByteString -> GalleryMetadata
-parseMetadata bytes = foldl' go emptyMetadata (BS.lines bytes)
+-- | Parse a /16/dl fetchqueue reply (hathdl format). Left carries the reason it was
+-- refused: NO_PENDING_DOWNLOADS and other non-lists, or a list failing the 1.6.6 checks.
+-- The file list must carry DLHASH = sha1(client key ++ "\n" ++ line, per file line),
+-- and names/types must be ones the gallery system can produce, which keeps a forged
+-- list from writing outside the download directory.
+parseMetadata :: ByteString -> ByteString -> Either Text GalleryMetadata
+parseMetadata clientKey bytes = case break (== "FILELIST") (BS.split '\n' bytes) of
+  ( _, [] ) -> Left $ decodeUtf8 $ BS.strip $ BS.take 64 bytes
+  ( header, _ : rest ) -> do
+    let fileLines = filter (not . BS.null) (takeWhile (/= "INFORMATION") rest)
+        field k = listToMaybe [ BS.drop 1 v | l <- header, let ( f, v ) = BS.break (== ' ') l, f == k ]
+    gid <- maybeToRight "invalid GID" $ mfilter (> 0) $ readIntExact =<< field "GID"
+    minXRes <- maybeToRight "invalid MINXRES" $ mfilter validXRes $ field "MINXRES"
+    when (field "DLHASH" /= Just (hash (clientKey <> foldMap ("\n" <>) fileLines)))
+      $ Left "DLHASH does not match the file list"
+    files <- traverse parseFile fileLines
+    pure
+      GalleryMetadata
+      { galleryID        = gid
+      , galleryFileCount = length files
+      , galleryMinXRes   = minXRes
+      , galleryTitle     = fromMaybe "" (field "TITLE")
+      , galleryFileList  = files
+      }
   where
-    go metadata line = case BS.words line of
-      [] -> metadata
-      [ "GID", maybeGid ]
-        -> maybe metadata (\( gid, _ ) -> metadata { galleryID = gid }) (BS.readInt maybeGid)
-      [ "FILECOUNT", maybeCount ] -> maybe
-        metadata
-        (\( count, _ ) -> metadata { galleryFileCount = count })
-        (BS.readInt maybeCount)
-      [ "MINXRES", xres ] -> metadata { galleryMinXRes = xres }
-      ("TITLE" : rest) -> metadata { galleryTitle = BS.unwords rest }
-      [ maybePage, maybeFid, mxres, hash, ext, basename ]
-        -> case ( BS.readInt maybePage, BS.readInt maybeFid ) of
-          ( Just ( page, _ ), Just ( fid, _ ) ) -> metadata
-            { galleryFileList = GalleryFile
-                { galleryFilePage  = page
-                , galleryFileIndex = fid
-                , galleryFileName  = basename
-                , galleryFileXRes  = mxres
-                , galleryFileHash  = hash
-                , galleryFileExt   = ext
-                }
-                : galleryFileList metadata
-            }
-          _ -> metadata
-      _ -> metadata
+    parseFile line = case BS.split ' ' line of
+      [ page, index, xres, sha1, ext, name ]
+        | Just p <- readIntExact page
+        , Just ix <- readIntExact index
+        , validName name
+        , ext `elem` [ "jpg", "gif", "png", "webp" ] -> Right
+          GalleryFile
+          { galleryFilePage  = p
+          , galleryFileIndex = ix
+          , galleryFileName  = name
+          , galleryFileXRes  = xres
+          , galleryFileHash  = if sha1 == "unknown" then Nothing else Just sha1
+          , galleryFileExt   = ext
+          }
+      _ -> Left $ "invalid file line: " <> decodeUtf8 line
 
-    {-# INLINE go #-}
+    validName n = not (BS.null n) && BS.length n <= 250 && not (".." `BS.isInfixOf` n)
+      && BS.all (\c -> isAsciiUpper c || isAsciiLower c || isDigit c || c `elem` ("._-" :: String)) n
+
+    validXRes x = x == "org" || (not (BS.null x) && BS.all isDigit x)
+
+    readIntExact s = case BS.readInt s of
+      Just ( n, "" ) -> Just n
+      _ -> Nothing
 
 data FileURI
   = FileURI { fileHash :: {-# UNPACK #-} !ByteString
@@ -336,6 +355,22 @@ getPayload :: RPCResponse -> Either RPCError [ ByteString ]
 getPayload response
   | statusCode response == "OK" = Right $ payload response
   | otherwise = Left $ RequestFailure $ decodeUtf8 $ statusCode response
+
+-- | Check the 1.6.6 RPC signature. A signed reply starts with OK-<time>-<sha1>, the sha1
+-- covering "<time>-<client key>" then "\n<line>" for every later line. A valid reply
+-- comes back with that first line reduced to OK; a forged or unsigned OK becomes
+-- RESPONSE_HASH_FAILED; any other status (FAIL, KEY_EXPIRED, ...) passes through.
+verifyRPCResponse :: ByteString -> ByteString -> ByteString
+verifyRPCResponse clientKey bytes = case BS.split '\n' bytes of
+  status : rest
+    | Just ( time, sig ) <- BS.break (== '-') <$> BS.stripPrefix "OK-" status
+    , sig == "-" <> hash (time <> "-" <> clientKey <> foldMap ("\n" <>) body)
+      -> BS.intercalate "\n" ("OK" : body)
+    | "OK" `BS.isPrefixOf` status -> "RESPONSE_HASH_FAILED"
+    where
+      -- Java's split drops trailing empty lines, and the hash is over what it keeps
+      body = reverse $ dropWhile BS.null $ reverse rest
+  _ -> bytes
 
 {-# INLINE parseRPCResponse' #-}
 -- | Parse RPC responses effectfully

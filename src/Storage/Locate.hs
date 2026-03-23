@@ -1,20 +1,33 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Storage.Locate ( LocateURI(..), Locate(..), locateResource, runLocate ) where
+module Storage.Locate
+  ( LocateURI(..)
+  , Locate(..)
+  , Located(..)
+  , locateResource
+  , runLocate
+  , streamUpstream
+  ) where
 
 import           Colog                   ( Message, Severity(Info, Warning) )
 import           Colog.Polysemy          ( Log )
+
+import           Control.Concurrent      ( forkIO )
+import           Control.Exception       ( finally )
 
 import qualified Data.ByteString         as BS
 import qualified Data.ByteString.Short   as SBS
 import qualified Data.Map                as Map
 import           Data.String.Interpolate ( i )
 
-import           Interface.API           ( EHentaiAPI, fetchResource )
+import           Interface.API           ( EHentaiAPI, openResource )
+
+import qualified Network.HTTP.Client     as HC
 
 import           Polysemy
-import           Polysemy.Error          ( Error )
+import           Polysemy.Error          ( Error, catch )
+import           Polysemy.Final          ( withWeavingToFinal )
 import           Polysemy.KVStore        ( KVStore, lookupKV, updateKV )
 import           Polysemy.Operators
 import           Polysemy.Reader         ( Reader )
@@ -27,7 +40,7 @@ import           Stats                   ( Stats, addDownload, incFetched )
 
 import           Types
 
-import           Utils                   ( log )
+import           Utils                   ( hash, log )
 
 data LocateURI
   = LocateURI { locateURIFilename :: !ByteString
@@ -35,9 +48,15 @@ data LocateURI
               , locateURIOptions  :: !(Map ByteString ByteString)
               }
 
+data Located
+  = Stored !StorageResult
+    -- | Cache miss being relayed from upstream: call it with a chunk writer.
+    -- It closes the upstream connection and caches the file once it is complete.
+  | Streamed !((ByteString -> IO ()) -> IO ())
+
 data Locate m a where
   -- | Fetch a specific resource from the server
-  LocateResource :: LocateURI -> Locate m (Maybe StorageResult)
+  LocateResource :: LocateURI -> Locate m (Maybe Located)
 
 makeSem ''Locate
 
@@ -49,6 +68,7 @@ runLocate
      , Reader ClientConfig
      , EHentaiAPI
      , Embed IO
+     , Final IO
      , Stats
      , Log Message
      ]
@@ -60,32 +80,35 @@ runLocate = interpret $ \case
     settings <- getSettings
     let fileURI = locateURI uri
         s4      = SBS.toShort $ BS.take 4 $ renderFileURIBytes fileURI
+        record content
+          = Record
+            FileRecord
+            { fileRecordLRUCounter = 1
+            , fileRecordS4         = decodeUtf8 s4
+            , fileRecordFileId     = renderFileURIText fileURI
+            , fileRecordFileName   = Just $ decodeUtf8 $ locateURIFilename uri
+            , fileRecordBytes      = content
+            }
     -- if HashSet.member s4 (staticRanges settings) <-- we have a bug in setting parsing. wait for fix
     if True
       then lookupKV fileURI >>= \case
-        Just x@Redirect {} -> return $ Just x
-        Just x@Record {} -> return $ Just x
+        Just x -> return $ Just $ Stored x
         Nothing -> case ( Map.lookup "fileindex" (locateURIOptions uri)
                         , Map.lookup "xres" (locateURIOptions uri)
                         ) of
           ( Just fileIndex, Just xres ) -> log Info [i|Fetching resource: #{fileURI}|]
-            >> fetchResource fileURI ( fileIndex, xres )
+            >> openResource fileURI ( fileIndex, xres )
             >>= \case
-              Just content -> do
+              Just resp -> do
                 incFetched
-                addDownload (BS.length content)
-                let record
-                      = Record
-                        FileRecord
-                        { fileRecordLRUCounter = 1
-                        , fileRecordS4         = decodeUtf8 s4
-                        , fileRecordFileId     = renderFileURIText fileURI
-                        , fileRecordFileName   = Just $ decodeUtf8 $ locateURIFilename uri
-                        , fileRecordBytes      = content
-                        }
-                updateKV fileURI $ Just record
-                pure $ Just record
-              Nothing      -> do
+                -- runs after the handler has returned, once the body has been relayed
+                cacheIt <- deferToIO $ \content -> do
+                  addDownload (BS.length content)
+                  -- a failed cache write only costs us the next hit
+                  catch @RPCError (updateKV fileURI $ Just $ record content)
+                    $ \e -> log Warning [i|Cache write failed for #{fileURI}: #{e}|]
+                pure $ Just $ Streamed $ streamUpstream fileURI resp (void . forkIO . cacheIt)
+              Nothing   -> do
                 log Warning [i|Failed to fetch resource, sorry for you|]
                 pure Nothing
           _ -> do
@@ -94,3 +117,25 @@ runLocate = interpret $ \case
       else do
         log Info [i|Resource not in our ranges, rejecting: #{s4}|]
         pure Nothing
+
+-- | Relay an upstream body chunk by chunk. If it arrives complete and its SHA-1
+-- matches, hand the bytes to the continuation (the cache write). The upstream
+-- connection is closed in every case, including the client going away.
+streamUpstream :: FileURI
+               -> HC.Response HC.BodyReader
+               -> (ByteString -> IO ())
+               -> (ByteString -> IO ())
+               -> IO ()
+streamUpstream fileURI resp whenComplete write = go [] `finally` HC.responseClose resp
+  where
+    go acc = HC.brRead (HC.responseBody resp) >>= \chunk -> if BS.null chunk
+      then let
+          content = BS.concat (reverse acc)
+        in
+          when (BS.length content == fileSize fileURI && hash content == fileHash fileURI)
+            $ whenComplete content
+      else write chunk >> go (chunk : acc)
+
+-- | Lower a Sem action into IO so it can run after the request handler has returned.
+deferToIO :: Member (Final IO) r => (x -> Sem r ()) -> Sem r (x -> IO ())
+deferToIO k = withWeavingToFinal $ \s lower _ -> pure ((\x -> void (lower (k x <$ s))) <$ s)

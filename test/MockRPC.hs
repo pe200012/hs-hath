@@ -31,6 +31,8 @@ import qualified Network.Wai.Handler.Warp as Warp
 
 import           Relude                   hiding ( newEmptyMVar, putMVar, takeMVar )
 
+import           Utils                    ( hash )
+
 -- | Configuration for mock RPC server behavior
 data MockRPCConfig
   = MockRPCConfig
@@ -43,6 +45,7 @@ data MockRPCConfig
   , mockClientSettingsResponse :: ByteString -- ^ Response for client_settings
   , mockFileContent :: ByteString -- ^ Content for file downloads
   , mockPort :: Int         -- ^ Port to run mock server on
+  , mockClientKey :: ByteString -- ^ Key OK replies are signed with (1.6.6 RPC)
   }
 
 -- | Default mock configuration with valid responses
@@ -65,6 +68,7 @@ defaultMockConfig
   , mockClientSettingsResponse = BS.unlines [ "OK", "host=127.0.0.1", "port=8080" ]
   , mockFileContent = "TEST_FILE_CONTENT"
   , mockPort = 19800
+  , mockClientKey = "test-secret-key-12345"
   }
 
 -- | Mock RPC application
@@ -76,8 +80,8 @@ mockRPCApp config req respond = do
 
   case ( path, act ) of
     -- RPC endpoint
-    ( "/15/rpc", Just action ) -> handleRPCAction config action respond
-    ( "/15/dl", _ ) -> handleDownload config respond
+    ( "/16/rpc", Just action ) -> handleRPCAction config action respond
+    ( "/file", _ ) -> handleDownload config respond
     _ -> respond $ notFoundResponse
 
 -- | Handle RPC actions based on the 'act' parameter
@@ -85,26 +89,36 @@ handleRPCAction :: MockRPCConfig
                 -> ByteString
                 -> (Wai.Response -> IO Wai.ResponseReceived)
                 -> IO Wai.ResponseReceived
-handleRPCAction config action respond = case action of
-  "server_stat" -> respond $ okResponse $ mockServerStatResponse config
-  "client_login" -> respond $ okResponse $ mockClientLoginResponse config
-  "still_alive" -> respond $ okResponse $ mockStillAliveResponse config
-  "client_start" -> respond $ okResponse $ mockClientStartResponse config
-  "client_stop" -> respond $ okResponse $ mockClientStopResponse config
-  "get_cert" -> respond $ okResponse $ mockGetCertResponse config
-  "client_settings" -> respond $ okResponse $ mockClientSettingsResponse config
-  "get_blacklist" -> respond $ okResponse "OK"  -- Empty blacklist
-  "dlfetch" -> respond $ okResponse "OK"  -- No download URLs
-  "dlfails" -> respond $ okResponse "OK"  -- Acknowledge failures
-  "srfetch" -> respond
-    $ okResponse
-    $ "OK\nhttp://localhost:" <> encodeUtf8 (show (mockPort config) :: Text) <> "/15/dl"
-  _ -> respond $ okResponse $ "FAIL\nUnknown action: " <> action
+handleRPCAction config action respond = respond $ okResponse $ case action of
+  "get_cert" -> mockGetCertResponse config  -- the raw PKCS#12 file, never signed
+  "server_stat" -> sign $ mockServerStatResponse config
+  "client_login" -> sign $ mockClientLoginResponse config
+  "still_alive" -> sign $ mockStillAliveResponse config
+  "client_start" -> sign $ mockClientStartResponse config
+  "client_stop" -> sign $ mockClientStopResponse config
+  "client_settings" -> sign $ mockClientSettingsResponse config
+  "get_blacklist" -> sign "OK"  -- Empty blacklist
+  "dlfetch" -> sign "OK"  -- No download URLs
+  "dlfails" -> sign "OK"  -- Acknowledge failures
+  "srfetch" -> sign
+    $ "OK\nhttp://localhost:" <> encodeUtf8 (show (mockPort config) :: Text) <> "/file"
+  _ -> "FAIL\nUnknown action: " <> action
+  where
+    -- the 1.6.6 server signs every OK reply with the client key
+    sign body = case BS.lines body of
+      "OK" : rest -> BS.unlines
+        (("OK-1-" <> hash ("1-" <> mockClientKey config <> foldMap ("\n" <>) rest)) : rest)
+      _ -> body
 
 -- | Handle download endpoint
 handleDownload
   :: MockRPCConfig -> (Wai.Response -> IO Wai.ResponseReceived) -> IO Wai.ResponseReceived
-handleDownload config respond = respond $ okResponse (mockFileContent config)
+handleDownload config respond
+  = respond
+  $ Wai.responseLBS
+    HTTP.status200
+    [ ( "Content-Length", show (BS.length (mockFileContent config)) ) ] -- image servers always send it
+    (LBS.fromStrict (mockFileContent config))
 
 -- | Create a 200 OK response with given body
 okResponse :: ByteString -> Wai.Response

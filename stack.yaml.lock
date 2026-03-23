@@ -19,13 +19,6 @@ packages:
   original:
     hackage: timers-0.2.0.4
 - completed:
-    hackage: cryptostore-0.3.0.1@sha256:9031c0b8c05d34bd7331a24c5ebc7704aea00d6c1b0978ae25d79501c4d7c6cf,4219
-    pantry-tree:
-      sha256: 8175f2cfbfb905f2515d54b8f836af19c1773012fe9c75c69fa306efbb1686bb
-      size: 8675
-  original:
-    hackage: cryptostore-0.3.0.1
-- completed:
     hackage: time-units-1.0.0@sha256:27cf54091c4a0ca73d504fc11d5c31ab4041d17404fe3499945e2055697746c1,928
     pantry-tree:
       sha256: 9b516d4195fcea22cd1f4335cfe210e88deca397ba7dacc494d5a2feb69e1af8

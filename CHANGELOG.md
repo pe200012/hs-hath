@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to the
 [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## [1.2.0] - 2026-11-08
+
+### Security
+- **Gallery downloader**: file names from the server could contain path separators, letting a forged list write anywhere the client can. Lists must now carry a valid `DLHASH`, and names/types are limited to what the gallery system produces (official 1.6.6 fix)
+
+### Changed
+- **Protocol 1.6.6 (build 181)**: RPC moves to `/16/rpc` and `/16/dl`; replies must be signed with the client key and unsigned or altered ones are rejected. The build is fixed in code; the config `version` field is no longer used
+- **Flood control** now matches the official client (10 hits draining 1/s, 60 s block; local network and RPC servers exempt)
+- **Cache misses** are streamed to the requester while being fetched instead of after the full download
+- **Hackage**: builds without extra flags; `cryptostore` is vendored with crypton baked in
+
+### Fixed
+- `threaded_proxy_test` reports real results; `servercmd` signatures are checked
+- Files whose hash is `unknown` (generated on demand) can now be downloaded
+- webp/avif Content-Type; a failed cache write no longer fails the request; shutdown no longer spins when the RPC server is unreachable
+
+### Added
+- `hath-bench`: a mock RPC server and benchmark that drives hs-hath or the official client
+
 ## [1.1.2] - 2026-01-31
 
 ### Changed

@@ -40,6 +40,7 @@ import           Network.HTTP.Client      ( defaultManagerSettings
                                           , parseRequest
                                           , redirectCount
                                           , responseBody
+                                          , responseHeaders
                                           , responseStatus
                                           )
 import           Network.HTTP.Types       ( status200, status301, status403, status404, status429 )
@@ -72,6 +73,15 @@ import           Stats                    ( newStatsEnv )
 
 
 import           System.Environment       ( setEnv )
+import           System.Timeout           ( timeout )
+
+import           Middleware               ( IP(..), checkRateLimit, isLocalIP, parseIPv4 )
+
+import           Network.Socket           ( tupleToHostAddress, tupleToHostAddress6 )
+
+import           Polysemy                 ( interpret )
+import           Polysemy.Error           ( throw )
+import           Polysemy.KVStore         ( KVStore(..) )
 
 
 
@@ -104,11 +114,16 @@ import           UnliftIO                 ( TChan
 
 
 import           Types                    ( CacheBackend(..)
+                                          , RPCError(StorageError)
 
 
                                           , ClientConfig(..)
+                                          , GalleryFile(..)
+                                          , GalleryMetadata(..)
                                           , HathSettings(..)
                                           , defaultHathSettings
+                                          , parseMetadata
+                                          , verifyRPCResponse
                                           )
 
 -- | Test configuration
@@ -126,6 +141,12 @@ testConfig port
   , lruCacheSize = 100 * 1024 * 1024
   }
 
+-- | A servercmd URL signed the way the RPC server signs it.
+serverCmdUrl :: Int -> ClientConfig -> Text -> Text -> Int64 -> String
+serverCmdUrl port cfg cmd add ts = [i|http://localhost:#{port}/servercmd/#{cmd}/#{add}/#{ts}/#{sig}|]
+  where
+    sig = hash @Text $ encodeUtf8 ([i|hentai@home-servercmd-#{cmd}-#{add}-#{clientId cfg}-#{ts}-#{key cfg}|] :: Text)
+
 withTestServerConfigured
   :: Bool
   -> MockRPCConfig
@@ -133,26 +154,42 @@ withTestServerConfigured
   -> HathSettings
   -> (Int -> IO a)
   -> IO a
-withTestServerConfigured disableRateLimit mockCfg clientCfg settings action = withMockRPC mockCfg $ do
+withTestServerConfigured disableRateLimit mockCfg clientCfg settings action
+  = withConnection ":memory:" $ \conn -> do
+    initializeDB conn
+    withRunnerTestServer
+      disableRateLimit
+      CacheRunner { runCacheWith = runCache conn }
+      mockCfg
+      clientCfg
+      settings
+      action
+
+withRunnerTestServer
+  :: Bool
+  -> CacheRunner
+  -> MockRPCConfig
+  -> ClientConfig
+  -> HathSettings
+  -> (Int -> IO a)
+  -> IO a
+withRunnerTestServer disableRateLimit cacheRunner mockCfg clientCfg settings action = withMockRPC mockCfg $ do
   setEnv "HATH_RPC_HOST" ("localhost:" <> show (mockPort mockCfg))
   serverChan <- newTChanIO
   galleryHandler <- newTChanIO
   ssVar <- newTVarIO settings
   statsEnv <- newStatsEnv
-  withConnection ":memory:" $ \conn -> do
-    initializeDB conn
-    let cacheRunner = CacheRunner { runCacheWith = runCache conn }
-        ctx = mkServerLoopContext
-          clientCfg
-          ssVar
-          serverChan
-          galleryHandler
-          disableRateLimit
-          False
-          cacheRunner
-          statsEnv
-        app = makeApplication ctx
-    Warp.testWithApplication (pure app) action
+  let ctx = mkServerLoopContext
+        clientCfg
+        ssVar
+        serverChan
+        galleryHandler
+        disableRateLimit
+        False
+        cacheRunner
+        statsEnv
+      app = makeApplication ctx
+  Warp.testWithApplication (pure app) action
 
 withTestServer
   :: MockRPCConfig
@@ -218,7 +255,7 @@ integrationSpecs = do
           mockContent = "TEST_FILE_CONTENT_123"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 0
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-txt"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-txt"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -247,7 +284,7 @@ integrationSpecs = do
           mockContent = "TEST_FILE_CONTENT_123"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 1
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-txt"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-txt"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -263,12 +300,69 @@ integrationSpecs = do
         responseStatus response `shouldBe` status403
         responseBody response `shouldSatisfy` const True
 
-    it "applies rate limiting with 429 after bursts" $ do
+    it "flood control matches the official client" $ do
+      let ip = IPv4 (tupleToHostAddress ( 203, 0, 113, 7 ))
+          t0 = 1000 :: Double
+      -- ten quick hits pass, the eleventh blocks
+      firstTen <- forM [ 0 .. 9 ] $ \k -> checkRateLimit ip (t0 + 0.1 * k)
+      firstTen `shouldBe` replicate 10 True
+      checkRateLimit ip (t0 + 1.0) `shouldReturn` False
+      -- blocked for 60 s, then counting starts over
+      checkRateLimit ip (t0 + 59) `shouldReturn` False
+      checkRateLimit ip (t0 + 62) `shouldReturn` True
+      -- one hit per second drains as fast as it fills
+      let ip2 = IPv4 (tupleToHostAddress ( 203, 0, 113, 8 ))
+      steady <- forM [ 0 .. 29 ] $ \k -> checkRateLimit ip2 (t0 + k)
+      steady `shouldBe` replicate 30 True
+
+    it "treats loopback, private and IPv4-mapped local addresses as local" $ do
+      isLocalIP (IPv4 (tupleToHostAddress ( 127, 0, 0, 1 ))) `shouldBe` True
+      isLocalIP (IPv4 (tupleToHostAddress ( 172, 20, 1, 1 ))) `shouldBe` True
+      isLocalIP (IPv4 (tupleToHostAddress ( 172, 32, 1, 1 ))) `shouldBe` False
+      isLocalIP (IPv4 (tupleToHostAddress ( 203, 0, 113, 7 ))) `shouldBe` False
+      isLocalIP (IPv6 (tupleToHostAddress6 ( 0, 0, 0, 0, 0, 0xffff, 0x7f00, 1 ))) `shouldBe` True
+      isLocalIP (IPv6 (tupleToHostAddress6 ( 0, 0, 0, 0, 0, 0xffff, 0xcb00, 0x7107 ))) `shouldBe` False
+      isLocalIP (IPv6 (tupleToHostAddress6 ( 0xfd12, 0, 0, 0, 0, 0, 0, 1 ))) `shouldBe` True
+
+    it "parses rpc_server_ip entries" $ do
+      parseIPv4 "::ffff:192.0.2.10" `shouldBe` Just (IPv4 (tupleToHostAddress ( 192, 0, 2, 10 )))
+      parseIPv4 "198.51.100.20" `shouldBe` Just (IPv4 (tupleToHostAddress ( 198, 51, 100, 20 )))
+      parseIPv4 "300.1.1.1" `shouldBe` Nothing
+      parseIPv4 "fe80::1" `shouldBe` Nothing
+
+    it "accepts only RPC replies signed with the client key (1.6.6)" $ do
+      let k = "test-secret-key-12345"
+          sig t ls = hash @ByteString (t <> "-" <> k <> foldMap ("\n" <>) ls)
+      verifyRPCResponse k ("OK-7-" <> sig "7" [ "a=1", "b=2" ] <> "\na=1\nb=2\n")
+        `shouldBe` "OK\na=1\nb=2"
+      verifyRPCResponse k ("OK-7-" <> sig "7" [ "a=1" ] <> "\na=2") `shouldBe` "RESPONSE_HASH_FAILED"
+      verifyRPCResponse k "OK\na=1" `shouldBe` "RESPONSE_HASH_FAILED"
+      verifyRPCResponse k "KEY_EXPIRED" `shouldBe` "KEY_EXPIRED"
+
+    it "accepts only signed gallery lists with safe file names (1.6.6)" $ do
+      let k = "test-secret-key-12345"
+          meta signedFor files = BS.intercalate "\n"
+            $ [ "GID 123", "FILECOUNT 2", "MINXRES org"
+              , "DLHASH " <> hash (k <> foldMap ("\n" <>) signedFor), "TITLE t", "", "FILELIST" ]
+            <> files
+            <> [ "", "INFORMATION", "not a file line, not signed" ]
+          ok files = meta files files
+          good = [ "1 99 org " <> hash @ByteString "x" <> " jpg 001", "2 98 780 unknown webp p_2" ]
+          files = fmap (fmap (\f -> ( galleryFileName f, galleryFileHash f )) . galleryFileList)
+      files (parseMetadata k (ok good))
+        `shouldBe` Right [ ( "001", Just (hash "x") ), ( "p_2", Nothing ) ]
+      isLeft (parseMetadata k (meta good (take 1 good))) `shouldBe` True  -- list tampered
+      isLeft (parseMetadata k (ok [ "1 99 org h jpg ../../.ssh/x" ])) `shouldBe` True
+      isLeft (parseMetadata k (ok [ "1 99 org h jpg .." ])) `shouldBe` True
+      isLeft (parseMetadata k (ok [ "1 99 org h exe 001" ])) `shouldBe` True
+      galleryID <$> parseMetadata k "NO_PENDING_DOWNLOADS\n" `shouldBe` Left "NO_PENDING_DOWNLOADS"
+
+    it "exempts local addresses from flood control" $ do
       let mockPortNum = 19803
           mockContent = "RL_TEST_CONTENT"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 2
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-txt"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-txt"
 
       withRateLimitedTestServer mockConfig clientCfg defaultHathSettings { throttleBytes = 1 } $ \serverPort -> do
         now <- getSystemTime
@@ -282,11 +376,11 @@ integrationSpecs = do
 
         manager <- newManager defaultManagerSettings
         req0 <- parseRequest url
-        let burstRequests = replicate 7 req0
+        let burstRequests = replicate 13 req0
 
         responses <- forM burstRequests $ \req -> httpLbs req manager
         let statuses = responseStatus <$> responses
-        length (filter (== status429) statuses) `shouldSatisfy` (>= 2)
+        statuses `shouldBe` replicate 13 status200
 
     it "returns stats snapshot with non-negative counters" $ do
       let mockPortNum = 19804
@@ -343,7 +437,7 @@ integrationSpecs = do
         now <- getSystemTime
         let ts = systemSeconds now
         manager <- newManager defaultManagerSettings
-        req <- parseRequest [i|http://localhost:#{serverPort}/servercmd/still_alive/additional/#{ts}/key|]
+        req <- parseRequest (serverCmdUrl serverPort clientCfg "still_alive" "additional" ts)
         resp <- httpLbs req manager
         responseStatus resp `shouldBe` status200
         LBS.toStrict (responseBody resp) `shouldSatisfy` (\body -> "FANTASTIC" `BS.isInfixOf` body)
@@ -357,7 +451,7 @@ integrationSpecs = do
         now <- getSystemTime
         let ts = systemSeconds now
         manager <- newManager defaultManagerSettings
-        req <- parseRequest [i|http://localhost:#{serverPort}/servercmd/speed_test/testsize=1000/#{ts}/key|]
+        req <- parseRequest (serverCmdUrl serverPort clientCfg "speed_test" "testsize=1000" ts)
         resp <- httpLbs req manager
         responseStatus resp `shouldBe` status200
 
@@ -417,7 +511,7 @@ integrationSpecs = do
         now <- getSystemTime
         let ts = systemSeconds now
         manager <- newManager defaultManagerSettings
-        req <- parseRequest [i|http://localhost:#{serverPort}/servercmd/refresh_settings/additional/#{ts}/key|]
+        req <- parseRequest (serverCmdUrl serverPort clientCfg "refresh_settings" "additional" ts)
         resp <- httpLbs req manager
         responseStatus resp `shouldBe` status200
 
@@ -430,7 +524,7 @@ integrationSpecs = do
         now <- getSystemTime
         let ts = systemSeconds now
         manager <- newManager defaultManagerSettings
-        req <- parseRequest [i|http://localhost:#{serverPort}/servercmd/refresh_certs/additional/#{ts}/key|]
+        req <- parseRequest (serverCmdUrl serverPort clientCfg "refresh_certs" "additional" ts)
         resp <- httpLbs req manager
         responseStatus resp `shouldBe` status200
 
@@ -443,16 +537,71 @@ integrationSpecs = do
         now <- getSystemTime
         let ts = systemSeconds now
         manager <- newManager defaultManagerSettings
-        req <- parseRequest [i|http://localhost:#{serverPort}/servercmd/threaded_proxy_test/additional/#{ts}/key|]
+        req <- parseRequest (serverCmdUrl serverPort clientCfg "threaded_proxy_test" "additional" ts)
         resp <- httpLbs req manager
         responseStatus resp `shouldBe` status403
+
+    it "rejects unsigned /servercmd" $ do
+      let mockConfig = defaultMockConfig { mockPort = 19830 }
+          clientCfg  = testConfig 30
+
+      withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
+        ts <- systemSeconds <$> getSystemTime
+        manager <- newManager defaultManagerSettings
+        req <- parseRequest [i|http://localhost:#{serverPort}/servercmd/still_alive/additional/#{ts}/key|]
+        resp <- httpLbs req manager
+        responseStatus resp `shouldBe` status403
+
+    it "reports successful tests for /servercmd/threaded_proxy_test, and does not hang on a failing target" $ do
+      let mockConfig = defaultMockConfig { mockPort = 19831 }
+          clientCfg  = testConfig 31
+
+      withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
+        ts <- systemSeconds <$> getSystemTime
+        manager <- newManager defaultManagerSettings
+        let testKey = hash @Text $ encodeUtf8 ([i|hentai@home-speedtest-1000-#{ts}-#{clientId clientCfg}-#{key clientCfg}|] :: Text)
+            proxyTest k = do
+              -- the test server tests itself
+              let add = [i|hostname=localhost;protocol=http;port=#{serverPort};testsize=1000;testcount=2;testtime=#{ts};testkey=#{k}|] :: Text
+              req <- parseRequest (serverCmdUrl serverPort clientCfg "threaded_proxy_test" add ts)
+              resp <- httpLbs req manager
+              responseStatus resp `shouldBe` status200
+              pure (LBS.toStrict (responseBody resp))
+
+        ok <- proxyTest testKey
+        ok `shouldSatisfy` ("OK:2-" `BS.isPrefixOf`)
+
+        -- the target answers 403 with a short body; this used to spin forever
+        failed <- timeout 10000000 (proxyTest "wrong-key")
+        failed `shouldBe` Just "OK:0-0"
+
+    it "still serves a fetched file when the cache write fails" $ do
+      let mockContent  = "WRITE_FAILS_CONTENT"
+          mockConfig   = defaultMockConfig { mockPort = 19832, mockFileContent = mockContent }
+          clientCfg    = testConfig 32
+          fileURIStr   = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-txt"
+          brokenWrites = CacheRunner
+            { runCacheWith = interpret $ \case
+                LookupKV _   -> pure Nothing
+                UpdateKV _ _ -> throw (StorageError "write refused")
+            }
+
+      withRunnerTestServer True brokenWrites mockConfig clientCfg defaultHathSettings $ \serverPort -> do
+        ts <- systemSeconds <$> getSystemTime
+        let inner    = encodeUtf8 [i|#{ts}-#{fileURIStr}-#{key clientCfg}-hotlinkthis|]
+            keystamp = [i|#{ts}-#{decodeUtf8 (BS.take 10 (hash @ByteString inner))}|] :: Text
+        manager <- newManager defaultManagerSettings
+        req <- parseRequest [i|http://localhost:#{serverPort}/h/#{fileURIStr}/keystamp=#{keystamp};fileindex=1;xres=1024/f.txt|]
+        resp <- httpLbs req manager
+        responseStatus resp `shouldBe` status200
+        responseBody resp `shouldBe` LBS.fromStrict mockContent
 
     it "serves file with jpg extension and correct mime type" $ do
       let mockPortNum = 19816
           mockContent = "FAKE_JPG_CONTENT"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 15
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-jpg"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-jpg"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -476,7 +625,7 @@ integrationSpecs = do
           mockContent = "FAKE_PNG_CONTENT"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 16
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-png"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-png"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -499,7 +648,7 @@ integrationSpecs = do
           mockContent = "FAKE_GIF_CONTENT"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 17
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-gif"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-gif"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -522,7 +671,7 @@ integrationSpecs = do
           mockContent = "FAKE_MP4_CONTENT"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 18
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-mp4"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-mp4"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -549,7 +698,7 @@ integrationSpecs = do
         now <- getSystemTime
         let ts = systemSeconds now
         manager <- newManager defaultManagerSettings
-        req <- parseRequest [i|http://localhost:#{serverPort}/servercmd/start_downloader/additional/#{ts}/key|]
+        req <- parseRequest (serverCmdUrl serverPort clientCfg "start_downloader" "additional" ts)
         resp <- httpLbs req manager
         responseStatus resp `shouldBe` status200
 
@@ -558,7 +707,7 @@ integrationSpecs = do
           mockContent = "FAKE_WEBM_CONTENT"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 20
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-wbm"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-wbm"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -581,7 +730,7 @@ integrationSpecs = do
           mockContent = "FAKE_WEBP_CONTENT"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 21
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-wbp"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-wbp"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -598,13 +747,14 @@ integrationSpecs = do
         response <- httpLbs request manager
 
         responseStatus response `shouldBe` status200
+        find ((== "Content-Type") . fst) (responseHeaders response) `shouldBe` Just ( "Content-Type", "image/webp" )
 
     it "serves file with avif extension" $ do
       let mockPortNum = 19823
           mockContent = "FAKE_AVIF_CONTENT"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 22
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-avf"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-avf"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -627,7 +777,7 @@ integrationSpecs = do
           mockContent = "FAKE_JXL_CONTENT"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 23
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-jxl"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-jxl"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -650,7 +800,7 @@ integrationSpecs = do
           mockContent = "TIMEDRIFT_TEST"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 24
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-txt"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-txt"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -674,7 +824,7 @@ integrationSpecs = do
           mockContent = "CACHED_CONTENT_TEST"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 25
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-txt"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-txt"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -703,7 +853,7 @@ integrationSpecs = do
           mockContent = "MISSING_PARAM_TEST"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 26
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-txt"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-txt"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -726,7 +876,7 @@ integrationSpecs = do
           mockContent = "NOT_FOUND_TEST"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 27
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-txt"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-txt"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -749,7 +899,7 @@ integrationSpecs = do
           mockContent = "UNKNOWN_EXT_CONTENT"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 28
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-xyz"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-xyz"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -773,7 +923,7 @@ integrationSpecs = do
           mockContent = "FUTURE_TIME_TEST"
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 29
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-txt"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-txt"
 
       withTestServer mockConfig clientCfg defaultHathSettings $ \serverPort -> do
         currentTime <- getSystemTime
@@ -822,7 +972,7 @@ integrationSpecs = do
           mockConfig  = defaultMockConfig { mockPort = mockPortNum, mockFileContent = mockContent }
           clientCfg   = testConfig 100
           settings = defaultHathSettings { clientPort = 9900 }
-          fileURIStr  = hash @Text mockContent <> "-123-1024-768-txt"
+          fileURIStr  = hash @Text mockContent <> "-" <> show (BS.length mockContent) <> "-1024-768-txt"
 
       withStartServer mockConfig clientCfg settings $ \serverPort _chan -> do
         currentTime <- getSystemTime

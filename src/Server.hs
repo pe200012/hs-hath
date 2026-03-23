@@ -27,13 +27,13 @@ import           Control.Exception                    ( finally, try )
 
 import qualified Data.ByteString                      as BS
 import qualified Data.ByteString.Char8                as BSC
+import           Data.ByteString.Builder              ( byteString )
 import qualified Data.ByteString.Lazy                 as LBS
 import qualified Data.ByteString.Lazy.Char8           as LBS8
 import qualified Data.HashMap.Strict                  as HashMap
 import qualified Data.Map.Strict                      as Map
 import           Data.String.Interpolate              ( i )
 import qualified Data.Text                            as Text
-import           Data.Time.Clock.POSIX                ( POSIXTime, getPOSIXTime )
 import           Data.Time.Clock.System               ( SystemTime(systemSeconds), getSystemTime )
 import           Data.X509                            ( CertificateChain, PrivKey )
 
@@ -50,11 +50,11 @@ import           HathNetwork.RPC                      ( RPC
 import           Interface.API                        ( API
                                                       , EHentaiAPI
                                                       , ServerCommand(..)
-                                                      , WithDynamicContentType(WithDynamicContentType)
                                                       , api
                                                       , downloadGalleryFile
                                                       , fetchBlacklist
                                                       , nextGalleryTask
+                                                      , renderServerCommand
                                                       , runEHentaiAPI
                                                       , runEHentaiAPIIO
                                                       , startListening
@@ -67,19 +67,27 @@ import qualified Mason.Builder                        as BD
 
 import           Middleware
 
-import           Network.HTTP.Client                  ( brReadSome
+import qualified Network.HTTP.Client                  as HC
+import           Network.HTTP.Client                  ( Manager
+                                                      , brRead
                                                       , newManager
                                                       , parseRequest
                                                       , withResponse
                                                       )
 import           Network.HTTP.Client.TLS              ( tlsManagerSettings )
-import           Network.HTTP.Simple                  ( getResponseBody )
-import           Network.HTTP.Types                   ( status200, status404 )
+import           Network.HTTP.Simple                  ( getResponseBody, getResponseStatusCode )
+import qualified Network.HTTP.Types                   as HT
+import           Network.HTTP.Types                   ( hContentLength
+                                                      , hContentType
+                                                      , status200
+                                                      , status404
+                                                      )
 import           Network.TLS                          ( Credentials(Credentials), Version(..) )
 import           Network.TLS.Extra                    ( ciphersuite_all )
 import           Network.Wai                          ( Middleware
                                                       , Request(requestMethod)
                                                       , responseLBS
+                                                      , responseStream
                                                       )
 import           Network.Wai.Handler.Warp             ( defaultSettings, setPort )
 import           Network.Wai.Handler.WarpTLS          ( OnInsecure(AllowInsecure)
@@ -143,7 +151,7 @@ import           System.IO.Unsafe                     ( unsafePerformIO )
 import           Types                                ( CacheBackend(..)
                                                       , ClientConfig
                                                       , ClientConfig(..)
-                                                      , FileURI(fileExt)
+                                                      , FileURI(fileExt, fileSize)
                                                       , GalleryFile(..)
                                                       , GalleryMetadata(..)
                                                       , HathSettings(..)
@@ -159,6 +167,7 @@ import           UnliftIO                             ( TChan
                                                       , race
                                                       , readTChan
                                                       , replicateConcurrently
+                                                      , timeout
                                                       , withAsync
                                                       , writeTChan
                                                       )
@@ -172,6 +181,15 @@ import           Utils                                ( bufferSending
 
 maxTimeDrift :: Int64
 maxTimeDrift = 600
+
+-- | Official Settings.MAX_KEY_TIME_DRIFT, used for servercmd.
+maxCommandTimeDrift :: Int64
+maxCommandTimeDrift = 300
+
+-- | Whole-download cap for one threaded_proxy_test request.
+-- ponytail: one total timeout; the official client uses 10 s connect + 60 s per read.
+testTimeoutMicros :: Int
+testTimeoutMicros = 60 * 1000000
 
 data ServerAction = Reload | Cert | GracefulShutdown
 
@@ -286,7 +304,12 @@ server
     resourceHandler
       (encodeUtf8 -> fileid)
       (parseURLParams . encodeUtf8 -> opts)
-      (encodeUtf8 -> filename) = do
+      (encodeUtf8 -> filename)
+      req
+      respond
+      -- answer HEAD like any other path instead of opening an upstream body nobody reads
+      | requestMethod req == "HEAD" = embed $ respond $ responseLBS status200 hentaiHeader ""
+      | otherwise = do
       currentTime <- embed getSystemTime
       cfg <- ask @ClientConfig
       when (abs (timestamp - systemSeconds currentTime) > maxTimeDrift)
@@ -296,24 +319,33 @@ server
         LocateURI { locateURIFilename = filename, locateURI = uri, locateURIOptions = opts }
         >>= \case
           Nothing -> throw err404
-          Just (Redirect url) -> throw
+          Just (Stored (Redirect url)) -> throw
             $ err302
             { errHeaders = [ ( "Location", url ), ( "Cache-Control", "public, max-age=600" ) ] }
-          Just (Record (fileRecordBytes -> bs)) -> do
+          Just (Stored (Record (fileRecordBytes -> bs))) -> do
             incServed
             addUpload (BS.length bs)
-            return
-              $ addHeader @"Content-Length" (BS.length bs)
-              $ WithDynamicContentType mimeType bs
+            embed $ respond $ responseLBS status200 (fileHeaders (BS.length bs)) (LBS.fromStrict bs)
+          -- cache miss: relay upstream bytes as they arrive, like the official proxy mode
+          Just (Streamed relay) -> do
+            incServed
+            addUpload (fileSize uri)
+            embed
+              $ respond
+              $ responseStream status200 (fileHeaders (fileSize uri))
+              $ \write flush -> relay (\chunk -> write (byteString chunk) >> flush)
       where
+        fileHeaders :: Int -> [ HT.Header ]
+        fileHeaders len = [ ( hContentType, mimeType ), ( hContentLength, show len ) ]
+
         mimeType = case fileExt uri of
           "jpg" -> "image/jpeg"
           "png" -> "image/png"
           "gif" -> "image/gif"
           "mp4" -> "video/mp4"
           "wbm" -> "video/webm"
-          "wbp" -> "video/webp"
-          "avf" -> "video/avif"
+          "wbp" -> "image/webp"
+          "avf" -> "image/avif"
           "jxl" -> "image/jxl"
           _     -> "application/octet-stream"
 
@@ -324,7 +356,7 @@ server
               rs        = fromMaybe "" (Map.lookup "keystamp" opts)
               ( t, rk ) = BSC.span (/= '-') rs
             in 
-              ( fromIntegral $ maybe 0 fst $ BSC.readInteger t, BS.tail rk )
+              ( fromIntegral $ maybe 0 fst $ BSC.readInteger t, BS.drop 1 rk )
 
         {-# INLINE challange #-}
         -- [i|#{timestamp}-#{fileid}-#{key cfg}-hotlinkthis|]
@@ -340,8 +372,9 @@ server
              <> BD.textUtf8 (key cfg)
              <> "-hotlinkthis")
 
-    serverCmdHandler command (parseURLParams . encodeUtf8 -> additional) _time _key
-      = case command of
+    serverCmdHandler command rawAdditional commandTime commandKey
+      = checkCommandKey
+      >> case command of
         StillAlive        -> plainText "I feel FANTASTIC and I'm still alive"
         ThreadedProxyTest -> let
             args = do
@@ -380,12 +413,10 @@ server
                   Nothing  -> throw err403
                   Just req -> do
                     results <- embed $ replicateConcurrently testCount $ runTest testSize req mgr
-                    let ( failed :: Int, millis :: Int64 )
-                          = foldl' (\( f, t ) r -> case r of
-                                      Nothing -> ( f + 1, t )
-                                      Just v  -> ( f, t + v )) ( 0, 0 ) results
+                    let succeeded = catMaybes results
                     addUpload (testCount * fromIntegral testSize)
-                    plainText [i|OK:#{failed}-#{millis}|]
+                    -- official format: OK:<successful tests>-<total millis of successful tests>
+                    plainText [i|OK:#{length succeeded}-#{sum succeeded}|]
         SpeedTest         -> let
             testSize
               = maybe
@@ -417,17 +448,45 @@ server
             atomically $ writeTChan chan Cert
           plainText ""
       where
+        additional = parseURLParams (encodeUtf8 rawAdditional)
+
+        -- same check as the official client: only the RPC server knows our key
+        checkCommandKey = do
+          currentTime <- embed getSystemTime
+          cfg <- ask @ClientConfig
+          let expected
+                = hash @Text
+                $ encodeUtf8 @Text
+                  [i|hentai@home-servercmd-#{renderServerCommand command}-#{rawAdditional}-#{clientId cfg}-#{commandTime}-#{key cfg}|]
+          when (abs (fromIntegral commandTime - systemSeconds currentTime) > maxCommandTimeDrift
+                || commandKey /= expected)
+            $ throw err403
+
+        -- A test succeeds only if the whole body arrives with status 200 within the
+        -- timeout (official: FileDownloader + getContentLength() >= testsize).
+        runTest :: Int64 -> HC.Request -> Manager -> IO (Maybe Int64)
         runTest testSize req mgr = do
-          start <- getPOSIXTime
-          let phi 0 _  = do
-                end <- getPOSIXTime
-                return $ truncate $ realToFrac @POSIXTime @Double $ 1000 * (end - start)
-              phi n br = do
-                s <- LBS.length <$> brReadSome br 1024
-                phi (max 0 (n - s)) br
-          try @SomeException (withResponse req mgr (phi testSize . getResponseBody)) >>= \case
-            Left _  -> return Nothing
-            Right v -> return $ Just v
+          start <- getMonotonicTime
+          ok <- timeout testTimeoutMicros
+            $ try @SomeException
+            $ withResponse req mgr
+            $ \resp -> let
+                drain n
+                  | n <= 0 = pure True
+                  | otherwise = do
+                    chunk <- brRead (getResponseBody resp)
+                    -- an empty chunk is EOF: the body was shorter than promised
+                    if BS.null chunk
+                      then pure False
+                      else drain (n - fromIntegral (BS.length chunk))
+              in
+                if getResponseStatusCode resp == 200
+                  then drain testSize
+                  else pure False
+          end <- getMonotonicTime
+          pure $ case ok of
+            Just (Right True) -> Just (truncate ((end - start) * 1000))
+            _ -> Nothing
 
         {-# INLINE readInt #-}
         {-# SPECIALISE readInt :: ByteString -> Maybe Int #-}
@@ -535,7 +594,10 @@ makeApplication serverCxt
     applyRateLimit
       = if disableRL
         then id
-        else rateLimitMiddleware
+        else rateLimitMiddleware isRpcServer
+
+    -- dual-stack sockets would show RPC servers as ::ffff:a.b.c.d; Warp listens on IPv4 here
+    isRpcServer ip = (\st -> Just ip `elem` (parseIPv4 <$> rpcServerIPs st)) <$> readTVarIO settings
 
     finalMiddleware :: Middleware
     finalMiddleware = applyRealIp . applyRateLimit
@@ -624,11 +686,13 @@ serverLoop ctx certs = do
 -- This function repeatedly calls 'stopListening' until the RPC server
 -- acknowledges the shutdown request, then exits the process cleanly.
 gracefulShutdown :: ClientConfig -> IO a
-gracefulShutdown cfg = go
+gracefulShutdown cfg = go (3 :: Int)
   where
-    go = runEHentaiAPIIO cfg stopListening >>= \case
-      Right _ -> exitSuccess
-      Left _  -> go
+    -- The official client sends client_stop once. Never spin when the RPC server is unreachable.
+    go n = runEHentaiAPIIO cfg stopListening >>= \case
+      Left _
+        | n > 1 -> threadDelay 1000000 >> go (n - 1)
+      _ -> exitSuccess
 
 -- | Refresh TLS certificates with exponential backoff retry logic.
 --
@@ -729,8 +793,9 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
       metadata <- nextGalleryTask
       incDlTask
       case metadata of
-        Nothing -> log Info "No gallery task available"
-        Just md -> do
+        Left "NO_PENDING_DOWNLOADS" -> log Info "No gallery task available"
+        Left reason -> log Warning [i|Gallery download refused: #{reason}|]
+        Right md -> do
           log Info [i|Starting download for gallery #{galleryID md}|]
           complete <- mapM (verifyAndDownload md) (galleryFileList md)
           when (and complete) (notifyGalleryCompletion md)
@@ -744,7 +809,8 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
         if existing
           then BS.readFile filePath
           else return BS.empty
-      if galleryFileHash f == hash existingBytes
+      -- a file generated on demand has no known hash; like the official client, keep it
+      if not (BS.null existingBytes) && maybe True (== hash existingBytes) (galleryFileHash f)
         then log Info [i|#{galleryFileName f}.#{galleryFileExt f} already verified, skipping|]
           >> pure True
         else downloadGalleryFile md f >>= \case

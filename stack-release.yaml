@@ -8,7 +8,6 @@ extra-deps:
   - polysemy-zoo-0.8.2.0
   - suspend-0.2.0.0
   - timers-0.2.0.4
-  - cryptostore-0.3.0.1
   - vendor/placeholder
   - vendor/minio-hs
   - time-units-1.0.0
@@ -22,9 +21,6 @@ allow-newer-deps:
   - polysemy-zoo
   - mason
 
-flags:
-  cryptostore:
-    use_crypton: True
 
 nix:
   enable: false
