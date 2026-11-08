@@ -82,7 +82,7 @@ import           Network.HTTP.Types                   ( hContentLength
                                                       , status200
                                                       , status404
                                                       )
-import           Network.TLS                          ( Credentials(Credentials), Version(..) )
+import           Network.TLS                          ( Credentials(Credentials), TLSException(HandshakeFailed), Version(..) )
 import           Network.TLS.Extra                    ( ciphersuite_all )
 import           Network.Wai                          ( Middleware
                                                       , Request(requestMethod)
@@ -90,9 +90,10 @@ import           Network.Wai                          ( Middleware
                                                       , responseLBS
                                                       , responseStream
                                                       )
-import           Network.Wai.Handler.Warp             ( defaultSettings, setPort )
+import           Network.Wai.Handler.Warp             ( defaultOnException, defaultSettings, setOnException, setPort )
 import           Network.Wai.Handler.WarpTLS          ( OnInsecure(AllowInsecure)
                                                       , TLSSettings(..)
+                                                      , WarpTLSException(ClientClosedConnectionPrematurely)
                                                       , runTLS
                                                       , tlsSettingsSni
                                                       )
@@ -666,15 +667,25 @@ serverLoop ctx certs = do
               , cipher_ECDHE_RSA_AES128CBC_SHA
               , cipher_ECDHE_RSA_AES256CBC_SHA
               ]
-       , tlsAllowedVersions = [ TLS10, TLS11, TLS12, TLS13 ]
+       -- tls >= 2 speaks nothing older; it rejects SSL3/TLS1.0/TLS1.1 hellos before looking at this
+       , tlsAllowedVersions = [ TLS12, TLS13 ]
        })
-      (setPort (clientPort st) defaultSettings)
+      (setOnException quietHandshakes $ setPort (clientPort st) defaultSettings)
     $ logStdout (makeApplication ctx)
 
   case result of
     Left GracefulShutdown -> gracefulShutdown cfg
     Left _ -> exitSuccess
     Right _ -> error "Server terminated unexpectedly"
+
+-- | Warp's exception printer, minus connections that never got past TLS:
+-- scanners probing old protocols and cipher suites, and clients that connect
+-- and send nothing (thousands a day). None of them reached the application.
+quietHandshakes :: Maybe Request -> SomeException -> IO ()
+quietHandshakes req e
+  | Just (HandshakeFailed _) <- fromException e = pass
+  | Just ClientClosedConnectionPrematurely <- fromException e = pass
+  | otherwise = defaultOnException req e
 
 -- | Perform graceful shutdown by notifying RPC server and exiting.
 --

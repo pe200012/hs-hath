@@ -20,6 +20,7 @@ and this project adheres to the
 - **Filesystem backend**: hits are sent from the file instead of being read into memory, and the least recently served files are evicted to stay under the disk limit from the H@H settings page (100 MiB below it, as the official client). Its per-request in-memory LRU, which never survived past one request, is gone
 - **Metrics**: `hath_latency_seconds` (a gauge holding the last request's latency in microseconds) is replaced by the histogram `hath_request_duration_seconds`; the always-zero `hath_errors_total` is removed
 - `client-login.example` uses the Filesystem backend
+- **Logs**: failed TLS handshakes and connections that close before sending anything (scanners probing SSL3/TLS 1.0/1.1 and cipher suites, a few thousand a day on a public node) are no longer printed. The TLS 1.0/1.1 entries are dropped from the allowed versions; `tls` 2.x rejected them anyway
 
 ## [1.2.0] - 2026-11-08
 
