@@ -24,6 +24,7 @@ import qualified Data.HashMap.Strict as HashMap
 import           GHC.Clock           ( getMonotonicTime )
 
 import qualified Metrics.Gauge       as Gauge
+import qualified Metrics.Histogram   as Histogram
 
 import           Network.HTTP.Types  ( hAccept )
 import           Network.Socket      ( HostAddress
@@ -185,8 +186,7 @@ tracingTimeUsage statsEnv app req k = do
   startTime <- getMonotonicTime
   finally (app req k) (do
                          endTime <- getMonotonicTime
-                         let latency = endTime - startTime
-                         Gauge.set (round (latency * 1000000)) (statsLatency statsEnv))
+                         Histogram.observe (endTime - startTime) (statsLatency statsEnv))
 
 withHentaiHeaders :: Middleware
 withHentaiHeaders app req k = app req (k . mapResponseHeaders addHeaders)

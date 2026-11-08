@@ -41,7 +41,6 @@ module Types
 import qualified Data.ByteString.Char8  as BS
 import           Data.Char              ( isAsciiLower, isAsciiUpper, isDigit )
 import qualified Data.ByteString.Short  as SBS
-import qualified Data.HashSet           as HashSet
 import qualified Data.Text              as T
 
 import qualified Mason.Builder          as BD
@@ -152,7 +151,6 @@ data HathSettings
   , useLessMemory      :: {-# UNPACK #-} !Bool
   , checkIPOrigin      :: {-# UNPACK #-} !Bool
   , floodControl       :: {-# UNPACK #-} !Bool
-  , staticRanges       :: {-# UNPACK #-} !(HashSet ShortByteString)
   , rpcServerIPs       :: ![ ByteString ]
     -- ^ As sent by the server, e.g. "::ffff:192.0.2.10"
   }
@@ -172,11 +170,13 @@ defaultHathSettings
   , useLessMemory      = False
   , checkIPOrigin      = True
   , floodControl       = True
-  , staticRanges       = mempty
   , rpcServerIPs       = []
   }
 
-parseSettings :: [ ByteString ] -> HathSettings
+-- | Apply settings lines onto a base. client_settings only carries what changed
+-- (static ranges, for one, are sent at login only), so a refresh must not reset
+-- the other fields to their defaults.
+parseSettings :: HathSettings -> [ ByteString ] -> HathSettings
 parseSettings
   = foldl' (\s kv -> let
                 ( k, rest ) = BS.span (/= '=') kv
@@ -188,10 +188,8 @@ parseSettings
                   ( "throttle_bytes", Just bytes ) -> s { throttleBytes = bytes }
                   ( "disklimit_bytes", Just bytes ) -> s { diskLimitBytes = bytes }
                   ( "diskremaining_bytes", Just bytes ) -> s { diskRemainingBytes = bytes }
-                  ( "static_ranges", _ ) -> s
-                    { staticRanges = HashSet.fromList (SBS.toShort <$> BS.split ';' v) }
                   ( "rpc_server_ip", _ ) -> s { rpcServerIPs = BS.split ';' v }
-                  _ -> s) defaultHathSettings
+                  _ -> s)
 
 data GalleryFile
   = GalleryFile { galleryFilePage  :: {-# UNPACK #-} !Int
@@ -402,4 +400,7 @@ reconstructRecord uri bytes
   where
     fileId = renderFileURIText uri
 
-data StorageResult = Record FileRecord | Redirect ByteString
+data StorageResult
+  = Record FileRecord
+  | Redirect ByteString
+  | LocalFile FilePath -- ^ served straight from disk

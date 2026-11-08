@@ -324,6 +324,11 @@ tests:
   hs-hath-test:
     main: Spec.hs
     source-dirs: test
+    # the server runs threaded in production, and newer warp needs it
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
     dependencies:
       - hs-hath
       - hs-hath-polysemy-zoo

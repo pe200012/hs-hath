@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to the
 [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Settings refresh** (`refresh_settings`) reset every setting the reply did not repeat to its default; it now updates only what it carries
+- **Filesystem backend** could not start (the startup cache check opened `cachePath` as an SQLite file); the check now only runs for the SQLite backend
+- Files are written through a temp file and renamed, so a crash no longer leaves a truncated file that later gets served (gallery downloads and the Filesystem cache). Truncated files left by older versions are dropped and refetched
+- Removed the disabled static-range check: like the official client, any file the server routes here is served
+- The CI workflow now runs the test suite
+
+### Changed
+- **Filesystem backend**: hits are sent from the file instead of being read into memory, and the least recently served files are evicted to stay under the disk limit from the H@H settings page (100 MiB below it, as the official client). Its per-request in-memory LRU, which never survived past one request, is gone
+- **Metrics**: `hath_latency_seconds` (a gauge holding the last request's latency in microseconds) is replaced by the histogram `hath_request_duration_seconds`; the always-zero `hath_errors_total` is removed
+- `client-login.example` uses the Filesystem backend
+
 ## [1.2.0] - 2026-11-08
 
 ### Security

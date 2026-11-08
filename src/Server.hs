@@ -86,6 +86,7 @@ import           Network.TLS                          ( Credentials(Credentials)
 import           Network.TLS.Extra                    ( ciphersuite_all )
 import           Network.Wai                          ( Middleware
                                                       , Request(requestMethod)
+                                                      , responseFile
                                                       , responseLBS
                                                       , responseStream
                                                       )
@@ -139,14 +140,12 @@ import           Storage.Database                     ( FileRecord(fileRecordByt
                                                       , initializeDB
                                                       , runCache
                                                       )
-import           Storage.Filesystem                   ( runCacheFilesystem )
+import           Storage.Filesystem                   ( newFsCache, runCacheFilesystem, runEvictor )
 import           Storage.Locate
 import           Storage.R2                           ( mkR2Connection, runCacheR2 )
 
-import           System.Directory                     ( createDirectoryIfMissing, doesFileExist )
-import           System.FilePath                      ( takeDirectory )
+import           System.Directory                     ( doesFileExist )
 import           System.IO                            ( hPutStrLn )
-import           System.IO.Unsafe                     ( unsafePerformIO )
 
 import           Types                                ( CacheBackend(..)
                                                       , ClientConfig
@@ -177,6 +176,7 @@ import           Utils                                ( bufferSending
                                                       , log
                                                       , lookupParam
                                                       , parseURLParams
+                                                      , writeFileAtomic
                                                       )
 
 maxTimeDrift :: Int64
@@ -322,6 +322,11 @@ server
           Just (Stored (Redirect url)) -> throw
             $ err302
             { errHeaders = [ ( "Location", url ), ( "Cache-Control", "public, max-age=600" ) ] }
+          Just (Stored (LocalFile path)) -> do
+            incServed
+            addUpload (fileSize uri)
+            -- Warp streams the file and sets Content-Length from it
+            embed $ respond $ responseFile status200 [ ( hContentType, mimeType ) ] path Nothing
           Just (Stored (Record (fileRecordBytes -> bs))) -> do
             incServed
             addUpload (BS.length bs)
@@ -432,7 +437,7 @@ server
                 $ bufferSending testSize
         RefreshSettings   -> do
           log Info "Refreshing settings"
-          updateSettings =<< fetchSettings
+          updateSettings =<< fetchSettings =<< getSettings
           plainText ""
         StartDownloader   -> do
           chan <- ask @(TChan GalleryTask)
@@ -782,12 +787,11 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
               stopTictok <- tictok config
               finally (serverLoopMain (ctx cacheRunner) certs) stopTictok
     CacheBackendFilesystem -> do
-      let root = Text.unpack $ cachePath config
-      -- Ensure cache root exists
-      createDirectoryIfMissing True root
-      let cacheRunner = CacheRunner { runCacheWith = runCacheFilesystem root }
+      fs <- newFsCache (Text.unpack $ cachePath config)
+      let cacheRunner = CacheRunner { runCacheWith = runCacheFilesystem fs }
       stopTictok <- tictok config
-      finally (serverLoopMain (ctx cacheRunner) certs) stopTictok
+      withAsync (runEvictor fs (diskLimitBytes <$> readTVarIO ssVar))
+        $ \_ -> finally (serverLoopMain (ctx cacheRunner) certs) stopTictok
   where
     startsDownloader = do
       metadata <- nextGalleryTask
@@ -803,7 +807,6 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
     verifyAndDownload md f = do
       let filePath :: FilePath
             = [i|download/#{galleryID md}/#{galleryFileName f}.#{galleryFileExt f}|]
-      embed $ createDirectoryIfMissing True (takeDirectory filePath)
       existingBytes <- embed $ do
         existing <- doesFileExist filePath
         if existing
@@ -821,7 +824,7 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
             log Info [i|Downloaded #{galleryFileName f}.#{galleryFileExt f}|]
             incDlFile
             addDlBytes (BS.length bytes)
-            embed $ BS.writeFile filePath bytes
+            embed $ writeFileAtomic filePath bytes
             pure True
 
     serverLoopMain :: ServerLoopContext -> ( CertificateChain, PrivKey ) -> IO ()

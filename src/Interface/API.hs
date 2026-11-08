@@ -107,6 +107,7 @@ import           Types                    ( ClientConfig
                                           , RPCError(CertificateFailure)
                                           , RPCResponse(statusCode)
                                           , clientBuild
+                                          , defaultHathSettings
                                           , hentaiHeader
                                           , parseMetadata
                                           , parseRPCResponse
@@ -350,7 +351,7 @@ stopListening = do
 login :: [ EHentaiAPI, Error RPCError ] >@> HathSettings
 login = do
   x <- ehRPC emptyRPCParams { act = Just "client_login" }
-  parseSettings <$> parseRPCResponse' x
+  parseSettings defaultHathSettings <$> parseRPCResponse' x
 
 downloadCertificates
   :: [ EHentaiAPI, Error RPCError, Reader ClientConfig ] >@> ( CertificateChain, PrivKey )
@@ -370,10 +371,11 @@ downloadCertificates = do
           recover (toProtectionPassword passcode) (toCredential pkcs12)
 
 {-# INLINE getSettings #-}
-getSettings :: [ EHentaiAPI, Error RPCError ] >@> HathSettings
-getSettings = do
+-- | Refreshed settings, applied onto the current ones.
+getSettings :: HathSettings -> [ EHentaiAPI, Error RPCError ] >@> HathSettings
+getSettings current = do
   x <- ehRPC emptyRPCParams { act = Just "client_settings" }
-  parseSettings <$> parseRPCResponse' x
+  parseSettings current <$> parseRPCResponse' x
 
 {-# INLINE nextGalleryTask #-}
 -- | Left says why there is nothing to download (NO_PENDING_DOWNLOADS, or a refused list).

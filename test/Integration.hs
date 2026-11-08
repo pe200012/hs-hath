@@ -11,7 +11,7 @@ module Integration ( integrationSpecs ) where
 import           Control.Concurrent       ( ThreadId, forkIO, killThread, threadDelay )
 import           Control.Concurrent.MVar  ( MVar, newEmptyMVar, putMVar, tryTakeMVar )
 import           Control.Concurrent.STM   ( TVar, newTVarIO )
-import           Control.Exception        ( bracket, catch, SomeException )
+import           Control.Exception        ( bracket, catch, SomeException, throwIO )
 
 import qualified Data.Aeson               as A
 import qualified Data.Aeson               as A
@@ -27,7 +27,7 @@ import           Data.X509                ( CertificateChain(..), PrivKey )
 import           Data.X509.File           ( readSignedObject, readKeyFile )
 
 import           Storage.Database         ( initializeDB )
-import           Database.SQLite.Simple   ( withConnection )
+import           Database.SQLite.Simple   ( Connection, SQLError, close, open, withConnection )
 
 import           Utils                    ( hash )
 
@@ -65,6 +65,10 @@ import           Server                   ( CacheRunner(..)
 
 
 import           Storage.Database         ( runCache )
+import           Storage.Filesystem       ( newFsCache, runCacheFilesystem )
+import           System.Directory         ( createDirectoryIfMissing )
+import           System.FilePath          ( (</>) )
+import           System.IO.Temp           ( withSystemTempDirectory )
 
 
 
@@ -155,7 +159,7 @@ withTestServerConfigured
   -> (Int -> IO a)
   -> IO a
 withTestServerConfigured disableRateLimit mockCfg clientCfg settings action
-  = withConnection ":memory:" $ \conn -> do
+  = bracket (open ":memory:") closeWhenIdle $ \conn -> do
     initializeDB conn
     withRunnerTestServer
       disableRateLimit
@@ -164,6 +168,15 @@ withTestServerConfigured disableRateLimit mockCfg clientCfg settings action
       clientCfg
       settings
       action
+
+-- | A cache miss is written back after the response has gone out, so a test can
+-- finish while that write still holds the database; wait for it (up to a second).
+closeWhenIdle :: Connection -> IO ()
+closeWhenIdle conn = go (100 :: Int)
+  where
+    go n = close conn `catch` \(e :: SQLError) -> if n > 0
+      then threadDelay 10000 >> go (n - 1)
+      else throwIO e
 
 withRunnerTestServer
   :: Bool
@@ -210,8 +223,9 @@ withRateLimitedTestServer = withTestServerConfigured False
 -- | Helper to load test certificates
 loadTestCertificates :: IO (CertificateChain, [PrivKey])
 loadTestCertificates = do
-  certs <- readSignedObject "test-cert.pem"
-  keys <- readKeyFile "test-key.pem"
+  -- warp-tls' own test pair: these tests speak plain HTTP, so its age does not matter
+  certs <- readSignedObject "vendor/warp-tls-3.4.13/certificate.pem"
+  keys <- readKeyFile "vendor/warp-tls-3.4.13/key.pem"
   return (CertificateChain certs, keys)
 
 -- | Test with startServer (includes full initialization)
@@ -225,7 +239,7 @@ withStartServer mockCfg clientCfg settings action = withMockRPC mockCfg $ do
   setEnv "HATH_RPC_HOST" ("localhost:" <> show (mockPort mockCfg))
   (certChain, keys) <- loadTestCertificates
   case keys of
-    [] -> error "No private key found in test-key.pem"
+    [] -> error "No private key found in the test key file"
     (privKey:_) -> do
       serverChan <- newTChanIO
       let certs = (certChain, privKey)
@@ -847,6 +861,31 @@ integrationSpecs = do
         response2 <- httpLbs request manager
         responseStatus response2 `shouldBe` status200
         LBS.toStrict (responseBody response2) `shouldBe` mockContent
+
+    it "serves a Filesystem cache hit from disk" $ do
+      let cached     = "ON_DISK_CONTENT"
+          -- upstream would answer differently, so a match proves the bytes came from disk
+          mockConfig = defaultMockConfig { mockPort = 19833, mockFileContent = "UPSTREAM_CONTENT" }
+          clientCfg  = testConfig 25
+          fileId     = hash @Text cached <> "-" <> show (BS.length cached) <> "-1024-768-txt"
+
+      withSystemTempDirectory "hath-fs" $ \root -> do
+        createDirectoryIfMissing True (root </> toString (T.take 4 fileId))
+        writeFileBS (root </> toString (T.take 4 fileId) </> toString fileId) cached
+        fs <- newFsCache root
+        let runner = CacheRunner { runCacheWith = runCacheFilesystem fs }
+        withRunnerTestServer True runner mockConfig clientCfg defaultHathSettings $ \serverPort -> do
+          ts <- systemSeconds <$> getSystemTime
+          let challenge = BS.take 10 (hash @ByteString (encodeUtf8 [i|#{ts}-#{fileId}-#{key clientCfg}-hotlinkthis|]))
+              url = [i|http://localhost:#{serverPort}/h/#{fileId}/keystamp=#{ts}-#{decodeUtf8 challenge};fileindex=1;xres=1024/f.txt|]
+          manager <- newManager defaultManagerSettings
+          request <- parseRequest url
+          response <- httpLbs request manager
+          responseStatus response `shouldBe` status200
+          LBS.toStrict (responseBody response) `shouldBe` cached
+          let header h = snd <$> find ((== h) . fst) (responseHeaders response)
+          header "Content-Length" `shouldBe` Just (show (BS.length cached))
+          header "Content-Type" `shouldBe` Just "application/octet-stream"
 
     it "rejects resource request with missing fileindex option" $ do
       let mockPortNum = 19827

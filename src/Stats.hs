@@ -24,10 +24,10 @@ import           GHC.Clock          ( getMonotonicTime )
 
 import qualified Metrics.Counter    as Counter
 import qualified Metrics.Gauge      as Gauge
-import           Metrics.Registry   ( newRegistry, registerCounter, registerGauge )
+import           Metrics.Registry   ( newRegistry, registerCounter, registerGauge, registerHistogram )
 import           Metrics.Snapshot   ( getCachedSnapshot, startSnapshotWorker )
 -- Custom metrics implementation (replaces prometheus library)
-import           Metrics.Types      ( Counter, Gauge, Registry )
+import           Metrics.Types      ( Counter, Gauge, Histogram, Registry )
 
 import           Polysemy
 import           Polysemy.Operators
@@ -48,8 +48,7 @@ data StatsEnv
   , statsDlTaskCounter :: !Counter
   , statsDlFileCounter :: !Counter
   , statsDlBytesCounter :: !Counter
-  , statsErrorCounter :: !Counter
-  , statsLatency :: !Gauge
+  , statsLatency :: !Histogram
   }
 
 newStatsEnv :: IO StatsEnv
@@ -74,8 +73,12 @@ newStatsEnv = do
     "hath_download_size_bytes_total"
     "Total bytes downloaded from galleries"
     registry
-  errorCounter <- registerCounter "hath_errors_total" "Total errors" registry
-  latencyGauge <- registerGauge "hath_latency_seconds" "Request latency in seconds" registry
+  -- includes sending the body, so large files land in the upper buckets
+  latency <- registerHistogram
+    "hath_request_duration_seconds"
+    "Time from request to the last byte sent"
+    [ 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60 ]
+    registry
 
   -- Start background snapshot worker (updates every 5 seconds)
   startSnapshotWorker registry (5 * 1000000)
@@ -93,8 +96,8 @@ newStatsEnv = do
       dlTaskCounter
       dlFileCounter
       dlBytesCounter
-      errorCounter
-      latencyGauge
+      latency
+
 data Stats m a where
   AddUpload :: Int -> Stats m ()
   AddDownload :: Int -> Stats m ()
@@ -113,9 +116,6 @@ data Stats m a where
   IncDlTask :: Stats m ()
   IncDlFile :: Stats m ()
   AddDlBytes :: Int -> Stats m ()
-
-  -- Error metrics with labels
-  IncError :: Text -> Stats m ()  -- error type label
 
 makeSem ''Stats
 
@@ -160,11 +160,6 @@ runStats = interpret $ \case
   AddDlBytes n -> do
     env <- ask
     embed $ Counter.add n (statsDlBytesCounter env)
-
-  -- Error metrics with labels
-  IncError _errorType -> do
-    env <- ask
-    embed $ Counter.inc (statsErrorCounter env)
 
   ReadPrometheus -> do
     env <- ask

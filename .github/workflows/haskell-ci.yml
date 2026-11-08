@@ -54,6 +54,8 @@ jobs:
         run: $STACK test --bench --only-dependencies $FLAGS
       - name: Build
         run: $STACK build --bench --haddock --no-haddock-deps $FLAGS
+      - name: Test
+        run: $STACK test $FLAGS
       - name: Install Binary
         run: |
           stack install --system-ghc --local-bin-path ./bin/

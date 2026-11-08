@@ -6,6 +6,8 @@ module Metrics.Prometheus ( render ) where
 import qualified Data.Map.Strict as Map
 import qualified Data.Text       as Text
 
+import           Numeric         ( showFFloat )
+
 import           Mason.Builder   ( BuilderFor
                                  , StrictByteStringBackend
                                  , byteString
@@ -30,6 +32,27 @@ renderMetric :: MetricSnapshot -> MBuilder
 renderMetric = \case
   CounterSnapshot metricId help val -> renderMetricLines "counter" metricId help val
   GaugeSnapshot metricId help val   -> renderMetricLines "gauge" metricId help val
+  HistogramSnapshot (MetricId name labels) help buckets total -> mconcat
+    $ [ "# HELP ", textUtf8 name, " ", textUtf8 help, "\n" ]
+    <> [ "# TYPE ", textUtf8 name, " histogram\n" ]
+    <> [ textUtf8 name
+         <> "_bucket"
+         <> renderLabels (Map.insert "le" (maybe "+Inf" double le) labels)
+         <> " "
+         <> int64Dec n
+         <> "\n"
+       | ( le, n ) <- buckets
+       ]
+    <> [ textUtf8 name, "_sum", renderLabels labels, " ", textUtf8 (double total), "\n" ]
+    <> [ textUtf8 name
+       , "_count"
+       , renderLabels labels
+       , " "
+       , int64Dec (maybe 0 snd (viaNonEmpty last buckets))
+       , "\n"
+       ]
+  where
+    double x = toText (showFFloat Nothing x "")
 
 -- | Render the complete metric output (HELP, TYPE, and value lines)
 renderMetricLines :: ByteString -> MetricId -> Text -> Int64 -> MBuilder

@@ -146,6 +146,9 @@ runCacheR2 conn = interpret (phi (r2UrlCache conn))
     phi _cache (UpdateKV _uri (Just (Redirect _url)))
       = error "impossible: cannot store Redirect in R2 backend"
 
+    phi _cache (UpdateKV _uri (Just (LocalFile _path)))
+      = error "impossible: cannot store LocalFile in R2 backend"
+
     phi _cache (UpdateKV uri (Just (Record record)))       = do
       let key     = fileURIToKey uri
           content = fileRecordBytes record

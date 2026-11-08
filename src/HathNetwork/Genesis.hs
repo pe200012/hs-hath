@@ -25,7 +25,7 @@ import           Servant.Client     ( ClientError )
 import           Types
 
 data Genesis m a where
-  FetchSettings :: Genesis m HathSettings
+  FetchSettings :: HathSettings -> Genesis m HathSettings
   FetchCertificate :: Genesis m ( CertificateChain, PrivKey )
 
 makeSem ''Genesis
@@ -35,7 +35,7 @@ runGenesis :: Members '[ Embed IO, Error RPCError, Reader ClientConfig, EHentaiA
            => Genesis : r @> a
            -> Sem r a
 runGenesis = interpret $ \case
-  FetchSettings    -> getSettings
+  FetchSettings current -> getSettings current
   FetchCertificate -> downloadCertificates
 
 {-# INLINE runGenesisIO #-}

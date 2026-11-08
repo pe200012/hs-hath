@@ -62,6 +62,9 @@ runCache conn = interpret $ \case
   UpdateKV _uri (Just (Redirect _url))
     -> error "impossible: cannot store Redirect in Database backend"
 
+  UpdateKV _uri (Just (LocalFile _path))
+    -> error "impossible: cannot store LocalFile in Database backend"
+
   UpdateKV _ (Just (Record record)) -> do
     embed
       $ execute

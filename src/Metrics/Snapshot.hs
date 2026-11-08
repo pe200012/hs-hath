@@ -26,8 +26,16 @@ generateSnapshot reg = do
     val <- Gauge.read g
     pure $ GaugeSnapshot (gaugeMetricId g) (gaugeHelp g) val
 
+  histograms <- readIORef (registryHistograms reg)
+  histogramSnapshots <- forM histograms $ \h -> do
+    counts <- traverse readIORef (histogramCounts h)
+    total <- readIORef (histogramSum h)
+    let les = (Just <$> histogramBounds h) <> [ Nothing ]
+    pure
+      $ HistogramSnapshot (histogramMetricId h) (histogramHelp h) (zip les (scanl1 (+) counts)) total
+
   -- Render to Prometheus text format
-  pure $ Prometheus.render (counterSnapshots <> gaugeSnapshots)
+  pure $ Prometheus.render (counterSnapshots <> gaugeSnapshots <> histogramSnapshots)
 
 -- | Start a background worker that periodically updates the cached snapshot
 -- This decouples metrics reads from the /metrics endpoint, eliminating blocking

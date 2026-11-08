@@ -2,6 +2,8 @@
 module Utils ( module Utils ) where
 
 import           Colog                   ( Message, Msg(..), Severity )
+
+import           Control.Exception       ( bracketOnError, try )
 import           Colog.Polysemy          ( Log )
 import qualified Colog.Polysemy          as Co
 
@@ -22,6 +24,10 @@ import           Relude
 
 import qualified Servant.Types.SourceT   as Source
 import           Servant.Types.SourceT   ( StepT )
+
+import           System.Directory        ( createDirectoryIfMissing, removeFile, renameFile )
+import           System.FilePath         ( takeDirectory, takeFileName )
+import           System.IO               ( hClose, openBinaryTempFile )
 
 type URLParams = Map.Map ByteString ByteString
 
@@ -92,3 +98,12 @@ tooManyRequestsResponse
     (mkStatus 429 "Too Many Requests")
     [ ( "Content-Type", "text/plain" ) ]
     "Too Many Requests"
+-- | Write through a temp file in the same directory, then rename: a crash or a
+-- concurrent reader never sees a partial file.
+writeFileAtomic :: FilePath -> ByteString -> IO ()
+writeFileAtomic path bytes = do
+  let dir = takeDirectory path
+  createDirectoryIfMissing True dir
+  bracketOnError (openBinaryTempFile dir (takeFileName path <> ".tmp"))
+    (\( tmp, h ) -> hClose h >> void (try @SomeException (removeFile tmp)))
+    $ \( tmp, h ) -> BS.hPut h bytes >> hClose h >> renameFile tmp path

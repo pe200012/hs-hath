@@ -5,136 +5,100 @@
 
 module FilesystemSpec ( filesystemSpecs ) where
 
-import           Colog                ( LogAction(..), Message )
-import           Colog.Polysemy       ( Log, runLogAction )
+import           Colog                 ( LogAction(..), Message )
+import           Colog.Polysemy        ( Log, runLogAction )
 
-import           Storage.Database     ( FileRecord(..) )
+import qualified Data.ByteString       as BS
+import           Data.Time.Clock.POSIX ( posixSecondsToUTCTime )
 
 import           Polysemy
-import           Polysemy.Error       ( Error, runError )
-import           Polysemy.KVStore     ( KVStore, lookupKV, updateKV )
-import           Polysemy.Reader      ( Reader, runReader )
+import           Polysemy.Error        ( Error, runError )
+import           Polysemy.KVStore      ( KVStore, lookupKV, updateKV )
 
-import           Storage.Filesystem   ( runCacheFilesystem )
+import           Relude
 
-import           Relude               hiding ( Reader, runReader )
+import           Storage.Filesystem    ( FsCache, newFsCache, runCacheFilesystem, sweep )
 
-import           System.Directory     ( doesFileExist )
-import           System.FilePath      ( (</>) )
-import           System.IO.Temp       ( withSystemTempDirectory )
+import           System.Directory      ( createDirectoryIfMissing, doesFileExist, setModificationTime )
+import           System.FilePath       ( (</>) )
+import           System.IO.Temp        ( withSystemTempDirectory )
 
 import           Test.Hspec
 
-import           Types                ( ClientConfig
-                                      , FileURI
-                                      , RPCError
-                                      , StorageResult(..)
-                                      , defaultClientConfig
-                                      , parseFileURI
-                                      )
+import           Types                 ( FileURI, RPCError, StorageResult(..), parseFileURI, reconstructRecord )
 
--- | Sample file record for testing
-sampleRecord :: FileRecord
-sampleRecord = FileRecord
-  {
-    fileRecordLRUCounter = 0
-  ,
-    fileRecordS4         = "test"
-  ,
-    fileRecordFileId     = "testhash1234-1024-800-600-jpg"
-  ,
-    fileRecordFileName   = Just "test.jpg"
-  ,
-    fileRecordBytes      = "test content for Filesystem storage"
-  }
+import           Utils                 ( hash )
 
--- | Parse a file URI from the sample record
-sampleURI :: FileURI
-sampleURI = parseFileURI "testhash1234-1024-800-600-jpg"
+-- | A URI whose hash and size match the content, as the server hands them out.
+uriFor :: ByteString -> FileURI
+uriFor content = parseFileURI $ hash content <> "-" <> show (BS.length content) <> "-800-600-jpg"
 
--- | Silence logs for cleaner test output
-silentLogAction :: LogAction IO Message
-silentLogAction = LogAction $ \_ -> pure ()
+runFs :: FsCache
+      -> Sem '[ KVStore FileURI StorageResult, Log Message, Error RPCError, Embed IO ] a
+      -> IO a
+runFs fs program = do
+  result <- runM
+    . runError @RPCError
+    . runLogAction @IO @Message (LogAction $ \_ -> pure ())
+    . runCacheFilesystem fs
+    $ program
+  either (\e -> fail $ "unexpected error: " <> show e) pure result
 
--- | Run a program with Filesystem cache effect (silent logging)
-runWithFilesystemSilent :: FilePath
-                        -> Sem '[KVStore FileURI StorageResult, Log Message, Reader ClientConfig, Error RPCError, Embed IO] a 
-                        -> IO (Either RPCError a)
-runWithFilesystemSilent root program = 
-  runM
-  . runError @RPCError
-  . runReader defaultClientConfig
-  . runLogAction @IO @Message silentLogAction
-  . runCacheFilesystem root
-  $ program
+store :: FsCache -> ByteString -> IO ()
+store fs content = runFs fs $ updateKV (uriFor content) (Just $ Record $ reconstructRecord (uriFor content) content)
 
--- | Lookup with explicit type
-lookupFile :: Member (KVStore FileURI StorageResult) r => FileURI -> Sem r (Maybe StorageResult)
-lookupFile = lookupKV
+-- | The path a hit is served from.
+served :: FsCache -> ByteString -> IO (Maybe FilePath)
+served fs content = runFs fs (lookupKV (uriFor content)) <&> \case
+  Just (LocalFile path) -> Just path
+  _ -> Nothing
 
--- | Update with explicit type
-updateFile :: Member (KVStore FileURI StorageResult) r => FileURI -> Maybe StorageResult -> Sem r ()
-updateFile = updateKV
+withCache :: (FilePath -> FsCache -> IO a) -> IO a
+withCache k = withSystemTempDirectory "hath-test" $ \tmp -> do
+  let root = tmp </> "cache"
+  newFsCache root >>= k root
 
 filesystemSpecs :: Spec
-filesystemSpecs = describe "Filesystem Cache Effect" $ do
-  
-  it "should store and retrieve a file record" $ do
-    withSystemTempDirectory "hath-test" $ \tempDir -> do
-      let root = tempDir </> "cache"
-      
-      -- Store
-      storeResult <- runWithFilesystemSilent root $ updateFile sampleURI (Just $ Record sampleRecord)
-      storeResult `shouldBe` Right ()
-      
-      -- Verify file exists on disk (impl detail check)
-      -- Path: root/s4/fileid
-      -- s4 for sampleURI: "test" (first 4 of hash? No, show uri)
-      -- show uri: testhash1234-1024-800-600-jpg
-      -- s4: test
-      let expectedPath = root </> "test" </> "testhash1234-1024-800-600-jpg"
-      exists <- doesFileExist expectedPath
-      exists `shouldBe` True
+filesystemSpecs = describe "Filesystem cache" $ do
+  let content = "test content for Filesystem storage"
 
-      -- Retrieve
-      retrieveResult <- runWithFilesystemSilent root $ lookupFile sampleURI
-      case retrieveResult of
-        Left err -> expectationFailure $ "Error: " <> show err
-        Right Nothing -> expectationFailure "Expected file record but got Nothing"
-        Right (Just (Record record)) -> do
-          fileRecordBytes record `shouldBe` fileRecordBytes sampleRecord
-        Right (Just (Redirect _)) -> expectationFailure "Expected cached record but got redirect"
+  it "stores a file and serves hits straight from disk" $ withCache $ \_ fs -> do
+    store fs content
+    served fs content >>= \case
+      Nothing   -> expectationFailure "expected a hit"
+      Just path -> readFileBS path >>= (`shouldBe` content)
 
-  it "should return Nothing for non-existent file" $ do
-    withSystemTempDirectory "hath-test" $ \tempDir -> do
-      let root = tempDir </> "cache"
-      let nonExistentURI = parseFileURI "nonexistent999-1024-800-600-jpg"
-      
-      result <- runWithFilesystemSilent root $ lookupFile nonExistentURI
-      case result of
-        Left err -> expectationFailure $ "Error: " <> show err
-        Right Nothing -> pure ()
-        Right (Just _) -> expectationFailure "Expected Nothing but got a record"
+  it "misses a file it never stored" $ withCache $ \_ fs -> served fs content >>= (`shouldBe` Nothing)
 
-  it "should delete a file record" $ do
-    withSystemTempDirectory "hath-test" $ \tempDir -> do
-      let root = tempDir </> "cache"
-      
-      -- Store first
-      _ <- runWithFilesystemSilent root $ updateFile sampleURI (Just $ Record sampleRecord)
-      
-      -- Delete
-      deleteResult <- runWithFilesystemSilent root $ updateFile sampleURI Nothing
-      deleteResult `shouldBe` Right ()
-      
-      -- Verify deleted on disk
-      let expectedPath = root </> "test" </> "testhash1234-1024-800-600-jpg"
-      exists <- doesFileExist expectedPath
-      exists `shouldBe` False
-      
-      -- Verify lookup returns Nothing
-      lookupResult <- runWithFilesystemSilent root $ lookupFile sampleURI
-      case lookupResult of
-        Left err -> expectationFailure $ "Error: " <> show err
-        Right Nothing -> pure ()
-        Right (Just _) -> expectationFailure "Expected Nothing after delete"
+  it "deletes a file" $ withCache $ \_ fs -> do
+    store fs content
+    Just path <- served fs content
+    runFs fs $ updateKV (uriFor content) (Nothing :: Maybe StorageResult)
+    doesFileExist path >>= (`shouldBe` False)
+    served fs content >>= (`shouldBe` Nothing)
+
+  it "drops a truncated file instead of serving it" $ withCache $ \_ fs -> do
+    store fs content
+    Just path <- served fs content
+    writeFileBS path (BS.take 5 content)
+    served fs content >>= (`shouldBe` Nothing)
+    doesFileExist path >>= (`shouldBe` False)
+
+  it "evicts the least recently served files, and only its own" $ withCache $ \root fs -> do
+    let ( a, b, c ) = ( BS.replicate 1000 97, BS.replicate 1000 98, BS.replicate 1000 99 )
+    paths <- forM [ a, b, c ] $ \x -> store fs x >> fromMaybe (error "stored") <$> served fs x
+    forM_ (zip paths [ 100, 200, 300 ]) $ \( p, t ) -> setModificationTime p (posixSecondsToUTCTime t)
+    -- serving a makes it the newest, so b is now the least recently served
+    void $ served fs a
+    createDirectoryIfMissing True (root </> "abcd")
+    writeFileBS (root </> "notes.txt") "not ours"
+    writeFileBS (root </> "abcd" </> "other") "not ours"
+    -- 3000 bytes against a 2500 byte limit (evicting down to 2250): one file has to go
+    sweep fs 2500 >>= (`shouldBe` ( 1, 1000 ))
+    mapM doesFileExist paths >>= (`shouldBe` [ True, False, True ])
+    mapM doesFileExist [ root </> "notes.txt", root </> "abcd" </> "other" ] >>= (`shouldBe` [ True, True ])
+
+  it "evicts nothing under the limit, or without one" $ withCache $ \_ fs -> do
+    store fs content
+    sweep fs 0 >>= (`shouldBe` ( 0, 0 ))
+    sweep fs 1000000 >>= (`shouldBe` ( 0, 0 ))

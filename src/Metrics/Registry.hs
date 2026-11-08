@@ -4,6 +4,7 @@ module Metrics.Registry
   , registerGauge
   , registerCounterWith
   , registerGaugeWith
+  , registerHistogram
   ) where
 
 import           Metrics.Types
@@ -15,8 +16,9 @@ newRegistry :: IO Registry
 newRegistry = do
   counters <- newIORef []
   gauges <- newIORef []
+  histograms <- newIORef []
   cachedSnapshot <- newTVarIO ""
-  pure $ Registry counters gauges cachedSnapshot
+  pure $ Registry counters gauges histograms cachedSnapshot
 
 -- | Register a counter without labels
 registerCounter :: Text -> Text -> Registry -> IO Counter
@@ -45,6 +47,15 @@ registerGaugeWith name help labels reg = do
   -- Atomically prepend to gauge list
   atomicModifyIORef' (registryGauges reg) $ \gs -> ( gauge : gs, () )
   pure gauge
+
+-- | Register a histogram with the given ascending bucket upper bounds
+registerHistogram :: Text -> Text -> [ Double ] -> Registry -> IO Histogram
+registerHistogram name help bounds reg = do
+  counts <- replicateM (length bounds + 1) (newIORef 0)
+  total <- newIORef 0
+  let histogram = Histogram (MetricId name mempty) help bounds counts total
+  atomicModifyIORef' (registryHistograms reg) $ \hs -> ( histogram : hs, () )
+  pure histogram
 
 -- Note: Registration is typically done at startup, so performance is not critical.
 -- Using atomicModifyIORef' ensures thread-safety if multiple threads register metrics.

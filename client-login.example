@@ -23,7 +23,7 @@ let ClientConfig =
       , default =
           { version = ""
           , proxy = None ClientProxy
-          , cacheBackend = CacheBackend.CacheBackendSQLite
+          , cacheBackend = CacheBackend.CacheBackendFilesystem
           , r2Config = None R2Config
           , lruCacheSize = Natural/toInteger (100 * 1024 * 1024)
           }
@@ -35,6 +35,6 @@ in  ClientConfig::{
     , version = "176"
     , downloadDir = "./download"
     , cachePath = "./cache"
-    , cacheBackend = CacheBackend.CacheBackendSQLite
+    , cacheBackend = CacheBackend.CacheBackendFilesystem
     , r2Config = None R2Config
     }

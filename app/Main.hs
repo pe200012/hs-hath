@@ -42,7 +42,8 @@ main = do
     exitSuccess
 
   -- Initialize database and run startup verification unless skipped
-  withConnection (T.unpack $ cachePath config) $ \conn -> do
+  -- (cachePath is a directory, or unused, for the other backends)
+  when (cacheBackend config == CacheBackendSQLite) $ withConnection (T.unpack $ cachePath config) $ \conn -> do
     initializeDB conn
 
     -- Run full cache verification by default (skip with --skip-startup-verify)

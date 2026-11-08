@@ -34,8 +34,6 @@ import           Polysemy.Reader         ( Reader )
 
 import           Relude                  hiding ( Reader, ask )
 
-import           SettingM                ( SettingM, getSettings )
-
 import           Stats                   ( Stats, addDownload, incFetched )
 
 import           Types
@@ -63,7 +61,6 @@ makeSem ''Locate
 runLocate
   :: Members
     '[ KVStore FileURI StorageResult
-     , SettingM
      , Error RPCError
      , Reader ClientConfig
      , EHentaiAPI
@@ -77,7 +74,6 @@ runLocate
   -> r @> a
 runLocate = interpret $ \case
   LocateResource uri -> do
-    settings <- getSettings
     let fileURI = locateURI uri
         s4      = SBS.toShort $ BS.take 4 $ renderFileURIBytes fileURI
         record content
@@ -89,34 +85,31 @@ runLocate = interpret $ \case
             , fileRecordFileName   = Just $ decodeUtf8 $ locateURIFilename uri
             , fileRecordBytes      = content
             }
-    -- if HashSet.member s4 (staticRanges settings) <-- we have a bug in setting parsing. wait for fix
-    if True
-      then lookupKV fileURI >>= \case
-        Just x -> return $ Just $ Stored x
-        Nothing -> case ( Map.lookup "fileindex" (locateURIOptions uri)
-                        , Map.lookup "xres" (locateURIOptions uri)
-                        ) of
-          ( Just fileIndex, Just xres ) -> log Info [i|Fetching resource: #{fileURI}|]
-            >> openResource fileURI ( fileIndex, xres )
-            >>= \case
-              Just resp -> do
-                incFetched
-                -- runs after the handler has returned, once the body has been relayed
-                cacheIt <- deferToIO $ \content -> do
-                  addDownload (BS.length content)
-                  -- a failed cache write only costs us the next hit
-                  catch @RPCError (updateKV fileURI $ Just $ record content)
-                    $ \e -> log Warning [i|Cache write failed for #{fileURI}: #{e}|]
-                pure $ Just $ Streamed $ streamUpstream fileURI resp (void . forkIO . cacheIt)
-              Nothing   -> do
-                log Warning [i|Failed to fetch resource, sorry for you|]
-                pure Nothing
-          _ -> do
-            log Info [i|Not enough information to fetch resource: #{fileURI}|]
-            pure Nothing
-      else do
-        log Info [i|Resource not in our ranges, rejecting: #{s4}|]
-        pure Nothing
+    -- like the official client, serve any file the server sends us here; static ranges
+    -- only matter for pruning the cache
+    lookupKV fileURI >>= \case
+      Just x -> return $ Just $ Stored x
+      Nothing -> case ( Map.lookup "fileindex" (locateURIOptions uri)
+                      , Map.lookup "xres" (locateURIOptions uri)
+                      ) of
+        ( Just fileIndex, Just xres ) -> log Info [i|Fetching resource: #{fileURI}|]
+          >> openResource fileURI ( fileIndex, xres )
+          >>= \case
+            Just resp -> do
+              incFetched
+              -- runs after the handler has returned, once the body has been relayed
+              cacheIt <- deferToIO $ \content -> do
+                addDownload (BS.length content)
+                -- a failed cache write only costs us the next hit
+                catch @RPCError (updateKV fileURI $ Just $ record content)
+                  $ \e -> log Warning [i|Cache write failed for #{fileURI}: #{e}|]
+              pure $ Just $ Streamed $ streamUpstream fileURI resp (void . forkIO . cacheIt)
+            Nothing   -> do
+              log Warning [i|Failed to fetch resource, sorry for you|]
+              pure Nothing
+        _ -> do
+          log Info [i|Not enough information to fetch resource: #{fileURI}|]
+          pure Nothing
 
 -- | Relay an upstream body chunk by chunk. If it arrives complete and its SHA-1
 -- matches, hand the bytes to the continuation (the cache write). The upstream

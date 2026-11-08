@@ -38,6 +38,7 @@ library
       LegacyCiphers
       Metrics.Counter
       Metrics.Gauge
+      Metrics.Histogram
       Metrics.Prometheus
       Metrics.Registry
       Metrics.Snapshot
@@ -902,7 +903,7 @@ test-suite hs-hath-test
       ViewPatterns
       MultiParamTypeClasses
       GADTs
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       aeson >=2.1 && <2.3
     , async ==2.2.*

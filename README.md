@@ -6,7 +6,7 @@ A high-performance Haskell implementation of the Hentai@Home client. The client 
 
 ## Features
 
-Resource caching uses an LRU cache with SQLite-backed or R2-backed storage. RPC communication to the H@H server uses TLS with automatic certificate refresh every 24 hours. Rate limiting includes both IP-based throttling and keystamp-based fallback for NAT environments. Gallery downloads support parallel file fetching. Prometheus metrics are available at the `/metrics` endpoint. The client tracks build information via the `--version` flag.
+Files are cached on the local filesystem, in Cloudflare R2 (or another S3-compatible store), or in SQLite; see [Cache backends](#cache-backends). Cache misses are streamed to the requester while they are fetched. RPC replies are verified against the client key (protocol 1.6.6). Flood control matches the official client. Prometheus metrics are available at the `/metrics` endpoint. The client tracks build information via the `--version` flag.
 
 ## Installation
 
@@ -35,6 +35,13 @@ Create a `client-login` file with your credentials:
 }
 ```
 
+See `client-login.example` for every field, including `cacheBackend`.
+
+### Cache backends
+- `CacheBackendFilesystem` (recommended for local disks): files live under `cachePath` as `xxxx/<file id>` and are sent straight from disk. The least recently served files are evicted to stay under the disk limit set on the H@H settings page.
+- `CacheBackendR2`: hits are answered with presigned redirects to the bucket; nothing is evicted.
+- `CacheBackendSQLite`: images are stored inside the database file at `cachePath`. Nothing is evicted, and every hit is a database write; kept for existing setups.
+
 ## Usage
 
 Start the client:
@@ -51,7 +58,7 @@ The client responds to `SIGINT` and `SIGTERM` for graceful shutdown. Settings re
 
 ## Architecture
 
-The RPC client handles communication with the H@H server, including certificate management and settings synchronization. The resource cache stores files using SQLite with LRU eviction. An HTTP server built on Warp serves cached resources. Rate limiting middleware provides both IP-based and keystamp-based request throttling. The storage backend supports local filesystem and S3-compatible services like Cloudflare R2.
+The RPC client handles communication with the H@H server, including certificate management and settings synchronization. An HTTP server built on Warp serves cached resources from one of the cache backends above, with flood control in front of it.
 
 ## Metrics
 
