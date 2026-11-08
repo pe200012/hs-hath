@@ -17,6 +17,10 @@ import           Polysemy.Reader      ( Reader, runReader )
 
 import           Storage.R2           ( R2Connection(..), mkR2Connection, runCacheR2 )
 
+import           Network.HTTP.Types   ( status200 )
+import           Network.Wai          ( Application, requestMethod, responseLBS, strictRequestBody )
+import           Network.Wai.Handler.Warp ( testWithApplication )
+
 import           Relude               hiding ( Reader, runReader )
 
 import           System.Environment   ( setEnv )
@@ -137,6 +141,45 @@ r2Specs = describe "R2 Cache Effect" $ do
           Left _ -> pure ()  -- Error acceptable
           Right Nothing -> pure ()  -- Expected
           Right (Just _) -> expectationFailure "File should have been deleted"
+
+    describe "link cache" $ do
+      it "asks the bucket once per object, then answers from memory" $ \_ ->
+        withFakeBucket $ \heads conn -> do
+          a <- runWithR2Silent conn $ lookupFile sampleURI
+          b <- runWithR2Silent conn $ lookupFile sampleURI
+          ( redirected a, redirected b ) `shouldBe` ( True, True )
+          readIORef heads `shouldReturn` 1
+
+      it "needs no HEAD for an object it just stored" $ \_ ->
+        withFakeBucket $ \heads conn -> do
+          stored <- runWithR2Silent conn $ updateFile sampleURI (Just $ Record sampleRecord)
+          stored `shouldBe` Right ()
+          r <- runWithR2Silent conn $ lookupFile sampleURI
+          redirected r `shouldBe` True
+          readIORef heads `shouldReturn` 0
+
+redirected :: Either RPCError (Maybe StorageResult) -> Bool
+redirected (Right (Just (Redirect _))) = True
+redirected _ = False
+
+-- | A bucket that has every object and counts the HEADs it is asked.
+fakeBucket :: IORef Int -> Application
+fakeBucket heads req respond = do
+  when (requestMethod req == "HEAD") $ atomicModifyIORef' heads (\n -> ( n + 1, () ))
+  _ <- strictRequestBody req
+  respond
+    $ responseLBS
+      status200
+      [ ( "ETag", "\"0\"" ), ( "Last-Modified", "Mon, 09 Nov 2026 00:00:00 GMT" ), ( "Content-Length", "0" ) ]
+      ""
+
+withFakeBucket :: (IORef Int -> R2Connection -> IO a) -> IO a
+withFakeBucket k = do
+  heads <- newIORef 0
+  testWithApplication (pure (fakeBucket heads)) $ \port ->
+    mkR2Connection testR2Config { r2Endpoint = "http://127.0.0.1:" <> show port } >>= \case
+      Left err   -> error err
+      Right conn -> k heads conn
 
 -- | Setup environment variables and create connection
 setupEnv :: IO R2Connection

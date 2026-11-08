@@ -84,6 +84,7 @@ import           Network.HTTP.Types                   ( hContentLength
                                                       )
 import           Network.TLS                          ( Credentials(Credentials), TLSException(HandshakeFailed), Version(..) )
 import           Network.TLS.Extra                    ( ciphersuite_all )
+import qualified Network.TLS.SessionManager           as SM
 import           Network.Wai                          ( Middleware
                                                       , Request(requestMethod)
                                                       , responseFile
@@ -669,6 +670,8 @@ serverLoop ctx certs = do
               ]
        -- tls >= 2 speaks nothing older; it rejects SSL3/TLS1.0/TLS1.1 hellos before looking at this
        , tlsAllowedVersions = [ TLS12, TLS13 ]
+       -- resumed handshakes skip the certificate and its RSA signature (several ms on a small VM)
+       , tlsSessionManagerConfig = Just SM.defaultConfig
        })
       (setOnException quietHandshakes $ setPort (clientPort st) defaultSettings)
     $ logStdout (makeApplication ctx)

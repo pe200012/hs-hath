@@ -127,18 +127,7 @@ runCacheR2 conn = interpret (phi (r2UrlCache conn))
             $ Minio.runMinioWith (r2MinioConn conn)
             $ headObject bucket key []
           case headResult of
-            Right (Right _info) -> do
-              -- Object exists, try to generate presigned URL (1200 seconds expiry = 20 mins)
-              maybeLink <- embed
-                (Minio.runMinioWith
-                   (r2MinioConn conn)
-                   (presignedGetObjectUrl bucket key 1200 [] []))
-              case maybeLink of
-                Left _minioErr -> pure Nothing
-                Right link     -> do
-                  let expireTime = now + 600 -- 10 minutes cache TTL to ensure fresh links
-                  embed $ LRU.insert uri ( expireTime, link ) cache
-                  pure $ Just $ Redirect link
+            Right (Right _info) -> fmap Redirect <$> embed (remember cache uri key now)
             _ -> do
               -- Object does not exist in R2 storage
               log Warning ("Object not found in R2 storage: " <> key)
@@ -150,7 +139,7 @@ runCacheR2 conn = interpret (phi (r2UrlCache conn))
     phi _cache (UpdateKV _uri (Just (LocalFile _path)))
       = error "impossible: cannot store LocalFile in R2 backend"
 
-    phi _cache (UpdateKV uri (Just (Record record)))       = do
+    phi cache (UpdateKV uri (Just (Record record)))        = do
       let key     = fileURIToKey uri
           content = fileRecordBytes record
           siz     = fromIntegral (BS.length content) :: Int64
@@ -166,7 +155,8 @@ runCacheR2 conn = interpret (phi (r2UrlCache conn))
         Right (Left minioErr) -> do
           log Error ("R2 write failed for " <> key <> ": " <> T.pack (show minioErr))
           throw $ Ty.StorageError (T.pack $ show minioErr)
-        Right (Right _) -> pure ()
+        -- it is there now, as after a HEAD: the next hit (often seconds away) needs none
+        Right (Right _) -> embed $ getMonotonicTime >>= void . remember cache uri key
 
     phi cache (UpdateKV uri@(fileURIToKey -> key) Nothing) = do
       result <- embed
@@ -181,3 +171,15 @@ runCacheR2 conn = interpret (phi (r2UrlCache conn))
           log Error ("R2 delete failed for " <> key <> ": " <> T.pack (show minioErr))
           throw $ Ty.StorageError (T.pack $ show minioErr)
         Right (Right _) -> embed $ void $ LRU.delete uri cache
+
+    -- | Sign a link (local, no request) and reuse it for 10 min.
+    remember :: AtomicLRU FileURI ( Double, ByteString ) -> FileURI -> Text -> Double -> IO (Maybe ByteString)
+    remember cache uri key now = Minio.runMinioWith
+      (r2MinioConn conn)
+      -- valid 20 min, handed out for 10, so every link given lasts at least 10 min
+      (presignedGetObjectUrl bucket key 1200 [] [])
+      >>= \case
+        Left _minioErr -> pure Nothing
+        Right link     -> do
+          LRU.insert uri ( now + 600, link ) cache
+          pure (Just link)

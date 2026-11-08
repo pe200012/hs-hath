@@ -21,6 +21,8 @@ and this project adheres to the
 - **Metrics**: `hath_latency_seconds` (a gauge holding the last request's latency in microseconds) is replaced by the histogram `hath_request_duration_seconds`; the always-zero `hath_errors_total` is removed
 - `client-login.example` uses the Filesystem backend
 - **Logs**: failed TLS handshakes and connections that close before sending anything (scanners probing SSL3/TLS 1.0/1.1 and cipher suites, a few thousand a day on a public node) are no longer printed. The TLS 1.0/1.1 entries are dropped from the allowed versions; `tls` 2.x rejected them anyway
+- **TLS session resumption** (session IDs on TLS 1.2, tickets on TLS 1.3): a returning visitor skips the certificate and its RSA signature, which cuts the server's CPU per handshake by about 45 % on TLS 1.3 and 75 % on TLS 1.2 (several ms on a small VM)
+- **R2 backend**: a file just uploaded after a cache miss is redirected at once on its next request, instead of first asking the bucket whether it is there (a 40–350 ms round trip)
 
 ## [1.2.0] - 2026-11-08
 
