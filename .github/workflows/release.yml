@@ -5,11 +5,16 @@ on:
     tags:
       - "v*.*.*"
 
+# the repo's default token is read-only; creating the release needs write
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-latest]
+        # oldest supported runner, so the binaries run on older glibc (22.04 = 2.35)
+        os: [ubuntu-22.04]
     runs-on: ${{ matrix.os }}
 
     steps:
