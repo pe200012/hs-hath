@@ -37,7 +37,7 @@ import           Polysemy.KVStore       ( updateKV )
 import           Relude                 hiding ( Reader )
 
 import           Storage.Database       ( FileRecord(..), initializeDB )
-import           Storage.R2             ( R2Connection(..), mkR2Connection, runCacheR2 )
+import           Storage.R2             ( R2Connection(..), fileURIToKey, mkR2Connection, runCacheR2 )
 
 import           System.Directory       ( doesDirectoryExist, doesFileExist, listDirectory )
 import           System.FilePath        ( (</>), takeFileName )
@@ -269,11 +269,3 @@ uploadToR2 conn uri record = do
     Left err          -> pure $ Left $ T.pack $ show err
     Right (Left mErr) -> pure $ Left $ T.pack $ show mErr
     Right (Right _)   -> pure $ Right ()
-
--- | Generate R2 object key from FileURI (same as in R2.hs)
-fileURIToKey :: FileURI -> Text
-fileURIToKey uri = s4 <> "/" <> fileId
-  where
-    fileId = renderFileURIText uri
-
-    s4     = T.take 4 fileId

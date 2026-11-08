@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Storage.R2 ( R2Connection(..), mkR2Connection, runCacheR2 ) where
+module Storage.R2 ( R2Connection(..), mkR2Connection, runCacheR2, fileURIToKey ) where
 
 import           Colog                   ( Message, Severity(Error, Warning) )
 import           Colog.Polysemy          ( Log )
@@ -90,8 +90,9 @@ mkR2Connection cfg = do
           R2Connection
           { r2MinioConn = minioConn, r2ConnBucket = Ty.r2Bucket cfg, r2UrlCache = urlCache }
 
--- | Generate R2 object key from FileURI
--- Format: s4/hash-size-xres-yres-ext
+-- | R2 object key for a file: abcd/<file id>, abcd being the first 4 hex digits
+-- of the hash. Every client sharing the bucket must use this layout (the Java
+-- fork's S3CacheBackend.objectKey does).
 fileURIToKey :: FileURI -> Text
 fileURIToKey uri = s4 <> "/" <> fileId
   where
