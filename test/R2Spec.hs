@@ -35,7 +35,7 @@ import           Types                ( ClientConfig
 -- | R2 test configuration
 testR2Config :: R2Config
 testR2Config = R2Config
-  { r2Endpoint = "https://111e2d89a4500e36dcda4853060fe725.r2.cloudflarestorage.com"
+  { r2Endpoint = "https://00000000000000000000000000000000.r2.cloudflarestorage.com"
   , r2Bucket   = "hath"
   }
 
@@ -95,7 +95,7 @@ r2Specs = describe "R2 Cache Effect" $ do
         setEnv "R2_ACCESS_KEY" ""
         result <- mkR2Connection testR2Config
         -- Restore
-        setEnv "R2_ACCESS_KEY" "cbb541929f87b599e8831ee1917a57fd"
+        setEnv "R2_ACCESS_KEY" "12345678901234567890123456789012"
         case result of
           Left _  -> pure ()  -- Expected
           Right _ -> expectationFailure "Should have failed without R2_ACCESS_KEY"
@@ -115,7 +115,7 @@ r2Specs = describe "R2 Cache Effect" $ do
           Right Nothing -> expectationFailure "Expected file record but got Nothing"
           Right (Just (Record record)) -> do
             fileRecordBytes record `shouldBe` fileRecordBytes sampleRecord
-          Right (Just (Redirect _)) -> expectationFailure "Expected cached record but got redirect"
+          Right (Just _) -> expectationFailure "Expected a cached record"
 
       it "should return Nothing for non-existent file" $ \conn -> do
         let nonExistentURI = parseFileURI "nonexistent999-1024-800-600-jpg"
