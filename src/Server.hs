@@ -93,8 +93,8 @@ import           Network.Wai                          ( Middleware
 import           Network.Wai.Handler.Warp             ( defaultSettings, setPort )
 import           Network.Wai.Handler.WarpTLS          ( OnInsecure(AllowInsecure)
                                                       , TLSSettings(..)
-                                                      , defaultTlsSettings
                                                       , runTLS
+                                                      , tlsSettingsSni
                                                       )
 import           Network.Wai.Middleware.RealIp        ( realIpHeader )
 import           Network.Wai.Middleware.RequestLogger ( logStdout )
@@ -631,45 +631,36 @@ makeApplication serverCxt
       . runGenesis
       . runRPC
 
--- | Core server loop implementing the main request-response cycle.
+-- | Serve until told to stop. The RPC server is told we are listening, then
+-- control commands are handled while the TLS server runs:
 --
--- This function encapsulates the common logic for running the TLS server,
--- handling server actions (reload, cert refresh, shutdown), and coordinating
--- graceful shutdown. The loop is parameterized by a recursion continuation
--- to support different cache backends that may need different state (e.g.,
--- SQLite connection handle).
---
--- The server loop:
--- 1. Creates a WAI application with all configured middleware
--- 2. Notifies the RPC server that we're ready to serve
--- 3. Races between:
---    - Receiving control commands on the action channel
---    - Running the TLS server to handle HTTP requests
--- 4. Handles control commands:
---    - 'GracefulShutdown': Stops listening and exits cleanly
---    - 'Reload': Exits to allow systemd/supervisor to restart
---    - 'Cert': Refreshes TLS certificates and recurses with new certs
---
---
+-- * 'Cert' fetches new certificates and swaps them in for the next handshakes;
+--   the listener and open transfers carry on.
+-- * 'GracefulShutdown' tells the RPC server we stop, then exits.
+-- * 'Reload' exits so the supervisor restarts us.
 serverLoop :: ServerLoopContext
            -- ^ Server runtime context (config, channels, state, flags, cache)
            -> ( CertificateChain, PrivKey )
-           -- ^ Current TLS certificates
-           -> IO ( CertificateChain, PrivKey )
+           -- ^ Initial TLS certificates
+           -> IO ()
 serverLoop ctx certs = do
   let ServerLoopContext { loopConfig = cfg
                         , loopChannels = ServerChannels { serverActionChan = chan }
                         , loopState = ServerState { serverSettings = settings }
                         } = ctx
 
-  let app = makeApplication ctx
+      -- returns the first command that ends the server
+      handleCommands credsRef = atomically (readTChan chan) >>= \case
+        Cert   -> refreshCerts cfg >>= writeIORef credsRef >> handleCommands credsRef
+        action -> pure action
 
+  credsRef <- newIORef certs
   st <- readTVarIO settings
-  result <- withAsync (notifyStart cfg) $ \_ -> race (atomically $ readTChan chan)
+  result <- withAsync (notifyStart cfg) $ \_ -> race (handleCommands credsRef)
     $ runTLS
-      (defaultTlsSettings
-       { tlsCredentials     = Just (Credentials [ certs ])
-       , onInsecure         = AllowInsecure
+      -- asked on every handshake (SNI or not), so a swapped certificate applies at once
+      ((tlsSettingsSni $ \_ -> Credentials . pure <$> readIORef credsRef)
+       { onInsecure         = AllowInsecure
        , tlsCiphers         = ciphersuite_all
            ++ [ cipher_ECDHE_ECDSA_AES128CBC_SHA
               , cipher_ECDHE_RSA_AES128CBC_SHA
@@ -678,12 +669,11 @@ serverLoop ctx certs = do
        , tlsAllowedVersions = [ TLS10, TLS11, TLS12, TLS13 ]
        })
       (setPort (clientPort st) defaultSettings)
-    $ logStdout app
+    $ logStdout (makeApplication ctx)
 
   case result of
     Left GracefulShutdown -> gracefulShutdown cfg
-    Left Reload -> exitSuccess
-    Left Cert -> refreshCerts cfg
+    Left _ -> exitSuccess
     Right _ -> error "Server terminated unexpectedly"
 
 -- | Perform graceful shutdown by notifying RPC server and exiting.
@@ -774,7 +764,7 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
         initializeDB conn
         let cacheRunner = CacheRunner { runCacheWith = runCache conn }
         stopTictok <- tictok config
-        finally (serverLoopMain (ctx cacheRunner) certs) stopTictok
+        finally (serverLoop (ctx cacheRunner) certs) stopTictok
     CacheBackendR2         -> do
       case r2Config config of
         Nothing    -> error "cacheBackend=r2 but r2Config is missing"
@@ -785,13 +775,13 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
             Right r2Conn -> do
               let cacheRunner = CacheRunner { runCacheWith = runCacheR2 r2Conn }
               stopTictok <- tictok config
-              finally (serverLoopMain (ctx cacheRunner) certs) stopTictok
+              finally (serverLoop (ctx cacheRunner) certs) stopTictok
     CacheBackendFilesystem -> do
       fs <- newFsCache (Text.unpack $ cachePath config)
       let cacheRunner = CacheRunner { runCacheWith = runCacheFilesystem fs }
       stopTictok <- tictok config
       withAsync (runEvictor fs (diskLimitBytes <$> readTVarIO ssVar))
-        $ \_ -> finally (serverLoopMain (ctx cacheRunner) certs) stopTictok
+        $ \_ -> finally (serverLoop (ctx cacheRunner) certs) stopTictok
   where
     startsDownloader = do
       metadata <- nextGalleryTask
@@ -827,8 +817,4 @@ startServer config settings certs chan disableRateLimit trustProxyHeaders = do
             embed $ writeFileAtomic filePath bytes
             pure True
 
-    serverLoopMain :: ServerLoopContext -> ( CertificateChain, PrivKey ) -> IO ()
-    serverLoopMain ctx cert = do
-      newCert <- serverLoop ctx cert
-      serverLoopMain ctx newCert
 

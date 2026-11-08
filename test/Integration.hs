@@ -11,7 +11,7 @@ module Integration ( integrationSpecs ) where
 import           Control.Concurrent       ( ThreadId, forkIO, killThread, threadDelay )
 import           Control.Concurrent.MVar  ( MVar, newEmptyMVar, putMVar, tryTakeMVar )
 import           Control.Concurrent.STM   ( TVar, newTVarIO )
-import           Control.Exception        ( bracket, catch, SomeException, throwIO )
+import           Control.Exception        ( bracket, catch, SomeException, throwIO, try )
 
 import qualified Data.Aeson               as A
 import qualified Data.Aeson               as A
@@ -82,6 +82,10 @@ import           System.Timeout           ( timeout )
 import           Middleware               ( IP(..), checkRateLimit, isLocalIP, parseIPv4 )
 
 import           Network.Socket           ( tupleToHostAddress, tupleToHostAddress6 )
+import qualified Network.Socket           as Sock
+import           Network.Socket.ByteString ( recv, sendAll )
+import qualified Network.TLS              as TLS
+import           System.Process           ( readProcess )
 
 import           Polysemy                 ( interpret )
 import           Polysemy.Error           ( throw )
@@ -1061,3 +1065,51 @@ integrationSpecs = do
         threadDelay 3000000  -- 3 seconds
         -- The RPC mock will receive heartbeat calls
         return ()
+
+    it "swaps certificates in place: open connections survive, new handshakes get the new one" $
+      withSystemTempDirectory "hath-cert" $ \dir -> do
+        let clientCfg = testConfig 104
+            settings  = defaultHathSettings { clientPort = 9904 }
+            openssl   = void . flip (readProcess "openssl") ""
+        -- the certificate the mock RPC server hands out on refresh
+        openssl [ "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=rotated"
+                , "-keyout", dir </> "key.pem", "-out", dir </> "cert.pem" ]
+        openssl [ "pkcs12", "-export", "-inkey", dir </> "key.pem", "-in", dir </> "cert.pem"
+                , "-out", dir </> "cert.p12", "-passout", "pass:" <> toString (key clientCfg) ]
+        p12 <- readFileBS (dir </> "cert.p12")
+        rotated <- CertificateChain <$> readSignedObject (dir </> "cert.pem")
+        let mockConfig = defaultMockConfig { mockPort = 19904, mockGetCertResponse = p12 }
+
+        withStartServer mockConfig clientCfg settings $ \port chan -> do
+          servedCertificate port >>= (`shouldNotBe` Just rotated)
+          bracket (connectLocal port) Sock.close $ \sock -> do
+            -- a request still being sent while the certificate changes
+            sendAll sock "GET /robots.txt HTTP/1.1\r\nHost: localhost\r\n"
+            atomically $ writeTChan chan Cert
+            let waitForRotated = do
+                  served <- servedCertificate port
+                  unless (served == Just rotated) $ threadDelay 100000 >> waitForRotated
+            timeout 5000000 waitForRotated >>= (`shouldBe` Just ())
+            sendAll sock "\r\n"
+            reply <- recv sock 4096
+            reply `shouldSatisfy` ("HTTP/1.1 200" `BS.isPrefixOf`)
+
+connectLocal :: Int -> IO Sock.Socket
+connectLocal port = do
+  sock <- Sock.socket Sock.AF_INET Sock.Stream Sock.defaultProtocol
+  Sock.connect sock (Sock.SockAddrInet (fromIntegral port) (tupleToHostAddress ( 127, 0, 0, 1 )))
+  pure sock
+
+-- | The chain a TLS handshake presents, without SNI (as when connecting by IP).
+servedCertificate :: Int -> IO (Maybe CertificateChain)
+servedCertificate port = bracket (connectLocal port) Sock.close $ \sock -> do
+  seen <- newIORef Nothing
+  let params = TLS.defaultParamsClient "localhost" ""
+  ctx <- TLS.contextNew sock params
+    { TLS.clientUseServerNameIndication = False
+    , TLS.clientHooks = (TLS.clientHooks params)
+        { TLS.onServerCertificate = \_ _ _ chain -> [] <$ writeIORef seen (Just chain) }
+    }
+  TLS.handshake ctx
+  void $ try @SomeException (TLS.bye ctx)
+  readIORef seen
