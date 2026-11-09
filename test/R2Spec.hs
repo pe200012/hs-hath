@@ -8,14 +8,14 @@ module R2Spec ( r2Specs ) where
 import           Colog                ( LogAction(..), richMessageAction, Message )
 import           Colog.Polysemy       ( Log, runLogAction )
 
-import           Storage.Database     ( FileRecord(..) )
+import           Hath.Cache.SQLite     ( FileRecord(..) )
 
 import           Polysemy
 import           Polysemy.Error       ( Error, runError )
 import           Polysemy.KVStore     ( KVStore, lookupKV, updateKV )
 import           Polysemy.Reader      ( Reader, runReader )
 
-import           Storage.R2           ( R2Connection(..), mkR2Connection, runCacheR2 )
+import           Hath.Cache.R2           ( R2Connection(..), mkR2Connection, runCacheR2 )
 
 import           Network.HTTP.Types   ( status200 )
 import           Network.Wai          ( Application, requestMethod, responseLBS, strictRequestBody )
@@ -27,7 +27,7 @@ import           System.Environment   ( setEnv )
 
 import           Test.Hspec
 
-import           Types                ( ClientConfig
+import           Hath.Types                ( ClientConfig
                                       , FileURI
                                       , R2Config(..)
                                       , RPCError

@@ -31,7 +31,7 @@ import qualified Network.Wai.Handler.Warp as Warp
 
 import           Relude                   hiding ( newEmptyMVar, putMVar, takeMVar )
 
-import           Utils                    ( hash )
+import           Hath.Utils                    ( hash )
 
 -- | Configuration for mock RPC server behavior
 data MockRPCConfig

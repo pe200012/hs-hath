@@ -30,30 +30,30 @@ source-repository head
 
 library
   exposed-modules:
-      CLI
-      FileVerification
-      HathNetwork.Genesis
-      HathNetwork.RPC
-      Interface.API
-      LegacyCiphers
-      Metrics.Counter
-      Metrics.Gauge
-      Metrics.Histogram
-      Metrics.Prometheus
-      Metrics.Registry
-      Metrics.Snapshot
-      Metrics.Types
-      Middleware
-      Server
-      SettingM
-      Stats
-      Storage.Database
-      Storage.Filesystem
-      Storage.Locate
-      Storage.R2
-      Types
-      Utils
-      Version
+      Hath.API
+      Hath.Cache.Filesystem
+      Hath.Cache.R2
+      Hath.Cache.SQLite
+      Hath.CLI
+      Hath.FileVerification
+      Hath.Locate
+      Hath.Metrics.Counter
+      Hath.Metrics.Gauge
+      Hath.Metrics.Histogram
+      Hath.Metrics.Prometheus
+      Hath.Metrics.Registry
+      Hath.Metrics.Snapshot
+      Hath.Metrics.Types
+      Hath.Network.Genesis
+      Hath.Network.RPC
+      Hath.Server
+      Hath.Server.LegacyCiphers
+      Hath.Server.Middleware
+      Hath.SettingM
+      Hath.Stats
+      Hath.Types
+      Hath.Utils
+      Hath.Version
   other-modules:
       Paths_hs_hath
   autogen-modules:

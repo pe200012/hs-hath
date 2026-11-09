@@ -1,6 +1,6 @@
-module Metrics.Histogram ( observe ) where
+module Hath.Metrics.Histogram ( observe ) where
 
-import           Metrics.Types
+import           Hath.Metrics.Types
 
 import           Relude
 

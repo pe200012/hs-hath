@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE StrictData #-}
 
-module Metrics.Types
+module Hath.Metrics.Types
   ( Labels
   , MetricId(..)
   , Counter(..)

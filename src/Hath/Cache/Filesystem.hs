@@ -5,7 +5,7 @@
 -- | Files on disk as root/xxxx/fileid. Hits are served straight from the file
 -- ('LocalFile'); the file's mtime is the LRU clock, and 'runEvictor' keeps the
 -- cache under the disk limit the server assigns.
-module Storage.Filesystem ( FsCache, newFsCache, runCacheFilesystem, runEvictor, sweep ) where
+module Hath.Cache.Filesystem ( FsCache, newFsCache, runCacheFilesystem, runEvictor, sweep ) where
 
 import           Colog                 ( Message, Severity(Error) )
 import           Colog.Polysemy        ( Log )
@@ -25,17 +25,17 @@ import           Polysemy.Operators
 
 import           Relude
 
-import           Storage.Database      ( FileRecord(..) )
+import           Hath.Cache.SQLite      ( FileRecord(..) )
 
 import           System.Directory      ( createDirectoryIfMissing, listDirectory, removeFile )
 import           System.FilePath       ( (</>), takeFileName )
 import qualified System.Posix.Files    as Posix
 
-import           Types                 ( FileURI(..), RPCError(..), StorageResult(..), renderFileURIText )
+import           Hath.Types                 ( FileURI(..), RPCError(..), StorageResult(..), renderFileURIText )
 
 import           UnliftIO.Exception    ( tryAny )
 
-import           Utils                 ( log, writeFileAtomic )
+import           Hath.Utils                 ( log, writeFileAtomic )
 
 data FsCache = FsCache { fsRoot :: !FilePath, fsUsed :: !(IORef Int64) }
   -- ^ bytes on disk as of the last sweep, plus writes and deletes since

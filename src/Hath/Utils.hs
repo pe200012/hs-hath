@@ -1,5 +1,5 @@
 
-module Utils ( module Utils ) where
+module Hath.Utils ( module Hath.Utils ) where
 
 import           Colog                   ( Message, Msg(..), Severity )
 

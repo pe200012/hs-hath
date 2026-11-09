@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Storage.R2 ( R2Connection(..), mkR2Connection, runCacheR2, fileURIToKey ) where
+module Hath.Cache.R2 ( R2Connection(..), mkR2Connection, runCacheR2, fileURIToKey ) where
 
 import           Colog                   ( Message, Severity(Error, Warning) )
 import           Colog.Polysemy          ( Log )
@@ -41,16 +41,16 @@ import           Polysemy.Operators
 
 import           Relude                  hiding ( Reader, ask, asks )
 
-import           Storage.Database        ( FileRecord(..) )
+import           Hath.Cache.SQLite        ( FileRecord(..) )
 
-import           Types                   ( FileURI(..)
+import           Hath.Types                   ( FileURI(..)
                                          , RPCError(..)
                                          , StorageResult(..)
                                          , renderFileURIText
                                          )
-import qualified Types                   as Ty
+import qualified Hath.Types                   as Ty
 
-import           Utils                   ( log )
+import           Hath.Utils                   ( log )
 
 -- | R2 connection configuration built at runtime
 data R2Connection

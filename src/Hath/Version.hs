@@ -1,6 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
-module Version ( versionInfo ) where
+module Hath.Version ( versionInfo ) where
 
 import           Control.Exception   ( catch )
 

@@ -7,7 +7,7 @@ import           Relude
 
 import           Test.Hspec
 
-import           Types            ( FileURI, parseFileURI, renderFileURIBytes, renderFileURIText )
+import           Hath.Types            ( FileURI, parseFileURI, renderFileURIBytes, renderFileURIText )
 
 main :: IO ()
 main = hspec fileURIRenderSpecs

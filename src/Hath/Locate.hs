@@ -1,7 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Storage.Locate
+module Hath.Locate
   ( LocateURI(..)
   , Locate(..)
   , Located(..)
@@ -21,7 +21,7 @@ import qualified Data.ByteString.Short   as SBS
 import qualified Data.Map                as Map
 import           Data.String.Interpolate ( i )
 
-import           Interface.API           ( EHentaiAPI, openResource )
+import           Hath.API           ( EHentaiAPI, openResource )
 
 import qualified Network.HTTP.Client     as HC
 
@@ -34,11 +34,11 @@ import           Polysemy.Reader         ( Reader )
 
 import           Relude                  hiding ( Reader, ask )
 
-import           Stats                   ( Stats, addDownload, incFetched )
+import           Hath.Stats                   ( Stats, addDownload, incFetched )
 
-import           Types
+import           Hath.Types
 
-import           Utils                   ( hash, log )
+import           Hath.Utils                   ( hash, log )
 
 data LocateURI
   = LocateURI { locateURIFilename :: !ByteString

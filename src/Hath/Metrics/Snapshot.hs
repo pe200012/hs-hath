@@ -1,11 +1,11 @@
-module Metrics.Snapshot ( generateSnapshot, startSnapshotWorker, getCachedSnapshot ) where
+module Hath.Metrics.Snapshot ( generateSnapshot, startSnapshotWorker, getCachedSnapshot ) where
 
 import           Control.Concurrent ( forkIO, threadDelay )
 
-import qualified Metrics.Counter    as Counter
-import qualified Metrics.Gauge      as Gauge
-import qualified Metrics.Prometheus as Prometheus
-import           Metrics.Types
+import qualified Hath.Metrics.Counter    as Counter
+import qualified Hath.Metrics.Gauge      as Gauge
+import qualified Hath.Metrics.Prometheus as Prometheus
+import           Hath.Metrics.Types
 
 import           Relude
 

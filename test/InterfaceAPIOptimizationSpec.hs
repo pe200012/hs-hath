@@ -11,7 +11,7 @@ import           Relude                hiding ( readFile )
 
 import           Test.Hspec
 
-import           Utils                 ( firstJustM )
+import           Hath.Utils                 ( firstJustM )
 
 main :: IO ()
 main = hspec interfaceAPIOptimizationSpecs

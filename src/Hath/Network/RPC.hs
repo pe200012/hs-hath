@@ -6,7 +6,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module HathNetwork.RPC
+module Hath.Network.RPC
   ( RPCResponse(..)
   , parseRPCResponse
   , getPayload
@@ -26,7 +26,7 @@ module HathNetwork.RPC
 import           Colog              ( Message, Severity(Info), richMessageAction )
 import           Colog.Polysemy     ( Log, runLogAction )
 
-import           Interface.API      hiding ( StillAlive )
+import           Hath.API      hiding ( StillAlive )
 
 import           Polysemy
 import           Polysemy.Error     ( Error, errorToIOFinal )
@@ -37,9 +37,9 @@ import           Relude             hiding ( Reader, ask, runReader )
 
 import           Servant.Client     ( ClientError )
 
-import           Types
+import           Hath.Types
 
-import           Utils              ( log )
+import           Hath.Utils              ( log )
 
 data RPC m a where
   -- | Test if remote server is running

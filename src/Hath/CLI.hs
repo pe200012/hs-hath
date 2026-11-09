@@ -1,12 +1,12 @@
 {-# LANGUAGE RecordWildCards #-}
 
-module CLI ( Options(..), parseOptions, applyOptionsToConfig ) where
+module Hath.CLI ( Options(..), parseOptions, applyOptionsToConfig ) where
 
 import           Options.Applicative
 
 import           Relude
 
-import           Types               ( ClientConfig(..) )
+import           Hath.Types               ( ClientConfig(..) )
 
 -- | Command line options
 data Options

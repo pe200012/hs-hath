@@ -36,13 +36,13 @@ import           Polysemy.KVStore       ( updateKV )
 
 import           Relude                 hiding ( Reader )
 
-import           Storage.Database       ( FileRecord(..), initializeDB )
-import           Storage.R2             ( R2Connection(..), fileURIToKey, mkR2Connection, runCacheR2 )
+import           Hath.Cache.SQLite       ( FileRecord(..), initializeDB )
+import           Hath.Cache.R2             ( R2Connection(..), fileURIToKey, mkR2Connection, runCacheR2 )
 
 import           System.Directory       ( doesDirectoryExist, doesFileExist, listDirectory )
 import           System.FilePath        ( (</>), takeFileName )
 
-import           Types                  ( FileURI, R2Config(..), RPCError(..), parseFileURI, renderFileURIText )
+import           Hath.Types                  ( FileURI, R2Config(..), RPCError(..), parseFileURI, renderFileURIText )
 
 -- | Command line options
 data MigrateOptions

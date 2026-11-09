@@ -1,6 +1,6 @@
-module Metrics.Counter ( inc, add, read ) where
+module Hath.Metrics.Counter ( inc, add, read ) where
 
-import           Metrics.Types
+import           Hath.Metrics.Types
 
 import           Relude
 

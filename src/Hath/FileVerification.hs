@@ -2,7 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TypeApplications #-}
 
-module FileVerification
+module Hath.FileVerification
   ( VerificationResult(..)
   , VerificationStats(..)
   , verifyFile
@@ -15,11 +15,11 @@ import           Database.SQLite.Simple
 
 import           Relude
 
-import           Storage.Database       ( FileRecord(..) )
+import           Hath.Cache.SQLite       ( FileRecord(..) )
 
-import           Types                  ( FileURI(..), parseFileURI )
+import           Hath.Types                  ( FileURI(..), parseFileURI )
 
-import           Utils                  ( hash )
+import           Hath.Utils                  ( hash )
 
 -- | Result of verifying a single file
 data VerificationResult

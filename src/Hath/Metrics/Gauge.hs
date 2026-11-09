@@ -1,6 +1,6 @@
-module Metrics.Gauge ( inc, dec, set, add, sub, read ) where
+module Hath.Metrics.Gauge ( inc, dec, set, add, sub, read ) where
 
-import           Metrics.Types
+import           Hath.Metrics.Types
 
 import           Relude
 

@@ -2,7 +2,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE Strict #-}
 
-module Types
+module Hath.Types
   (  -- * Types
     ClientProxy(..)
   , ClientConfig(..)
@@ -59,7 +59,7 @@ import           Prelude                ( Show(show) )
 
 import           Relude                 hiding ( show )
 
-import           Utils                  ( hash )
+import           Hath.Utils                  ( hash )
 
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, Text ) ] #-}
 {-# SPECIALISE hentaiHeader :: [ ( HeaderName, ByteString ) ] #-}

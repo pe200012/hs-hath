@@ -1,4 +1,4 @@
-module Metrics.Registry
+module Hath.Metrics.Registry
   ( newRegistry
   , registerCounter
   , registerGauge
@@ -7,7 +7,7 @@ module Metrics.Registry
   , registerHistogram
   ) where
 
-import           Metrics.Types
+import           Hath.Metrics.Types
 
 import           Relude
 

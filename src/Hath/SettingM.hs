@@ -1,14 +1,14 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module SettingM ( SettingM(..), getSettings, updateSettings, runSettingM ) where
+module Hath.SettingM ( SettingM(..), getSettings, updateSettings, runSettingM ) where
 
 import           Polysemy
 import           Polysemy.Operators
 
 import           Relude             hiding ( Reader )
 
-import           Types              ( HathSettings )
+import           Hath.Types              ( HathSettings )
 
 data SettingM m a where
   -- | Get current H@H settings

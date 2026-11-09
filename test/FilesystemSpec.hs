@@ -17,7 +17,7 @@ import           Polysemy.KVStore      ( KVStore, lookupKV, updateKV )
 
 import           Relude
 
-import           Storage.Filesystem    ( FsCache, newFsCache, runCacheFilesystem, sweep )
+import           Hath.Cache.Filesystem    ( FsCache, newFsCache, runCacheFilesystem, sweep )
 
 import           System.Directory      ( createDirectoryIfMissing, doesFileExist, setModificationTime )
 import           System.FilePath       ( (</>) )
@@ -25,9 +25,9 @@ import           System.IO.Temp        ( withSystemTempDirectory )
 
 import           Test.Hspec
 
-import           Types                 ( FileURI, RPCError, StorageResult(..), parseFileURI, reconstructRecord )
+import           Hath.Types                 ( FileURI, RPCError, StorageResult(..), parseFileURI, reconstructRecord )
 
-import           Utils                 ( hash )
+import           Hath.Utils                 ( hash )
 
 -- | A URI whose hash and size match the content, as the server hands them out.
 uriFor :: ByteString -> FileURI

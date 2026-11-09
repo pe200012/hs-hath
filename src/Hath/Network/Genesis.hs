@@ -1,7 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module HathNetwork.Genesis
+module Hath.Network.Genesis
   ( Genesis(..)
   , fetchSettings
   , fetchCertificate
@@ -11,7 +11,7 @@ module HathNetwork.Genesis
 
 import           Data.X509          ( CertificateChain, PrivKey )
 
-import           Interface.API
+import           Hath.API
 
 import           Polysemy
 import           Polysemy.Error     ( Error, errorToIOFinal )
@@ -22,7 +22,7 @@ import           Relude             hiding ( Reader, runReader )
 
 import           Servant.Client     ( ClientError )
 
-import           Types
+import           Hath.Types
 
 data Genesis m a where
   FetchSettings :: HathSettings -> Genesis m HathSettings

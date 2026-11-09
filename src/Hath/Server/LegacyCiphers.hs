@@ -40,7 +40,7 @@
 --
 -- This file is part of the hs-hath project, which is licensed under GPL-3.0.
 -- The BSD-3-Clause license applies to this specific file as noted above.
-module LegacyCiphers
+module Hath.Server.LegacyCiphers
   ( cipher_ECDHE_ECDSA_AES128CBC_SHA
   , cipher_ECDHE_RSA_AES128CBC_SHA
   , cipher_ECDHE_RSA_AES256CBC_SHA
@@ -139,34 +139,34 @@ aes128cbc :: BulkDirection -> BulkKey -> BulkBlock
 aes128cbc BulkEncrypt key
   = let
       ctx = noFail (cipherInit key) :: AES128
-    in
+    in 
       (\iv input -> let
            output = cbcEncrypt ctx (makeIV_ iv) input
-         in
+         in 
            ( output, takelast 16 output ))
 aes128cbc BulkDecrypt key
   = let
       ctx = noFail (cipherInit key) :: AES128
-    in
+    in 
       (\iv input -> let
            output = cbcDecrypt ctx (makeIV_ iv) input
-         in
+         in 
            ( output, takelast 16 input ))
 
 aes256cbc :: BulkDirection -> BulkKey -> BulkBlock
 aes256cbc BulkEncrypt key
   = let
       ctx = noFail (cipherInit key) :: AES256
-    in
+    in 
       (\iv input -> let
            output = cbcEncrypt ctx (makeIV_ iv) input
-         in
+         in 
            ( output, takelast 16 output ))
 aes256cbc BulkDecrypt key
   = let
       ctx = noFail (cipherInit key) :: AES256
-    in
+    in 
       (\iv input -> let
            output = cbcDecrypt ctx (makeIV_ iv) input
-         in
+         in 
            ( output, takelast 16 input ))

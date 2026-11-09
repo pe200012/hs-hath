@@ -2,7 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Stats
+module Hath.Stats
   ( StatsEnv(..)
   , newStatsEnv
   , Stats(..)
@@ -22,12 +22,12 @@ module Stats
 
 import           GHC.Clock          ( getMonotonicTime )
 
-import qualified Metrics.Counter    as Counter
-import qualified Metrics.Gauge      as Gauge
-import           Metrics.Registry   ( newRegistry, registerCounter, registerGauge, registerHistogram )
-import           Metrics.Snapshot   ( getCachedSnapshot, startSnapshotWorker )
+import qualified Hath.Metrics.Counter    as Counter
+import qualified Hath.Metrics.Gauge      as Gauge
+import           Hath.Metrics.Registry   ( newRegistry, registerCounter, registerGauge, registerHistogram )
+import           Hath.Metrics.Snapshot   ( getCachedSnapshot, startSnapshotWorker )
 -- Custom metrics implementation (replaces prometheus library)
-import           Metrics.Types      ( Counter, Gauge, Histogram, Registry )
+import           Hath.Metrics.Types      ( Counter, Gauge, Histogram, Registry )
 
 import           Polysemy
 import           Polysemy.Operators

@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 
-module Metrics.Prometheus ( render ) where
+module Hath.Metrics.Prometheus ( render ) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Text       as Text
@@ -17,7 +17,7 @@ import           Mason.Builder   ( BuilderFor
                                  , toStrictByteString
                                  )
 
-import           Metrics.Types
+import           Hath.Metrics.Types
 
 import           Relude          hiding ( intersperse )
 

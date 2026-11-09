@@ -5,7 +5,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Interface.API
+module Hath.API
   (   -- * H@H Client Exposed API
     API
   , api
@@ -98,7 +98,7 @@ import           Servant.Client.Core      ( addHeader )
 
 import           System.IO.Unsafe         ( unsafePerformIO )
 
-import           Types                    ( ClientConfig
+import           Hath.Types                    ( ClientConfig
                                           , ClientConfig(..)
                                           , FileURI(..)
                                           , GalleryFile(..)
@@ -119,7 +119,7 @@ import           Types                    ( ClientConfig
 
 import           UnliftIO                 ( try )
 
-import           Utils                    ( firstJustM, hash )
+import           Hath.Utils                    ( firstJustM, hash )
 
 -- | Available server commands
 data ServerCommand

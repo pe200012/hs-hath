@@ -48,7 +48,7 @@ import           Control.Exception        ( try )
 
 import           UnliftIO                 ( pooledMapConcurrentlyN, timeout )
 
-import           Utils                    ( hash )
+import           Hath.Utils                    ( hash )
 
 data Opts
   = Opts

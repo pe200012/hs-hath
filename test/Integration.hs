@@ -26,10 +26,10 @@ import           Data.Time.Clock.System   ( SystemTime(systemSeconds), getSystem
 import           Data.X509                ( CertificateChain(..), PrivKey )
 import           Data.X509.File           ( readSignedObject, readKeyFile )
 
-import           Storage.Database         ( initializeDB )
+import           Hath.Cache.SQLite         ( initializeDB )
 import           Database.SQLite.Simple   ( Connection, SQLError, close, open, withConnection )
 
-import           Utils                    ( hash )
+import           Hath.Utils                    ( hash )
 
 import           MockRPC
 
@@ -54,7 +54,7 @@ import           Relude                   hiding ( Reader
                                                  , runReader
                                                  )
 
-import           Server                   ( CacheRunner(..)
+import           Hath.Server                   ( CacheRunner(..)
                                           , ServerAction(..)
                                           , GalleryTask(..)
                                           , makeApplication
@@ -64,22 +64,22 @@ import           Server                   ( CacheRunner(..)
 
 
 
-import           Storage.Database         ( runCache )
-import           Storage.Filesystem       ( newFsCache, runCacheFilesystem )
+import           Hath.Cache.SQLite         ( runCache )
+import           Hath.Cache.Filesystem       ( newFsCache, runCacheFilesystem )
 import           System.Directory         ( createDirectoryIfMissing )
 import           System.FilePath          ( (</>) )
 import           System.IO.Temp           ( withSystemTempDirectory )
 
 
 
-import           Stats                    ( newStatsEnv )
+import           Hath.Stats                    ( newStatsEnv )
 
 
 
 import           System.Environment       ( setEnv )
 import           System.Timeout           ( timeout )
 
-import           Middleware               ( IP(..), checkRateLimit, isLocalIP, parseIPv4 )
+import           Hath.Server.Middleware               ( IP(..), checkRateLimit, isLocalIP, parseIPv4 )
 
 import           Network.Socket           ( tupleToHostAddress, tupleToHostAddress6 )
 import qualified Network.Socket           as Sock
@@ -121,7 +121,7 @@ import           UnliftIO                 ( TChan
 
 
 
-import           Types                    ( CacheBackend(..)
+import           Hath.Types                    ( CacheBackend(..)
                                           , RPCError(StorageError)
 
 

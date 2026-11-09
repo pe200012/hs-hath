@@ -5,7 +5,7 @@
 import qualified Data.Map.Strict  as Map
 import           Data.Text        ( Text )
 
-import           Storage.Database ( FileRecord(..), runCachePure )
+import           Hath.Cache.SQLite ( FileRecord(..), runCachePure )
 
 import           FileURIRenderSpec           ( fileURIRenderSpecs )
 import           FilesystemSpec              ( filesystemSpecs )
@@ -21,15 +21,15 @@ import           Relude           hiding ( Reader )
 
 import           Test.Hspec
 
-import           Types            ( FileURI
+import           Hath.Types            ( FileURI
                                   , HathSettings(..)
                                   , defaultHathSettings
                                   , parseFileURI
                                   , parseSettings
                                   )
-import qualified Metrics.Histogram as Histogram
-import           Metrics.Registry  ( newRegistry, registerHistogram )
-import           Metrics.Snapshot  ( generateSnapshot )
+import qualified Hath.Metrics.Histogram as Histogram
+import           Hath.Metrics.Registry  ( newRegistry, registerHistogram )
+import           Hath.Metrics.Snapshot  ( generateSnapshot )
 
 main :: IO ()
 main = hspec $ do

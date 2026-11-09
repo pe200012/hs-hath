@@ -1,4 +1,4 @@
-module Middleware
+module Hath.Server.Middleware
   ( rateLimitMiddleware
   , tracingConnections
   , normalizeAcceptMiddleware
@@ -23,8 +23,8 @@ import qualified Data.HashMap.Strict as HashMap
 
 import           GHC.Clock           ( getMonotonicTime )
 
-import qualified Metrics.Gauge       as Gauge
-import qualified Metrics.Histogram   as Histogram
+import qualified Hath.Metrics.Gauge       as Gauge
+import qualified Hath.Metrics.Histogram   as Histogram
 
 import           Network.HTTP.Types  ( hAccept )
 import           Network.Socket      ( HostAddress
@@ -43,13 +43,13 @@ import           Network.Wai         ( Middleware
 
 import           Relude              hiding ( Reader, ask, get, runReader )
 
-import           Stats               ( StatsEnv(..) )
+import           Hath.Stats               ( StatsEnv(..) )
 
 import           System.IO.Unsafe    ( unsafePerformIO )
 
-import           Types               ( hentaiHeader )
+import           Hath.Types               ( hentaiHeader )
 
-import           Utils               ( tooManyRequestsResponse )
+import           Hath.Utils               ( tooManyRequestsResponse )
 
 -- | Mirrors the official client's flood control (HTTPServer.FloodControlEntry):
 -- every request adds one hit, hits drain at one per second, and more than

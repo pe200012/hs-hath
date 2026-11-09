@@ -3,7 +3,7 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Server
+module Hath.Server
   ( startServer
   , ServerAction(..)
   , makeApplication
@@ -39,15 +39,15 @@ import           Data.X509                            ( CertificateChain, PrivKe
 
 import           Database.SQLite.Simple               ( withConnection )
 
-import           HathNetwork.Genesis
-import           HathNetwork.RPC                      ( RPC
+import           Hath.Network.Genesis
+import           Hath.Network.RPC                      ( RPC
                                                       , notifyGalleryCompletion
                                                       , runRPC
                                                       , runRPCIO
                                                       , stillAlive
                                                       )
 
-import           Interface.API                        ( API
+import           Hath.API                        ( API
                                                       , EHentaiAPI
                                                       , ServerCommand(..)
                                                       , api
@@ -61,11 +61,11 @@ import           Interface.API                        ( API
                                                       , stopListening
                                                       )
 
-import           LegacyCiphers
+import           Hath.Server.LegacyCiphers
 
 import qualified Mason.Builder                        as BD
 
-import           Middleware
+import           Hath.Server.Middleware
 
 import qualified Network.HTTP.Client                  as HC
 import           Network.HTTP.Client                  ( Manager
@@ -119,13 +119,13 @@ import           Servant
 import           Servant.Client                       ( ClientError )
 import qualified Servant.Types.SourceT                as Source
 
-import           SettingM                             ( SettingM(..)
+import           Hath.SettingM                             ( SettingM(..)
                                                       , getSettings
                                                       , runSettingM
                                                       , updateSettings
                                                       )
 
-import           Stats                                ( Stats
+import           Hath.Stats                                ( Stats
                                                       , StatsEnv(..)
                                                       , addDlBytes
                                                       , addDownload
@@ -138,18 +138,18 @@ import           Stats                                ( Stats
                                                       , runStats
                                                       )
 
-import           Storage.Database                     ( FileRecord(fileRecordBytes)
+import           Hath.Cache.SQLite                     ( FileRecord(fileRecordBytes)
                                                       , initializeDB
                                                       , runCache
                                                       )
-import           Storage.Filesystem                   ( newFsCache, runCacheFilesystem, runEvictor )
-import           Storage.Locate
-import           Storage.R2                           ( mkR2Connection, runCacheR2 )
+import           Hath.Cache.Filesystem                   ( newFsCache, runCacheFilesystem, runEvictor )
+import           Hath.Locate
+import           Hath.Cache.R2                           ( mkR2Connection, runCacheR2 )
 
 import           System.Directory                     ( doesFileExist )
 import           System.IO                            ( hPutStrLn )
 
-import           Types                                ( CacheBackend(..)
+import           Hath.Types                                ( CacheBackend(..)
                                                       , ClientConfig
                                                       , ClientConfig(..)
                                                       , FileURI(fileExt, fileSize)
@@ -173,7 +173,7 @@ import           UnliftIO                             ( TChan
                                                       , writeTChan
                                                       )
 
-import           Utils                                ( bufferSending
+import           Hath.Utils                                ( bufferSending
                                                       , hash
                                                       , log
                                                       , lookupParam

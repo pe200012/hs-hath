@@ -4,7 +4,7 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Storage.Database ( FileRecord(..), initializeDB, runCache, runCachePure ) where
+module Hath.Cache.SQLite ( FileRecord(..), initializeDB, runCache, runCachePure ) where
 
 import           Data.String.Interpolate ( i )
 
@@ -16,7 +16,7 @@ import           Polysemy.Operators
 
 import           Relude                  hiding ( Reader, State, ask, evalState, get, modify, put )
 
-import           Types                   ( FileRecord(..)
+import           Hath.Types                   ( FileRecord(..)
                                          , FileURI
                                          , StorageResult(..)
                                          , renderFileURIBytes

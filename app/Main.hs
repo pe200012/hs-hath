@@ -1,29 +1,29 @@
 module Main ( main ) where
 
-import           CLI                    ( Options(..), applyOptionsToConfig, parseOptions )
+import           Hath.CLI                    ( Options(..), applyOptionsToConfig, parseOptions )
 
 import qualified Data.Text              as T
 
 import           Database.SQLite.Simple ( withConnection )
 
-import           FileVerification       ( VerificationStats(..), verifyAllFiles )
+import           Hath.FileVerification       ( VerificationStats(..), verifyAllFiles )
 
-import           HathNetwork.Genesis    ( fetchCertificate, runGenesisIO )
-import           HathNetwork.RPC
+import           Hath.Network.Genesis    ( fetchCertificate, runGenesisIO )
+import           Hath.Network.RPC
 
 import           Relude                 hiding ( runReader )
 
-import           Server                 ( ServerAction(GracefulShutdown), startServer )
+import           Hath.Server                 ( ServerAction(GracefulShutdown), startServer )
 
-import           Storage.Database       ( initializeDB )
+import           Hath.Cache.SQLite       ( initializeDB )
 
 import           System.Posix           ( Handler(Catch), installHandler, sigINT, sigTERM )
 
-import           Types
+import           Hath.Types
 
 import           UnliftIO               ( newTChanIO, writeTChan )
 
-import           Version                ( versionInfo )
+import           Hath.Version                ( versionInfo )
 
 main :: IO ()
 main = do
