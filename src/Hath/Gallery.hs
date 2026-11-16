@@ -9,12 +9,8 @@ import           Hath.Protocol         ( sha1Hex )
 import           Relude
 
 data GalleryMetadata
-  = GalleryMetadata { galleryID        :: !Int
-                    , galleryFileCount :: !Int
-                    , galleryMinXRes   :: !ByteString
-                    , galleryTitle     :: !ByteString
-                    , galleryFileList  :: ![ GalleryFile ]
-                    }
+  = GalleryMetadata
+  { galleryID :: !Int, galleryMinXRes :: !ByteString, galleryFileList :: ![ GalleryFile ] }
   deriving ( Eq )
 
 data GalleryFile
@@ -50,13 +46,7 @@ parseMetadata clientKey bytes = case break (== "FILELIST") (BS.split '\n' bytes)
     when (field "DLHASH" /= Just (sha1Hex (clientKey <> foldMap ("\n" <>) fileLines)))
       $ Left "DLHASH does not match the file list"
     files <- traverse parseFile fileLines
-    pure
-      GalleryMetadata { galleryID        = gid
-                      , galleryFileCount = length files
-                      , galleryMinXRes   = minXRes
-                      , galleryTitle     = fromMaybe "" (field "TITLE")
-                      , galleryFileList  = files
-                      }
+    pure GalleryMetadata { galleryID = gid, galleryMinXRes = minXRes, galleryFileList = files }
   where
     parseFile line = case BS.split ' ' line of
       [ page, index, xres, sha1, ext, name ]

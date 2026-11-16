@@ -1,5 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
-
 -- | hath-bench: plays the H@H RPC server for a client running on this machine
 -- (hs-hath or the official Java client), replays the measurements the real
 -- server makes, and prints a scorecard.
@@ -23,8 +21,12 @@ import           Data.String.Interpolate  ( i )
 import qualified Data.Text                as T
 import           Data.Time.Clock.System   ( getSystemTime, systemSeconds )
 
+import           Dhall                    ( embed, inject )
+import qualified Dhall.Core               as Dhall
+
 import           GHC.Clock                ( getMonotonicTime )
 
+import           Hath.Config              ( ClientConfig(..), defaultClientConfig )
 import           Hath.Protocol            ( sha1HexText )
 
 import           Network.Connection       ( TLSSettings(TLSSettingsSimple) )
@@ -214,21 +216,15 @@ makeCert o wd = do
 writeClientConfigs :: Opts -> FilePath -> IO ()
 writeClientConfigs o wd = do
   writeFileText (wd </> "java" </> "data" </> "client_login") [i|#{oClientId o}-#{oClientKey o}|]
-  writeFileText
-    (wd </> "hs-hath.dhall")
-    [i|let CacheBackend = < CacheBackendSQLite | CacheBackendR2 | CacheBackendFilesystem >
-let ClientProxy = { host : Text, port : Integer, auth : Optional { _1 : Text, _2 : Text } }
-in  { clientId = "#{oClientId o}"
-    , key = "#{oClientKey o}"
-    , version = "176"
-    , proxy = None ClientProxy
-    , downloadDir = "#{wd}/hs-download"
-    , cachePath = "#{wd}/hs-cache.db"
-    , cacheBackend = CacheBackend.CacheBackendSQLite
-    , r2Config = None { r2Endpoint : Text, r2Bucket : Text }
-    , lruCacheSize = +104857600
-    }
-|]
+  writeFileText (wd </> "hs-hath.dhall")
+    $ Dhall.pretty
+    $ embed
+      inject
+      defaultClientConfig { clientId    = oClientId o
+                          , key         = oClientKey o
+                          , downloadDir = toText (wd </> "hs-download")
+                          , cachePath   = toText (wd </> "hs-cache.db")
+                          }
 
 instructions :: Opts -> FilePath -> Text
 instructions o wd

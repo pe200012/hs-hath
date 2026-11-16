@@ -15,14 +15,13 @@ import           Data.X509.File            ( readKeyFile, readSignedObject )
 
 import           Database.SQLite.Simple    ( Connection, SQLError, close, open )
 
-import           Hath.Cache                ( Cache(..) )
+import           Hath.Cache                ( Cache(..), CacheRunner(..) )
 import           Hath.Cache.Filesystem     ( newFsCache, runCacheFilesystem )
 import           Hath.Cache.SQLite         ( initializeDB, runCacheSQLite )
 import           Hath.Config               ( ClientConfig(..), defaultClientConfig )
 import           Hath.Error                ( HathError(StorageError) )
 import           Hath.Protocol             ( sha1HexText )
-import           Hath.Server               ( CacheRunner(..)
-                                           , ServerAction(..)
+import           Hath.Server               ( ServerAction(..)
                                            , ServerEnv(..)
                                            , ServerOptions(..)
                                            , makeApplication

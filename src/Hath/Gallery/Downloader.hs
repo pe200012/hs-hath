@@ -2,18 +2,12 @@
 
 -- | The gallery downloader: fetches the galleries queued for this client on the
 -- H\@H site into the download directory.
-module Hath.Gallery.Downloader
-  ( GalleryTask(..)
-  , runGalleryDownloader
-  , downloadNextGallery
-  , galleryFilePath
-  ) where
+module Hath.Gallery.Downloader ( GalleryTask(..), runGalleryDownloader, galleryFilePath ) where
 
 import           Colog                   ( Message, richMessageAction )
 import           Colog.Polysemy          ( Log, runLogAction )
 
 import           Control.Exception       ( try )
-import           Control.Monad.Extra     ( firstJustM )
 
 import qualified Data.ByteString.Char8   as BS
 import           Data.String.Interpolate ( i )
@@ -31,20 +25,15 @@ import           Hath.RPC                ( RPC
                                          , reportDownloadFailures
                                          , runRPC
                                          )
-import           Hath.Stats              ( Stats
-                                         , StatsEnv
-                                         , addDlBytes
-                                         , incDlFile
-                                         , incDlTask
-                                         , runStats
-                                         )
+import           Hath.Stats              ( StatsEnv, addDlBytes, incDlFile, incDlTask )
 
 import           Network.HTTP.Client     ( HttpException
                                          , Request(host)
+                                         , httpLbs
                                          , parseRequest
                                          , responseBody
                                          )
-import           Network.HTTP.Simple     ( httpLbs )
+import           Network.HTTP.Client.TLS ( getGlobalManager )
 
 import           Polysemy
 import           Polysemy.Error          ( Error, errorToIOFinal )
@@ -73,7 +62,6 @@ runGalleryDownloader config stats tasks = infinitely $ do
     $ errorToIOFinal @HathError
     $ runReader config
     $ runReader stats
-    $ runStats
     $ runLogAction @IO @Message richMessageAction
     $ runRPC downloadNextGallery
   case outcome of
@@ -84,7 +72,9 @@ runGalleryDownloader config stats tasks = infinitely $ do
 -- | Download the next queued gallery, if there is one, and report it complete
 -- once every file is on disk.
 downloadNextGallery
-  :: Members '[ RPC, Stats, Log Message, Reader ClientConfig, Error HathError, Embed IO ] r
+  :: Members
+    '[ RPC, Reader StatsEnv, Log Message, Reader ClientConfig, Error HathError, Embed IO ]
+    r
   => Sem r ()
 downloadNextGallery = do
   queued <- nextGallery
@@ -110,7 +100,7 @@ galleryFilePath directory gallery file
 
 -- | Whether the file is on disk afterwards: it was already there and intact,
 -- or it has just been downloaded.
-ensureFile :: Members '[ RPC, Stats, Log Message, Error HathError, Embed IO ] r
+ensureFile :: Members '[ RPC, Reader StatsEnv, Log Message, Error HathError, Embed IO ] r
            => FilePath
            -> GalleryMetadata
            -> GalleryFile
@@ -161,14 +151,19 @@ downloadGalleryFile gallery file = do
       | otherwise = do
         urls <- galleryFileSources gallery file retries
         -- an empty list is probably a network hiccup; either way, ask again
-        firstJustM (download . BS.unpack) urls >>= maybe (attempt (retries + 1)) (pure . Just)
+        runMaybeT (asum (MaybeT . download . BS.unpack <$> urls))
+          >>= maybe (attempt (retries + 1)) (pure . Just)
 
     download url = case parseRequest url of
       Nothing  -> pure Nothing
-      Just req -> embed (try @HttpException $ toStrict . responseBody <$> httpLbs req) >>= \case
-        Left _      -> pure Nothing
-        Right bytes
-          | hasExpectedHash file bytes -> pure (Just bytes)
-          | otherwise -> do
-            modify @[ Text ] ([i|#{host req}-#{galleryFileIndex file}-#{galleryFileXRes file}|] :)
-            pure Nothing
+      Just req -> embed
+        (try @HttpException $ toStrict . responseBody <$> (httpLbs req =<< getGlobalManager))
+        >>= \case
+          Left _      -> pure Nothing
+          Right bytes
+            | hasExpectedHash file bytes -> pure (Just bytes)
+            | otherwise -> do
+              modify
+                @[ Text ]
+                ([i|#{host req}-#{galleryFileIndex file}-#{galleryFileXRes file}|] :)
+              pure Nothing

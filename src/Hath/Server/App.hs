@@ -13,10 +13,9 @@ import           Hath.Gallery.Downloader  ( GalleryTask )
 import           Hath.RPC                 ( RPC, runRPC )
 import           Hath.Server.FloodControl ( FloodControl )
 import           Hath.Settings            ( HathSettings )
-import           Hath.Stats               ( Stats, StatsEnv, runStats )
+import           Hath.Stats               ( StatsEnv )
 
 import           Polysemy
-import           Polysemy.AtomicState     ( AtomicState, runAtomicStateTVar )
 import           Polysemy.Error           ( Error, errorToIOFinal, mapError )
 import           Polysemy.Reader          ( Reader, runReader )
 
@@ -51,14 +50,11 @@ data ServerEnv
 -- | The effects of a request handler.
 type App
   = Sem
-    '[ Stats
-     , Cache
+    '[ Cache
      , RPC
      , Log Message
-     , AtomicState HathSettings
      , Reader StatsEnv
      , Reader ClientConfig
-     , Reader ServerEnv
      , Error HathError
      , Error ServerError
      , Embed IO
@@ -76,11 +72,8 @@ runApp env
   . embedToFinal @IO
   . errorToIOFinal @ServerError
   . mapError @HathError (const err500)
-  . runReader env
   . runReader (envConfig env)
   . runReader (envStats env)
-  . runAtomicStateTVar (envSettings env)
   . runLogAction @IO @Message richMessageAction
   . runRPC
   . runCacheWith (envCache env)
-  . runStats

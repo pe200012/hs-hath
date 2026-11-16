@@ -5,8 +5,6 @@ module Hath.Server
   , makeApplication
   , ServerEnv(..)
   , ServerAction(..)
-  , CacheRunner(..)
-  , GalleryTask(..)
   ) where
 
 import           Control.Concurrent                   ( threadDelay )
@@ -23,7 +21,7 @@ import           Hath.Cache.Filesystem                ( newFsCache
 import           Hath.Cache.R2                        ( mkR2Connection, runCacheR2 )
 import           Hath.Cache.SQLite                    ( initializeDB, runCacheSQLite )
 import           Hath.Config                          ( CacheBackend(..), ClientConfig(..) )
-import           Hath.Gallery.Downloader              ( GalleryTask(..), runGalleryDownloader )
+import           Hath.Gallery.Downloader              ( runGalleryDownloader )
 import           Hath.RPC                             ( clientStart
                                                       , clientStop
                                                       , getBlacklist
@@ -81,7 +79,7 @@ makeApplication env
   $ tracingConnections stats
   $ tracingTimeUsage stats
   $ withHathHeaders
-  $ serve api (hoistServer api (runApp env) server)
+  $ serve api (hoistServer api (runApp env) (server env))
   where
     stats          = envStats env
 

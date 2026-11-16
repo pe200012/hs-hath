@@ -1,3 +1,5 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+
 -- |
 -- Module      : LegacyCiphers
 -- License     : BSD-3-Clause
@@ -40,6 +42,10 @@
 --
 -- This file is part of the hs-hath project, which is licensed under GPL-3.0.
 -- The BSD-3-Clause license applies to this specific file as noted above.
+--
+-- Why it exists: the official Java client accepts these ECDHE CBC suites (the
+-- JVM's defaults include them), so we offer them too, to keep the same cipher
+-- set. tls 2.x dropped CBC suites, which is why they are defined here.
 module Hath.Server.LegacyCiphers
   ( cipher_ECDHE_ECDSA_AES128CBC_SHA
   , cipher_ECDHE_RSA_AES128CBC_SHA
@@ -112,7 +118,7 @@ bulk_aes128
          , bulkExplicitIV = 0
          , bulkAuthTagLen = 0
          , bulkBlockSize  = 16
-         , bulkF          = BulkBlockF aes128cbc
+         , bulkF          = BulkBlockF (cbc @AES128)
          }
 
 bulk_aes256 :: Bulk
@@ -123,7 +129,7 @@ bulk_aes256
          , bulkExplicitIV = 0
          , bulkAuthTagLen = 0
          , bulkBlockSize  = 16
-         , bulkF          = BulkBlockF aes256cbc
+         , bulkF          = BulkBlockF (cbc @AES256)
          }
 
 noFail :: CryptoFailable a -> a
@@ -135,38 +141,14 @@ makeIV_ = fromMaybe (error "makeIV_") . makeIV
 takelast :: Int -> B.ByteString -> B.ByteString
 takelast i b = B.drop (B.length b - i) b
 
-aes128cbc :: BulkDirection -> BulkKey -> BulkBlock
-aes128cbc BulkEncrypt key
-  = let
-      ctx = noFail (cipherInit key) :: AES128
+-- | AES-CBC as TLS 1.0-1.2 use it: the IV of the next record is the last
+-- ciphertext block. The context is set up once per key, not per record.
+cbc :: forall c. BlockCipher c => BulkDirection -> BulkKey -> BulkBlock
+cbc direction key = case direction of
+  BulkEncrypt -> \iv input -> let
+      output = cbcEncrypt ctx (makeIV_ iv) input
     in 
-      (\iv input -> let
-           output = cbcEncrypt ctx (makeIV_ iv) input
-         in 
-           ( output, takelast 16 output ))
-aes128cbc BulkDecrypt key
-  = let
-      ctx = noFail (cipherInit key) :: AES128
-    in 
-      (\iv input -> let
-           output = cbcDecrypt ctx (makeIV_ iv) input
-         in 
-           ( output, takelast 16 input ))
-
-aes256cbc :: BulkDirection -> BulkKey -> BulkBlock
-aes256cbc BulkEncrypt key
-  = let
-      ctx = noFail (cipherInit key) :: AES256
-    in 
-      (\iv input -> let
-           output = cbcEncrypt ctx (makeIV_ iv) input
-         in 
-           ( output, takelast 16 output ))
-aes256cbc BulkDecrypt key
-  = let
-      ctx = noFail (cipherInit key) :: AES256
-    in 
-      (\iv input -> let
-           output = cbcDecrypt ctx (makeIV_ iv) input
-         in 
-           ( output, takelast 16 input ))
+      ( output, takelast 16 output )
+  BulkDecrypt -> \iv input -> ( cbcDecrypt ctx (makeIV_ iv) input, takelast 16 input )
+  where
+    ctx = noFail (cipherInit key) :: c

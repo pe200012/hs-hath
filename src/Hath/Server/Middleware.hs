@@ -13,8 +13,6 @@ import qualified Data.ByteString          as BS
 
 import           GHC.Clock                ( getMonotonicTime )
 
-import qualified Hath.Metrics.Gauge       as Gauge
-import qualified Hath.Metrics.Histogram   as Histogram
 import           Hath.Protocol            ( hathHeaders )
 import           Hath.Server.FloodControl ( FloodControl
                                           , IP
@@ -22,7 +20,7 @@ import           Hath.Server.FloodControl ( FloodControl
                                           , isLocalIP
                                           , sockAddrIP
                                           )
-import           Hath.Stats               ( StatsEnv(..) )
+import           Hath.Stats               ( StatsEnv, observeDuration, trackConnection )
 
 import           Network.HTTP.Types       ( hAccept, mkStatus )
 import           Network.Wai              ( Middleware
@@ -62,9 +60,7 @@ tooManyRequests
 
 -- | Count the requests being served.
 tracingConnections :: StatsEnv -> Middleware
-tracingConnections stats app req respond = do
-  Gauge.inc (statsActiveConnectionsGauge stats)
-  app req respond `finally` Gauge.dec (statsActiveConnectionsGauge stats)
+tracingConnections stats app req respond = trackConnection stats (app req respond)
 
 -- | Record how long each request took, the body included.
 tracingTimeUsage :: StatsEnv -> Middleware
@@ -72,7 +68,7 @@ tracingTimeUsage stats app req respond = do
   start <- getMonotonicTime
   app req respond `finally` do
     end <- getMonotonicTime
-    Histogram.observe (end - start) (statsLatency stats)
+    observeDuration stats (end - start)
 
 -- | Treat every request as accepting anything, so content negotiation never
 -- turns a reader away.

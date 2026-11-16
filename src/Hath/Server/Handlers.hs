@@ -32,7 +32,7 @@ import           Hath.RPC                ( clientSettings )
 import           Hath.Server.API         ( API, Body, ServerCommand(..), renderServerCommand )
 import           Hath.Server.App         ( App, ServerAction(..), ServerEnv(..) )
 import           Hath.Settings           ( HathSettings )
-import           Hath.Stats              ( addDownload, addUpload, incServed, readPrometheus )
+import           Hath.Stats              ( addDownload, addUpload, incServed, readMetrics )
 
 import qualified Network.HTTP.Client     as HC
 import           Network.HTTP.Client.TLS ( tlsManagerSettings )
@@ -41,11 +41,10 @@ import           Network.HTTP.Types      ( hContentLength, hContentType, status2
 import qualified Network.Wai             as Wai
 
 import           Polysemy                ( embed )
-import           Polysemy.AtomicState    ( atomicGet, atomicPut )
 import           Polysemy.Error          ( throw )
-import           Polysemy.Reader         ( ask, asks )
+import           Polysemy.Reader         ( ask )
 
-import           Relude                  hiding ( ask, asks )
+import           Relude                  hiding ( ask )
 
 import           Servant                 ( (:<|>)(..)
                                          , Application
@@ -67,15 +66,15 @@ import           UnliftIO                ( getMonotonicTime
                                          , writeTChan
                                          )
 
-server :: ServerT API App
-server
+server :: ServerEnv -> ServerT API App
+server env
   = favicon
   :<|> robots
   :<|> resource
-  :<|> readPrometheus
-  :<|> serverCommand
+  :<|> readMetrics
+  :<|> serverCommand env
   :<|> speedTest
-  :<|> adminSettings
+  :<|> adminSettings (envSettings env)
   :<|> Tagged fallback
 
 favicon :: App NoContent
@@ -84,8 +83,8 @@ favicon = throw err301 { errHeaders = [ ( "Location", "https://e-hentai.org/favi
 robots :: App Text
 robots = pure "User-agent: *\nDisallow: /"
 
-adminSettings :: App Text
-adminSettings = show <$> atomicGet @HathSettings
+adminSettings :: TVar HathSettings -> App Text
+adminSettings settings = show <$> embed @IO (readTVarIO settings)
 
 -- | Any other path: HEAD is answered, nothing is found.
 fallback :: Application
@@ -151,8 +150,8 @@ fileHeaders uri len = [ ( hContentType, mimeType uri ), ( hContentLength, show l
 -- | @\/servercmd\/\<command>\/\<additional>\/\<time>\/\<key>@: a command from the
 -- RPC server. As in the official client, the key proves the sender: only the
 -- RPC server knows ours.
-serverCommand :: ServerCommand -> Text -> Int -> Text -> App Body
-serverCommand command additional time commandKey = do
+serverCommand :: ServerEnv -> ServerCommand -> Text -> Int -> Text -> App Body
+serverCommand env command additional time commandKey = do
   now <- embed $ systemSeconds <$> getSystemTime
   cfg <- ask @ClientConfig
   when
@@ -169,19 +168,18 @@ serverCommand command additional time commandKey = do
       pure $ filler size
     RefreshSettings   -> do
       logInfo "Refreshing settings"
-      atomicPut =<< clientSettings =<< atomicGet
+      refreshed <- clientSettings =<< embed @IO (readTVarIO (envSettings env))
+      embed @IO $ atomically $ writeTVar (envSettings env) refreshed
       body ""
     StartDownloader   -> do
       logInfo "Starting gallery downloader"
-      tasks <- asks envGalleryTasks
-      embed @IO $ atomically $ writeTChan tasks GalleryTask
+      embed @IO $ atomically $ writeTChan (envGalleryTasks env) GalleryTask
       body ""
     RefreshCerts      -> do
       logInfo "Refreshing certificates"
-      actions <- asks envActions
       void $ embed $ forkIO $ do
         threadDelay (2 * 1000000)
-        atomically $ writeTChan actions Cert
+        atomically $ writeTChan (envActions env) Cert
       body ""
   where
     params = parseURLParams (encodeUtf8 additional)

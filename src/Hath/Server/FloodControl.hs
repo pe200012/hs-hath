@@ -8,7 +8,7 @@ module Hath.Server.FloodControl
   , parseIPv4
   , isLocalIP
     -- * The pure rule
-  , IPRecord(..)
+  , IPRecord
   , IPMap
   , registerHit
     -- * Shared state
@@ -32,9 +32,7 @@ import           Network.Socket        ( HostAddress
 import           Relude
 
 data IP = IPv4 !HostAddress | IPv6 !HostAddress6
-  deriving ( Eq, Ord, Show, Generic )
-
-instance Hashable IP
+  deriving ( Eq, Ord, Show )
 
 -- | The address of a peer, without its port.
 sockAddrIP :: SockAddr -> Maybe IP
@@ -100,8 +98,6 @@ data IPRecord
              }
   deriving ( Eq, Show )
 
--- | A 'Map' rather than a 'HashMap': 'registerHit' asks for the size on every
--- hit, which a 'Map' knows and a 'HashMap' has to count.
 type IPMap = Map IP IPRecord
 
 -- | Count a request from an address at a time. The Bool says whether it may
@@ -125,7 +121,6 @@ registerHit now ip records = case Map.lookup ip live of
     in 
       ( Map.insert ip record live, not blocked )
   where
-    -- ponytail: O(n) prune once the map is large; fine for the few hundred IPs a client sees per minute
     live
       | Map.size records > 1000 = Map.filter ((> now - idleSeconds) . lastHit) records
       | otherwise = records

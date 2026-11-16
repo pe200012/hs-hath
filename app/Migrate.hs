@@ -1,16 +1,16 @@
 -- | migrate-to-r2: upload an SQLite or Filesystem cache to an R2 bucket.
 module Migrate ( main ) where
 
-import qualified Conduit                as C
-
-import qualified Data.ByteString        as BS
-
 import           Database.SQLite.Simple ( Only(..), fold_, query_, withConnection )
 
-import           Hath.Cache.R2          ( R2Connection(..), fileURIToKey, mkR2Connection, runR2 )
-import           Hath.Cache.SQLite      ( FileRecord(..) )
+import           Hath.Cache.R2          ( R2Connection(..)
+                                        , fileURIToKey
+                                        , mkR2Connection
+                                        , putR2Object
+                                        , runR2
+                                        )
 import           Hath.Config            ( R2Config(..) )
-import           Hath.FileURI           ( parseFileURI )
+import           Hath.FileURI           ( FileURI, parseFileURI )
 
 import           Network.Minio          ( defaultPutObjectOptions )
 import qualified Network.Minio          as Minio
@@ -99,17 +99,16 @@ data Tally = Tally { migrated :: !Int, failed :: !Int }
 
 -- | Upload one file under its bucket key (in a dry run, only say so) and count
 -- how it went.
-migrateOne :: MigrateOptions -> Text -> (Text -> IO (Either Text ())) -> Tally -> IO Tally
+migrateOne :: MigrateOptions -> Text -> (FileURI -> IO (Either Text ())) -> Tally -> IO Tally
 migrateOne opts fileId upload tally
   | optDryRun opts = tally <$ say ("  Would upload: " <> fileId)
-  | otherwise = maybe (pure $ Left "not a file id") upload objectKey >>= \case
-    Left err -> tally { failed = failed tally + 1 }
-      <$ say ("  Error uploading " <> fileId <> ": " <> err)
-    Right () -> tally { migrated = migrated tally + 1 } <$ say ("  Uploaded: " <> fileId)
+  | otherwise
+    = maybe (pure $ Left "not a file id") upload (parseFileURI (encodeUtf8 fileId)) >>= \case
+      Left err -> tally { failed = failed tally + 1 }
+        <$ say ("  Error uploading " <> fileId <> ": " <> err)
+      Right () -> tally { migrated = migrated tally + 1 } <$ say ("  Uploaded: " <> fileId)
   where
-    objectKey = fileURIToKey <$> parseFileURI (encodeUtf8 fileId)
-
-    say       = when (optVerbose opts) . putTextLn
+    say = when (optVerbose opts) . putTextLn
 
 -- | Rows are streamed, so the database is never in memory as a whole.
 migrateSQLite :: MigrateOptions -> R2Connection -> IO Tally
@@ -119,22 +118,9 @@ migrateSQLite opts r2 = withConnection (optSourcePath opts) $ \conn -> do
   putTextLn $ "Total files to migrate: " <> show total
   when (optDryRun opts) $ putTextLn "[DRY RUN] Would upload the following files:"
   fmap fst
-    $ fold_
-      conn
-      "SELECT lru_counter, s4, file_id, file_name, bytes FROM files"
-      ( Tally 0 0, 0 :: Int )
-    $ \( tally, done ) record -> do
-      let bytes = fileRecordBytes record
-          size = fromIntegral (BS.length bytes) :: Int64
-          upload objectKey
-            = runR2 r2
-            $ Minio.putObject
-              (r2ConnBucket r2)
-              objectKey
-              (C.yield bytes)
-              (Just size)
-              defaultPutObjectOptions
-      tally' <- migrateOne opts (fileRecordFileId record) upload tally
+    $ fold_ conn "SELECT file_id, bytes FROM files" ( Tally 0 0, 0 :: Int )
+    $ \( tally, done ) ( fileId, bytes ) -> do
+      tally' <- migrateOne opts fileId (\uri -> putR2Object r2 uri bytes) tally
       when ((done + 1) `mod` optBatchSize opts == 0)
         $ putTextLn
         $ "  Progress: " <> show (done + 1) <> "/" <> show total
@@ -156,7 +142,8 @@ migrateFilesystem opts r2 = do
     migrateDirectory tally dir = foldlM (migrateFile dir) tally =<< listDirectory (root </> dir)
 
     migrateFile dir tally name = do
-      let path = root </> dir </> name
-          upload objectKey
-            = runR2 r2 $ Minio.fPutObject (r2ConnBucket r2) objectKey path defaultPutObjectOptions
+      let path       = root </> dir </> name
+          upload uri
+            = runR2 r2
+            $ Minio.fPutObject (r2ConnBucket r2) (fileURIToKey uri) path defaultPutObjectOptions
       ifM (doesFileExist path) (migrateOne opts (toText name) upload tally) (pure tally)

@@ -29,12 +29,10 @@ dependencies:
   - co-log-polysemy >= 0.0.1.5 && < 0.0.2
   - containers >= 0.6 && < 0.8
   - crypton >= 1.0 && < 1.1
-  - crypton-connection >= 0.4 && < 0.5
   - crypton-x509 >= 1.7 && < 1.8
   - directory >= 1.3 && < 1.4
   - dhall >= 1.42 && < 1.43
   - sqlite-simple >= 0.4 && < 0.5
-  - extra >= 1.7 && < 1.9
   - string-interpolate >= 0.3 && < 0.4
   - servant >= 0.20.2 && < 0.21
   - servant-server >= 0.20.2 && < 0.21
@@ -42,7 +40,6 @@ dependencies:
   - servant-client-core >= 0.20.2 && < 0.21
   - http-client >= 0.7 && < 0.8
   - http-client-tls >= 0.3 && < 0.4
-  - http-conduit >= 2.3 && < 2.4
   - http-types >= 0.12 && < 0.13
   - http-media >= 0.8 && < 0.9
   - lrucache >= 1.2 && < 1.3
@@ -59,7 +56,6 @@ dependencies:
   - tls-session-manager >= 0.0.5 && < 0.1
   - relude >= 1.2 && < 1.3
   - unix >= 2.8 && < 2.9
-  - unordered-containers >= 0.2 && < 0.3
   - unliftio >= 0.2 && < 0.3
   - wai >= 3.2 && < 3.3
   - wai-extra >= 3.1 && < 3.2
@@ -78,11 +74,6 @@ ghc-options:
   - -Wredundant-constraints
 
 internal-libraries:
-  hs-hath-placeholder:
-    source-dirs: vendor/placeholder-0/src
-    dependencies:
-      - ghc-prim >= 0 && < 10
-
   # cryptostore-0.3.0.1 with its manual use_crypton flag baked in: tls and our
   # code use crypton-x509 types, and a package cannot set a dependency's flag
   hs-hath-cryptostore:
@@ -181,14 +172,12 @@ _extensions: &extensions
   - OverloadedStrings
   - QuasiQuotes
   - LambdaCase
-  - ViewPatterns
   - GADTs
 
 library:
   source-dirs: src
   dependencies:
     - hs-hath-cryptostore
-    - hs-hath-placeholder
     - hs-hath-warp-tls
     - hs-hath-minio
   default-extensions: *extensions
@@ -234,6 +223,7 @@ executables:
       - Bench
     dependencies:
       - hs-hath
+      - crypton-connection >= 0.4 && < 0.5
     default-extensions: *extensions
 
 tests:

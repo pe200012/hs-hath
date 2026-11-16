@@ -63,12 +63,7 @@ gallerySpecs = describe "Gallery downloader" $ do
 
   it "puts a file under the download directory, in a directory named for its gallery" $ do
     let gallery
-          = GalleryMetadata { galleryID        = 123
-                            , galleryFileCount = 1
-                            , galleryMinXRes   = "org"
-                            , galleryTitle     = "t"
-                            , galleryFileList  = [ file ]
-                            }
+          = GalleryMetadata { galleryID = 123, galleryMinXRes = "org", galleryFileList = [ file ] }
         file
           = GalleryFile { galleryFilePage  = 1
                         , galleryFileIndex = 99

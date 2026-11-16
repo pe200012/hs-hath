@@ -1,14 +1,13 @@
 {-# LANGUAGE DataKinds #-}
 
 -- | Finding a requested file: in the cache, or else upstream.
-module Hath.Locate ( Located(..), locateResource, streamUpstream ) where
+module Hath.Locate ( Located(..), locateResource ) where
 
 import           Colog                   ( Message )
 import           Colog.Polysemy          ( Log )
 
 import           Control.Concurrent      ( forkIO )
 import           Control.Exception       ( finally )
-import           Control.Monad.Extra     ( firstJustM )
 
 import qualified Data.ByteString.Char8   as BS
 import qualified Data.List               as List
@@ -22,7 +21,7 @@ import           Hath.FileURI            ( FileURI(..) )
 import           Hath.Log                ( logInfo, logWarning )
 import           Hath.Protocol           ( hathHeaders, hathRequestToken, sha1Hex )
 import           Hath.RPC                ( RPC, fileSources )
-import           Hath.Stats              ( Stats, addDownload, incFetched )
+import           Hath.Stats              ( StatsEnv, addDownload, incFetched )
 
 import qualified Network.HTTP.Client     as HC
 import           Network.HTTP.Client.TLS ( getGlobalManager )
@@ -51,7 +50,15 @@ data Located
 -- for; static ranges only matter for pruning the cache.
 locateResource
   :: Members
-    '[ Cache, RPC, Stats, Log Message, Reader ClientConfig, Error HathError, Embed IO, Final IO ]
+    '[ Cache
+     , RPC
+     , Reader StatsEnv
+     , Log Message
+     , Reader ClientConfig
+     , Error HathError
+     , Embed IO
+     , Final IO
+     ]
     r
   => FileURI
   -> Map ByteString ByteString
@@ -102,11 +109,11 @@ openUpstream uri fileIndex xres = do
               , List.lookup hContentLength (HC.responseHeaders response)
                 == Just (show (fileSize uri)) -> pure (Just response)
               | otherwise -> HC.responseClose response $> Nothing
-            -- connection error: firstJustM tries the next source
+            -- connection error: try the next source
             Left _         -> pure Nothing
   embed $ do
     manager <- getGlobalManager
-    firstJustM (open manager . BS.unpack) urls
+    runMaybeT (asum (MaybeT . open manager . BS.unpack <$> urls))
 
 -- | Relay an upstream body chunk by chunk. If it arrives complete and its SHA-1
 -- matches, hand the bytes to the continuation (the cache write). The upstream

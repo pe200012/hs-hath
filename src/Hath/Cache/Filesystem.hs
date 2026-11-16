@@ -115,8 +115,7 @@ sweep fs limit = do
         | otherwise = []
   freed <- fmap catMaybes $ forM victims $ \( _, size, rel ) -> rightToMaybe . (size <$)
     <$> tryAny (removeFile (fsRoot fs </> decodeUtf8 (fromShort rel)))
-  -- keep what was written meanwhile (a file written mid-scan may count twice;
-  -- that only costs an extra rescan)
+  -- keep what was written meanwhile
   atomicModifyIORef' (fsUsed fs) $ \used -> ( used - before + total - sum freed, () )
   pure ( length freed, sum freed )
   where
@@ -126,8 +125,7 @@ sweep fs limit = do
       | n > 0 = x : takeBytes (n - size) xs
     takeBytes _ _ = []
 
--- | (mtime, size, path relative to root) of our files: root/xxxx/xxxx…. Anything
--- else under root is left alone.
+-- | (mtime, size, path relative to root) of our files: root/xxxx/xxxx….
 scanCache :: FilePath -> IO [ ( Int64, Int64, ShortByteString ) ]
 scanCache root = do
   dirs <- filter ((== 4) . length) <$> listDirectory root

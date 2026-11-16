@@ -10,7 +10,6 @@ import           Hath.Server            ( ServerAction(GracefulShutdown)
                                         , ServerOptions(..)
                                         , startServer
                                         )
-import           Hath.Version           ( versionInfo )
 
 import           Relude
 
@@ -21,10 +20,6 @@ import           UnliftIO               ( newTChanIO, writeTChan )
 main :: IO ()
 main = do
   options <- parseOptions
-  when (optShowVersion options) $ do
-    putTextLn versionInfo
-    exitSuccess
-
   config <- applyOptionsToConfig options <$> readClientConfig (toText $ optConfigPath options)
   when (optValidateConfig options) $ do
     putStrLn "Configuration is valid."

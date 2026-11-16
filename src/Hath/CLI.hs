@@ -3,6 +3,7 @@
 module Hath.CLI ( Options(..), parseOptions, applyOptionsToConfig ) where
 
 import           Hath.Config         ( ClientConfig(..) )
+import           Hath.Version        ( versionInfo )
 
 import           Options.Applicative
 
@@ -18,7 +19,6 @@ data Options
   , optDisableRateLimit  :: !Bool          -- ^ Disable rate limiting (for NAT/proxy scenarios)
   , optTrustProxyHeaders :: !Bool         -- ^ Trust X-Forwarded-For header for real IP
   , optValidateConfig    :: !Bool          -- ^ Validate configuration and exit
-  , optShowVersion       :: !Bool          -- ^ Show version information
   }
   deriving ( Show )
 
@@ -28,10 +28,15 @@ parseOptions = execParser opts
   where
     opts
       = info
-        (optionsParser <**> helper)
+        (optionsParser <**> versionOption <**> helper)
         (fullDesc
          <> progDesc "Haskell implementation of the Hath client"
          <> header "hs-hath - A Hentai@Home client in Haskell")
+
+    versionOption
+      = infoOption
+        (toString versionInfo)
+        (long "version" <> short 'v' <> help "Show version information and exit")
 
 -- | Options parser
 optionsParser :: Parser Options
@@ -59,7 +64,6 @@ optionsParser
     (long "trust-proxy-headers"
      <> help "Trust X-Forwarded-For header for real client IP (use when behind trusted proxy)")
   <*> switch (long "validate-config" <> help "Validate configuration and exit")
-  <*> switch (long "version" <> short 'v' <> help "Show version information and exit")
 
 -- | Apply CLI options to client configuration
 applyOptionsToConfig :: Options -> ClientConfig -> ClientConfig

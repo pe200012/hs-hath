@@ -2,7 +2,14 @@
 
 -- | The R2 backend (any S3-compatible store): hits are answered with a redirect
 -- to a presigned link, so the reader fetches the file from the bucket itself.
-module Hath.Cache.R2 ( R2Connection(..), mkR2Connection, runCacheR2, runR2, fileURIToKey ) where
+module Hath.Cache.R2
+  ( R2Connection(..)
+  , mkR2Connection
+  , runCacheR2
+  , runR2
+  , fileURIToKey
+  , putR2Object
+  ) where
 
 import           Colog                   ( Message )
 import           Colog.Polysemy          ( Log )
@@ -93,6 +100,17 @@ runR2 conn action = try @SomeException (Minio.runMinioWith (r2MinioConn conn) ac
   Right (Left err) -> Left (show err)
   Right (Right a)  -> Right a
 
+-- | Upload a file under its key.
+putR2Object :: R2Connection -> FileURI -> ByteString -> IO (Either Text ())
+putR2Object conn uri bytes
+  = runR2 conn
+  $ Minio.putObject
+    (r2ConnBucket conn)
+    (fileURIToKey uri)
+    (C.yield bytes)
+    (Just (fromIntegral (BS.length bytes)))
+    defaultPutObjectOptions
+
 -- | A lookup that fails for any reason is a miss (with a warning); a failed
 -- write is an error.
 runCacheR2 :: Members '[ Embed IO, Log Message, Error HathError ] r
@@ -115,18 +133,12 @@ runCacheR2 conn = interpret $ \case
             logWarning ("Object not found in R2 storage: " <> objectKey)
             pure Nothing
 
-  StoreFile uri bytes -> do
-    let objectKey = fileURIToKey uri
-        size      = fromIntegral (BS.length bytes) :: Int64
-    stored <- embed
-      $ minio
-      $ Minio.putObject bucket objectKey (C.yield bytes) (Just size) defaultPutObjectOptions
-    case stored of
-      Left err -> do
-        logError ("R2 write failed for " <> objectKey <> ": " <> err)
-        throw $ StorageError err
-      -- it is there now, as after a HEAD: the next hit (often seconds away) needs none
-      Right () -> embed $ getMonotonicTime >>= void . rememberLink uri
+  StoreFile uri bytes -> embed (putR2Object conn uri bytes) >>= \case
+    Left err -> do
+      logError ("R2 write failed for " <> fileURIToKey uri <> ": " <> err)
+      throw $ StorageError err
+    -- it is there now, as after a HEAD: the next hit (often seconds away) needs none
+    Right () -> embed $ getMonotonicTime >>= void . rememberLink uri
   where
     bucket = r2ConnBucket conn
 

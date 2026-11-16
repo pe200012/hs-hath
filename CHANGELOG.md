@@ -15,7 +15,7 @@ and this project adheres to the
 - Removed the disabled static-range check: like the official client, any file the server routes here is served
 - The CI workflow now runs the test suite
 - **`downloadDir`** and `--download-dir` had no effect: the gallery downloader always wrote to `./download`. It now writes to the configured directory, as `<downloadDir>/<gallery id>/`; files of a download in progress under `./download` are fetched again unless that is the configured directory
-- `hath_uptime_seconds` was always 0; it is now brought up to date with every metrics snapshot
+- `hath_uptime_seconds` was always 0; it is now computed when `/metrics` is read
 - **Gallery downloads longer than five minutes**: every request of one download carried the time the download began, so the server came to refuse them as `KEY_EXPIRED`. Each request now carries its own time
 - Errors that end a gallery download are logged; they used to be dropped
 - An option value containing `=` (in `/h/` and `/servercmd/` URLs) no longer fails the request
@@ -24,15 +24,26 @@ and this project adheres to the
 ### Changed
 - **Certificate refresh** swaps the certificate in place for new handshakes instead of restarting the listener, so transfers in progress are no longer cut off and `client_start` is not re-sent
 - **Filesystem backend**: hits are sent from the file instead of being read into memory, and the least recently served files are evicted to stay under the disk limit from the H@H settings page (100 MiB below it, as the official client). Its per-request in-memory LRU, which never survived past one request, is gone
-- **Metrics**: `hath_latency_seconds` (a gauge holding the last request's latency in microseconds) is replaced by the histogram `hath_request_duration_seconds`; the always-zero `hath_errors_total` is removed
+- **Metrics**: `hath_latency_seconds` (a gauge holding the last request's latency in microseconds) is replaced by the histogram `hath_request_duration_seconds`; the always-zero `hath_errors_total` is removed. `/metrics` is rendered when it is read, not every 5 seconds by a background thread, so it shows current values; names, order and format are unchanged
 - `client-login.example` uses the Filesystem backend
 - **Logs**: failed TLS handshakes and connections that close before sending anything (scanners probing SSL3/TLS 1.0/1.1 and cipher suites, a few thousand a day on a public node) are no longer printed. The TLS 1.0/1.1 entries are dropped from the allowed versions; `tls` 2.x rejected them anyway
 - **TLS session resumption** (session IDs on TLS 1.2, tickets on TLS 1.3): a returning visitor skips the certificate and its RSA signature, which cuts the server's CPU per handshake by about 45 % on TLS 1.3 and 75 % on TLS 1.2 (several ms on a small VM)
 - **Internals**: the modules live under `Hath.*`, split by subject (see the README). `mason`, `timers`, `suspend`, the vendored `polysemy-zoo` and a dozen dependencies nothing imported are gone, as is the pinned `random`
 - A malformed file id is answered with 404 without asking the RPC server about it
 - `/admin/settings` lists only the settings the server assigns
-- The SQLite backend no longer records the file name a file was first requested under
+- The SQLite backend no longer records the file name a file was first requested under, and a hit no longer writes to the database (the `lru_counter` column, which nothing read, stays as it is)
 - **R2 backend**: a file just uploaded after a cache miss is redirected at once on its next request, instead of first asking the bucket whether it is there (a 40–350 ms round trip)
+- `hath-bench` writes the hs-hath config through `ClientConfig`'s `ToDhall` instance instead of a hand-written copy of the record
+- **Library API**: `Hath.Stats` counts with plain functions over `Reader StatsEnv` (no effect to interpret) and adds `readMetrics`, `renderMetrics`, `trackConnection` and `observeDuration`; `Hath.Server.Handlers.server` takes the `ServerEnv`, and `App` no longer carries `Reader ServerEnv` or `AtomicState HathSettings`; `Hath.Cache.R2.putR2Object` uploads a file (the cache and `migrate-to-r2` share it)
+
+### Removed
+- Modules `Hath.Metrics.Counter`, `Hath.Metrics.Gauge`, `Hath.Metrics.Histogram`, `Hath.Metrics.Prometheus`, `Hath.Metrics.Registry`, `Hath.Metrics.Snapshot` and `Hath.Metrics.Types`: `Hath.Stats` holds the counters and renders them
+- From `Hath.Stats`: the `Stats` effect (`Stats(..)`, `runStats`, `readPrometheus`) and the fields of `StatsEnv`
+- `Hath.Cache.SQLite.FileRecord`; `Hath.Locate.streamUpstream` and `Hath.Gallery.Downloader.downloadNextGallery` are no longer exported
+- `Hath.Server` no longer re-exports `CacheRunner(..)` (from `Hath.Cache`) and `GalleryTask(..)` (from `Hath.Gallery.Downloader`)
+- `Hath.Server.FloodControl`: the constructor and fields of `IPRecord`, and the `Hashable IP` instance
+- The `galleryFileCount` and `galleryTitle` fields of `Hath.Gallery.GalleryMetadata`; the `optShowVersion` field of `Hath.CLI.Options` (the option parser answers `--version` itself)
+- The internal library `hs-hath-placeholder` (vendored `placeholder`), the parts of the vendored `minio-hs` that are not built, `Setup.hs`, and the dependencies `extra`, `http-conduit` and `unordered-containers`; `crypton-connection` is only a dependency of `hath-bench`
 
 ## [1.2.0] - 2026-11-08
 

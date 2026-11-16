@@ -1,12 +1,11 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TemplateHaskell #-}
 
--- | The counters behind @\/metrics@, and the effect the rest of the client
--- counts through.
+-- | The counters behind @\/metrics@, and their rendering in the Prometheus
+-- text format.
 module Hath.Stats
-  ( StatsEnv(..)
+  ( StatsEnv
   , newStatsEnv
-  , Stats(..)
+    -- * Counting
   , addUpload
   , addDownload
   , incServed
@@ -14,117 +13,162 @@ module Hath.Stats
   , incDlTask
   , incDlFile
   , addDlBytes
-  , readPrometheus
-  , runStats
+  , trackConnection
+  , observeDuration
+    -- * Rendering
+  , readMetrics
+  , renderMetrics
   ) where
 
-import           GHC.Clock             ( getMonotonicTime )
+import           Control.Exception ( finally )
 
-import qualified Hath.Metrics.Counter  as Counter
-import qualified Hath.Metrics.Gauge    as Gauge
-import           Hath.Metrics.Registry ( newRegistry
-                                       , registerCounter
-                                       , registerGauge
-                                       , registerHistogram
-                                       )
-import           Hath.Metrics.Snapshot ( getCachedSnapshot, startSnapshotWorker )
-import           Hath.Metrics.Types    ( Counter, Gauge, Histogram, Registry )
+import           GHC.Clock         ( getMonotonicTime )
+
+import           Numeric           ( showFFloat )
 
 import           Polysemy
-import           Polysemy.Reader       ( Reader, ask )
+import           Polysemy.Reader   ( Reader, ask )
 
-import           Relude                hiding ( Reader, ask )
+import           Relude            hiding ( Reader, ask )
 
 data StatsEnv
   = StatsEnv
-  { statsRegistry :: !Registry
-  , statsUploadBytesCounter :: !Counter
-  , statsDownloadBytesCounter :: !Counter
-  , statsServedCounter :: !Counter
-  , statsFetchedCounter :: !Counter
-  , statsActiveConnectionsGauge :: !Gauge
-  , statsUptimeGauge :: !Gauge
-  , statsDlTaskCounter :: !Counter
-  , statsDlFileCounter :: !Counter
-  , statsDlBytesCounter :: !Counter
-  , statsLatency :: !Histogram
+  { statsStart :: !Double
+    -- ^ monotonic seconds; the uptime counts from here
+  , statsSentBytes :: !(IORef Int64)
+  , statsReceivedBytes :: !(IORef Int64)
+  , statsSent :: !(IORef Int64)
+  , statsReceived :: !(IORef Int64)
+  , statsActiveConnections :: !(IORef Int64)
+  , statsDlTasks :: !(IORef Int64)
+  , statsDlFiles :: !(IORef Int64)
+  , statsDlBytes :: !(IORef Int64)
+  , statsDurations :: ![ IORef Int64 ]
+    -- ^ requests per 'durationBounds' bucket, then those above the last bound (not cumulative)
+  , statsDurationSum :: !(IORef Double)
   }
 
--- | Register the metrics and start the worker that renders them every 5 seconds.
+-- | Upper bounds of the request duration buckets, in seconds. A duration
+-- includes sending the body, so large files land in the upper buckets.
+durationBounds :: [ Double ]
+durationBounds = [ 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60 ]
+
 newStatsEnv :: IO StatsEnv
 newStatsEnv = do
   start <- getMonotonicTime
-  registry <- newRegistry
-  uploadBytes
-    <- registerCounter "hath_cache_sent_bytes_total" "Total bytes sent from cache" registry
-  downloadBytes
-    <- registerCounter "hath_cache_received_bytes_total" "Total bytes received into cache" registry
-  served <- registerCounter "hath_cache_sent_total" "Total number of cache hits" registry
-  fetched <- registerCounter "hath_cache_received_total" "Total number of cache misses" registry
-  activeConnections
-    <- registerGauge "hath_active_connections" "Number of active connections" registry
-  uptime <- registerGauge "hath_uptime_seconds" "Server uptime in seconds" registry
-  dlTasks
-    <- registerCounter "hath_download_task_count_total" "Total gallery download tasks" registry
-  dlFiles
-    <- registerCounter "hath_download_file_count_total" "Total gallery files downloaded" registry
-  dlBytes <- registerCounter
-    "hath_download_size_bytes_total"
-    "Total bytes downloaded from galleries"
-    registry
-  -- includes sending the body, so large files land in the upper buckets
-  latency <- registerHistogram
-    "hath_request_duration_seconds"
-    "Time from request to the last byte sent"
-    [ 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60 ]
-    registry
-  startSnapshotWorker registry (5 * 1000000) $ do
+  let counter = newIORef 0
+  StatsEnv start <$> counter
+    <*> counter
+    <*> counter
+    <*> counter
+    <*> counter
+    <*> counter
+    <*> counter
+    <*> counter
+    <*> replicateM (length durationBounds + 1) counter
+    <*> newIORef 0
+
+-- | Requests run concurrently, so every update is atomic.
+add :: Int64 -> IORef Int64 -> IO ()
+add n ref = atomicModifyIORef' ref $ \old -> ( old + n, () )
+
+count :: Members '[ Reader StatsEnv, Embed IO ] r => (StatsEnv -> IORef Int64) -> Int -> Sem r ()
+count counter n = ask >>= embed . add (fromIntegral n) . counter
+
+-- | Bytes sent to readers.
+addUpload :: Members '[ Reader StatsEnv, Embed IO ] r => Int -> Sem r ()
+addUpload = count statsSentBytes
+
+-- | Bytes fetched from upstream into the cache.
+addDownload :: Members '[ Reader StatsEnv, Embed IO ] r => Int -> Sem r ()
+addDownload = count statsReceivedBytes
+
+-- | One file served.
+incServed :: Members '[ Reader StatsEnv, Embed IO ] r => Sem r ()
+incServed = count statsSent 1
+
+-- | One file fetched from upstream.
+incFetched :: Members '[ Reader StatsEnv, Embed IO ] r => Sem r ()
+incFetched = count statsReceived 1
+
+-- | One look at the gallery download queue.
+incDlTask :: Members '[ Reader StatsEnv, Embed IO ] r => Sem r ()
+incDlTask = count statsDlTasks 1
+
+-- | One gallery file downloaded.
+incDlFile :: Members '[ Reader StatsEnv, Embed IO ] r => Sem r ()
+incDlFile = count statsDlFiles 1
+
+-- | Bytes of gallery files downloaded.
+addDlBytes :: Members '[ Reader StatsEnv, Embed IO ] r => Int -> Sem r ()
+addDlBytes = count statsDlBytes
+
+-- | Count a connection as active while the action runs.
+trackConnection :: StatsEnv -> IO a -> IO a
+trackConnection stats action = do
+  add 1 (statsActiveConnections stats)
+  action `finally` add (-1) (statsActiveConnections stats)
+
+-- | Record how long a request took, in seconds.
+observeDuration :: StatsEnv -> Double -> IO ()
+observeDuration stats seconds = do
+  whenJust (statsDurations stats !!? length (takeWhile (< seconds) durationBounds)) (add 1)
+  atomicModifyIORef' (statsDurationSum stats) $ \total -> ( total + seconds, () )
+
+-- | The metrics as they are now, for @\/metrics@.
+readMetrics :: Members '[ Reader StatsEnv, Embed IO ] r => Sem r Text
+readMetrics = do
+  stats <- ask
+  embed $ do
     now <- getMonotonicTime
-    Gauge.set (round (now - start)) uptime
-  pure
-    StatsEnv
-    { statsRegistry = registry
-    , statsUploadBytesCounter = uploadBytes
-    , statsDownloadBytesCounter = downloadBytes
-    , statsServedCounter = served
-    , statsFetchedCounter = fetched
-    , statsActiveConnectionsGauge = activeConnections
-    , statsUptimeGauge = uptime
-    , statsDlTaskCounter = dlTasks
-    , statsDlFileCounter = dlFiles
-    , statsDlBytesCounter = dlBytes
-    , statsLatency = latency
-    }
+    renderMetrics stats (round (now - statsStart stats))
 
-data Stats m a where
-  -- | Bytes sent to readers.
-  AddUpload :: Int -> Stats m ()
-  -- | Bytes fetched from upstream into the cache.
-  AddDownload :: Int -> Stats m ()
-  -- | One file served.
-  IncServed :: Stats m ()
-  -- | One file fetched from upstream.
-  IncFetched :: Stats m ()
-  -- | One look at the gallery download queue.
-  IncDlTask :: Stats m ()
-  -- | One gallery file downloaded, and its size.
-  IncDlFile :: Stats m ()
-  AddDlBytes :: Int -> Stats m ()
-  -- | The metrics in Prometheus text format, as last rendered.
-  ReadPrometheus :: Stats m Text
+-- | The metrics in the Prometheus text format, given the uptime in seconds.
+-- They come in the order earlier versions printed them.
+renderMetrics :: StatsEnv -> Int64 -> IO Text
+renderMetrics stats uptime = do
+  let counter name help field = scalar "counter" name help <$> readIORef (field stats)
+  scalars <- sequence
+    [ counter "hath_download_size_bytes_total" "Total bytes downloaded from galleries" statsDlBytes
+    , counter "hath_download_file_count_total" "Total gallery files downloaded" statsDlFiles
+    , counter "hath_download_task_count_total" "Total gallery download tasks" statsDlTasks
+    , counter "hath_cache_received_total" "Total number of cache misses" statsReceived
+    , counter "hath_cache_sent_total" "Total number of cache hits" statsSent
+    , counter
+        "hath_cache_received_bytes_total"
+        "Total bytes received into cache"
+        statsReceivedBytes
+    , counter "hath_cache_sent_bytes_total" "Total bytes sent from cache" statsSentBytes
+    , pure $ scalar "gauge" "hath_uptime_seconds" "Server uptime in seconds" uptime
+    , scalar "gauge" "hath_active_connections" "Number of active connections"
+      <$> readIORef (statsActiveConnections stats)
+    ]
+  durations <- traverse readIORef (statsDurations stats)
+  total <- readIORef (statsDurationSum stats)
+  pure $ mconcat scalars <> durationHistogram durations total
 
-makeSem ''Stats
+-- | A counter or gauge, with its HELP and TYPE lines.
+scalar :: Text -> Text -> Text -> Int64 -> Text
+scalar typ name help value
+  = unlines
+    [ "# HELP " <> name <> " " <> help
+    , "# TYPE " <> name <> " " <> typ
+    , name <> " " <> show value
+    ]
 
-runStats :: Members '[ Embed IO, Reader StatsEnv ] r => Sem (Stats : r) a -> Sem r a
-runStats = interpret $ \case
-  AddUpload n    -> count (Counter.add n . statsUploadBytesCounter)
-  AddDownload n  -> count (Counter.add n . statsDownloadBytesCounter)
-  IncServed      -> count (Counter.inc . statsServedCounter)
-  IncFetched     -> count (Counter.inc . statsFetchedCounter)
-  IncDlTask      -> count (Counter.inc . statsDlTaskCounter)
-  IncDlFile      -> count (Counter.inc . statsDlFileCounter)
-  AddDlBytes n   -> count (Counter.add n . statsDlBytesCounter)
-  ReadPrometheus -> decodeUtf8 <$> count (getCachedSnapshot . statsRegistry)
+-- | The request duration histogram, from the count of each bucket: cumulative
+-- counts per upper bound (le is inclusive), then the sum and the count.
+durationHistogram :: [ Int64 ] -> Double -> Text
+durationHistogram counts total
+  = unlines
+  $ [ "# HELP " <> name <> " Time from request to the last byte sent"
+    , "# TYPE " <> name <> " histogram"
+    ]
+  <> zipWith bucket (map decimal durationBounds <> [ "+Inf" ]) (scanl1 (+) counts)
+  <> [ name <> "_sum " <> decimal total, name <> "_count " <> show (sum counts) ]
   where
-    count :: Members '[ Embed IO, Reader StatsEnv ] r => (StatsEnv -> IO x) -> Sem r x
-    count f = ask >>= embed . f
+    name        = "hath_request_duration_seconds"
+
+    bucket le n = name <> "_bucket{le=\"" <> le <> "\"} " <> show n
+
+    decimal x = toText (showFFloat Nothing x "")
