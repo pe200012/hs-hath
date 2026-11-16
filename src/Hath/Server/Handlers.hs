@@ -61,7 +61,11 @@ import           Servant                 ( (:<|>)(..)
                                          )
 import qualified Servant.Types.SourceT   as Source
 
-import           UnliftIO                ( getMonotonicTime, replicateConcurrently, timeout, writeTChan )
+import           UnliftIO                ( getMonotonicTime
+                                         , replicateConcurrently
+                                         , timeout
+                                         , writeTChan
+                                         )
 
 server :: ServerT API App
 server
@@ -106,7 +110,8 @@ resource fileIdText optionsText _fileName req respond = case Wai.requestMethod r
     cfg <- ask @ClientConfig
     when (abs (stampTime - now) > maxKeystampDrift)
       $ throw err403 { errBody = "Your time is out of sync. Please update your system time." }
-    when (stampHash /= keystampHash cfg stampTime fileId) $ throw err403 { errBody = "Invalid key." }
+    when (stampHash /= keystampHash cfg stampTime fileId)
+      $ throw err403 { errBody = "Invalid key." }
     uri <- maybe (throw err404) pure (parseFileURI fileId)
     locateResource uri options >>= \case
       Nothing -> throw err404
@@ -116,7 +121,9 @@ resource fileIdText optionsText _fileName req respond = case Wai.requestMethod r
         incServed
         addUpload (fileSize uri)
         -- Warp streams the file and sets Content-Length from it
-        embed $ respond $ Wai.responseFile status200 [ ( hContentType, mimeType uri ) ] path Nothing
+        embed
+          $ respond
+          $ Wai.responseFile status200 [ ( hContentType, mimeType uri ) ] path Nothing
       Just (Stored (InMemory bytes)) -> do
         incServed
         addUpload (BS.length bytes)
@@ -148,14 +155,16 @@ serverCommand :: ServerCommand -> Text -> Int -> Text -> App Body
 serverCommand command additional time commandKey = do
   now <- embed $ systemSeconds <$> getSystemTime
   cfg <- ask @ClientConfig
-  when (abs (fromIntegral time - now) > maxCommandDrift
-        || commandKey /= serverCommandKey cfg (renderServerCommand command) additional time)
+  when
+    (abs (fromIntegral time - now) > maxCommandDrift
+     || commandKey /= serverCommandKey cfg (renderServerCommand command) additional time)
     $ throw err403
   case command of
     StillAlive        -> body "I feel FANTASTIC and I'm still alive"
     ThreadedProxyTest -> maybe (throw err403) runProxyTest (parseProxyTest params)
     SpeedTest         -> do
-      let size = maybe 1000000 (fromIntegral . fst) (BSC.readInteger =<< Map.lookup "testsize" params)
+      let size
+            = maybe 1000000 (fromIntegral . fst) (BSC.readInteger =<< Map.lookup "testsize" params)
       addDownload size
       pure $ filler size
     RefreshSettings   -> do
@@ -203,7 +212,7 @@ filler size = addHeader @"Content-Length" size $ Source.fromStepT $ segments siz
 
     segmentSize = 1460
 
-    segment = BS.replicate segmentSize 54
+    segment     = BS.replicate segmentSize 54
 
 -- | A download test against another client's @\/t\/@ route.
 data ProxyTest
@@ -224,7 +233,19 @@ parseProxyTest params = do
     , proxyTestSize  = size
     , proxyTestURL   = BSC.unpack
         $ mconcat
-          [ protocol, "://", hostname, ":", port, "/t/", show size, "/", show time, "/", testKey, "/0" ]
+          [ protocol
+          , "://"
+          , hostname
+          , ":"
+          , port
+          , "/t/"
+          , show size
+          , "/"
+          , show time
+          , "/"
+          , testKey
+          , "/0"
+          ]
     }
   where
     param name = Map.lookup name params
@@ -240,7 +261,9 @@ runProxyTest test = case HC.parseRequest (proxyTestURL test) of
   Just request -> do
     results <- embed $ do
       manager <- HC.newManager tlsManagerSettings
-      replicateConcurrently (proxyTestCount test) (timedDownload (proxyTestSize test) request manager)
+      replicateConcurrently
+        (proxyTestCount test)
+        (timedDownload (proxyTestSize test) request manager)
     let succeeded = catMaybes results
     addUpload (proxyTestCount test * fromIntegral (proxyTestSize test))
     body [i|OK:#{length succeeded}-#{sum succeeded}|]
@@ -255,10 +278,9 @@ testTimeoutMicros = 60 * 1000000
 timedDownload :: Int64 -> HC.Request -> HC.Manager -> IO (Maybe Int64)
 timedDownload size request manager = do
   start <- getMonotonicTime
-  outcome <- timeout testTimeoutMicros
-    $ try @SomeException
-    $ HC.withResponse request manager
-    $ \response -> let
+  outcome
+    <- timeout testTimeoutMicros $ try @SomeException $ HC.withResponse request manager $ \response
+    -> let
         drain n
           | n <= 0 = pure True
           | otherwise = do
@@ -267,7 +289,7 @@ timedDownload size request manager = do
             if BS.null chunk
               then pure False
               else drain (n - fromIntegral (BS.length chunk))
-      in
+      in 
         if HT.statusCode (HC.responseStatus response) == 200
           then drain size
           else pure False

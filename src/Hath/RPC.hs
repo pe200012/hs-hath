@@ -65,7 +65,13 @@ import           Polysemy.Reader         ( Reader, ask, runReader )
 
 import           Relude                  hiding ( Reader, ask, runReader )
 
-import           Servant.API             ( (:>), Accept(..), Get, MimeUnrender(..), OctetStream, QueryParam )
+import           Servant.API             ( (:>)
+                                         , Accept(..)
+                                         , Get
+                                         , MimeUnrender(..)
+                                         , OctetStream
+                                         , QueryParam
+                                         )
 import           Servant.Client          ( BaseUrl(BaseUrl)
                                          , ClientEnv(makeClientRequest)
                                          , ClientM
@@ -87,21 +93,22 @@ data RPC m a where
 
 makeSem ''RPC
 
-runRPC :: Members '[ Embed IO, Error HathError, Reader ClientConfig ] r => Sem (RPC : r) a -> Sem r a
+runRPC
+  :: Members '[ Embed IO, Error HathError, Reader ClientConfig ] r => Sem (RPC : r) a -> Sem r a
 runRPC = interpret $ \case
   CallRPC act add
     -- get_cert answers with the PKCS#12 file itself, which is not a signed reply
-    | act == "get_cert" -> request "/16/rpc" act add
-    | otherwise -> do
-      cfg <- ask @ClientConfig
-      verifyRPCResponse (encodeUtf8 (key cfg)) <$> request "/16/rpc" act add
+
+      | act == "get_cert" -> request "/16/rpc" act add
+      | otherwise -> do
+        cfg <- ask @ClientConfig
+        verifyRPCResponse (encodeUtf8 (key cfg)) <$> request "/16/rpc" act add
   CallDownloader act add -> request "/16/dl" act add
 
 -- | Run RPC requests on their own, outside the web server.
-runRPCIO
-  :: ClientConfig
-  -> Sem '[ RPC, Log Message, Reader ClientConfig, Error HathError, Embed IO, Final IO ] a
-  -> IO (Either HathError a)
+runRPCIO :: ClientConfig
+         -> Sem '[ RPC, Log Message, Reader ClientConfig, Error HathError, Embed IO, Final IO ] a
+         -> IO (Either HathError a)
 runRPCIO cfg
   = runFinal
   . embedToFinal @IO
@@ -111,13 +118,9 @@ runRPCIO cfg
   . runRPC
 
 type RPCAPI
-  = QueryParam "act" Text
-  :> QueryParam "cid" Text
-  :> QueryParam "add" Text
-  :> QueryParam "acttime" Text
-  :> QueryParam "actkey" Text
-  :> QueryParam "clientbuild" Text
-  :> Get '[ RPCText, OctetStream ] ByteString
+  = QueryParam "act" Text :> QueryParam "cid" Text
+  :> QueryParam "add" Text :> QueryParam "acttime" Text :> QueryParam "actkey" Text
+  :> QueryParam "clientbuild" Text :> Get '[ RPCText, OctetStream ] ByteString
 
 -- | What the RPC server sends: bytes labelled @text\/plain@.
 data RPCText
@@ -128,8 +131,13 @@ instance Accept RPCText where
 instance MimeUnrender RPCText ByteString where
   mimeUnrender _ = Right . toStrict
 
-rpcClient
-  :: Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> ClientM ByteString
+rpcClient :: Maybe Text
+          -> Maybe Text
+          -> Maybe Text
+          -> Maybe Text
+          -> Maybe Text
+          -> Maybe Text
+          -> ClientM ByteString
 rpcClient = client (Proxy @RPCAPI)
 
 -- | The RPC server, unless @HATH_RPC_HOST@ (@host@ or @host:port@) names another;
@@ -139,7 +147,7 @@ rpcServer = lookupEnv "HATH_RPC_HOST" <&> \case
   Nothing       -> ( "rpc.hentaiathome.net", 80 )
   Just override -> case break (== ':') override of
     ( host, ':' : port ) -> ( host, fromMaybe 80 (readMaybe port) )
-    ( host, _ ) -> ( host, 80 )
+    ( host, _ )          -> ( host, 80 )
 
 rpcTimeoutMicros :: Int
 rpcTimeoutMicros = 60 * 1000000
@@ -167,8 +175,7 @@ request endpoint act add = do
       (mkClientEnv manager (BaseUrl Http host port endpoint))
       { makeClientRequest = \baseUrl req -> do
           httpRequest <- defaultMakeClientRequest baseUrl (foldr withHeader req hathHeaders)
-          pure httpRequest { responseTimeout = responseTimeoutMicro rpcTimeoutMicros }
-      }
+          pure httpRequest { responseTimeout = responseTimeoutMicro rpcTimeoutMicros } }
   either (throw . TransportError) pure reply
   where
     withHeader ( name, value ) = addHeader name (decodeUtf8 @Text value)
@@ -207,8 +214,8 @@ clientSettings :: Members '[ RPC, Error HathError ] r => HathSettings -> Sem r H
 clientSettings current = parseSettings current <$> (payload =<< callRPC "client_settings" Nothing)
 
 -- | Our TLS certificate. The server sends a PKCS#12 file whose password is the client key.
-getCertificate
-  :: Members '[ RPC, Error HathError, Reader ClientConfig ] r => Sem r ( CertificateChain, PrivKey )
+getCertificate :: Members '[ RPC, Error HathError, Reader ClientConfig ] r
+               => Sem r ( CertificateChain, PrivKey )
 getCertificate = do
   p12 <- callRPC "get_cert" Nothing
   cfg <- ask @ClientConfig
@@ -229,11 +236,16 @@ getBlacklist seconds
 
 -- | URLs a file of our static ranges can be fetched from (@srfetch@), given
 -- the @fileindex@ and @xres@ of the request that asked for it.
-fileSources
-  :: Members '[ RPC, Error HathError ] r => FileURI -> ByteString -> ByteString -> Sem r [ ByteString ]
+fileSources :: Members '[ RPC, Error HathError ] r
+            => FileURI
+            -> ByteString
+            -> ByteString
+            -> Sem r [ ByteString ]
 fileSources uri fileIndex xres
   = payload
-  =<< callRPC "srfetch" (Just $ decodeUtf8 $ BS.intercalate ";" [ fileIndex, xres, renderFileURIBytes uri ])
+  =<< callRPC
+    "srfetch"
+    (Just $ decodeUtf8 $ BS.intercalate ";" [ fileIndex, xres, renderFileURIBytes uri ])
 
 -- | The next gallery queued for download, or why there is none
 -- (@NO_PENDING_DOWNLOADS@, or a list that was refused).

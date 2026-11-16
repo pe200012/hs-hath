@@ -3,9 +3,9 @@
 -- | The HTTP interface this client offers to readers and to the RPC server.
 module Hath.Server.API ( API, api, Body, ServerCommand(..), renderServerCommand ) where
 
-import qualified Data.List            as List
+import qualified Data.List          as List
 
-import           Network.HTTP.Media   ( (//), (/:) )
+import           Network.HTTP.Media ( (//), (/:) )
 
 import           Relude
 
@@ -32,7 +32,8 @@ serverCommandNames
     ]
 
 instance FromHttpApiData ServerCommand where
-  parseUrlPiece name = maybeToRight ("Invalid command: " <> name) (List.lookup name serverCommandNames)
+  parseUrlPiece name
+    = maybeToRight ("Invalid command: " <> name) (List.lookup name serverCommandNames)
 
 -- | The name of a command on the wire. Its signature is computed over this.
 renderServerCommand :: ServerCommand -> Text

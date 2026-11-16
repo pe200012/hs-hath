@@ -44,13 +44,12 @@ import           Polysemy.Error          ( Error, throw )
 import           Relude
 
 data R2Connection
-  = R2Connection
-  { r2MinioConn  :: !Minio.MinioConn
-  , r2ConnBucket :: !Text
-  , r2UrlCache   :: !(AtomicLRU FileURI ( Double, ByteString ))
-    -- ^ Presigned links and when we stop handing them out (monotonic seconds).
-    -- It lives here because the interpreter runs once per request.
-  }
+  = R2Connection { r2MinioConn  :: !Minio.MinioConn
+                 , r2ConnBucket :: !Text
+                 , r2UrlCache   :: !(AtomicLRU FileURI ( Double, ByteString ))
+                   -- ^ Presigned links and when we stop handing them out (monotonic seconds).
+                   -- It lives here because the interpreter runs once per request.
+                 }
 
 -- | Connect with the endpoint and bucket from the config and the credentials
 -- from @R2_ACCESS_KEY@ and @R2_SECRET_KEY@.
@@ -90,16 +89,18 @@ fileURIToKey uri = T.take 4 fileId <> "/" <> fileId
 -- | Run a bucket operation. Exceptions and Minio's own errors alike come back as text.
 runR2 :: R2Connection -> Minio.Minio a -> IO (Either Text a)
 runR2 conn action = try @SomeException (Minio.runMinioWith (r2MinioConn conn) action) <&> \case
-  Left err -> Left (show err)
+  Left err         -> Left (show err)
   Right (Left err) -> Left (show err)
-  Right (Right a) -> Right a
+  Right (Right a)  -> Right a
 
 -- | A lookup that fails for any reason is a miss (with a warning); a failed
 -- write is an error.
-runCacheR2
-  :: Members '[ Embed IO, Log Message, Error HathError ] r => R2Connection -> Sem (Cache : r) a -> Sem r a
+runCacheR2 :: Members '[ Embed IO, Log Message, Error HathError ] r
+           => R2Connection
+           -> Sem (Cache : r) a
+           -> Sem r a
 runCacheR2 conn = interpret $ \case
-  LookupFile uri -> do
+  LookupFile uri      -> do
     let objectKey = fileURIToKey uri
     now <- embed getMonotonicTime
     embed (LRU.lookup uri (r2UrlCache conn)) >>= \case
@@ -136,7 +137,7 @@ runCacheR2 conn = interpret $ \case
     rememberLink :: FileURI -> Double -> IO (Maybe ByteString)
     rememberLink uri now
       -- valid 20 min, handed out for 10, so every link given lasts at least 10 min
-      = minio (presignedGetObjectUrl bucket (fileURIToKey uri) 1200 [] []) >>= \case
+       = minio (presignedGetObjectUrl bucket (fileURIToKey uri) 1200 [] []) >>= \case
         Left _     -> pure Nothing
         Right link -> do
           LRU.insert uri ( now + 600, link ) (r2UrlCache conn)

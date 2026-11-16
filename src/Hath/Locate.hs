@@ -51,15 +51,7 @@ data Located
 -- for; static ranges only matter for pruning the cache.
 locateResource
   :: Members
-    '[ Cache
-     , RPC
-     , Stats
-     , Log Message
-     , Reader ClientConfig
-     , Error HathError
-     , Embed IO
-     , Final IO
-     ]
+    '[ Cache, RPC, Stats, Log Message, Reader ClientConfig, Error HathError, Embed IO, Final IO ]
     r
   => FileURI
   -> Map ByteString ByteString
@@ -97,18 +89,21 @@ openUpstream :: Members '[ RPC, Reader ClientConfig, Error HathError, Embed IO ]
 openUpstream uri fileIndex xres = do
   urls <- fileSources uri fileIndex xres
   cfg <- ask @ClientConfig
-  let headers = ( "Hath-Request", hathRequestToken cfg uri ) : hathHeaders
+  let headers          = ( "Hath-Request", hathRequestToken cfg uri ) : hathHeaders
       open manager url = case HC.parseRequest url of
         Nothing  -> pure Nothing
-        Just req -> try @IO @HC.HttpException (HC.responseOpen req { HC.requestHeaders = headers } manager)
+        Just req -> try
+          @IO
+          @HC.HttpException
+          (HC.responseOpen req { HC.requestHeaders = headers } manager)
           >>= \case
             Right response
               | statusCode (HC.responseStatus response) == 200
-              , List.lookup hContentLength (HC.responseHeaders response) == Just (show (fileSize uri))
-                -> pure (Just response)
+              , List.lookup hContentLength (HC.responseHeaders response)
+                == Just (show (fileSize uri)) -> pure (Just response)
               | otherwise -> HC.responseClose response $> Nothing
             -- connection error: firstJustM tries the next source
-            Left _ -> pure Nothing
+            Left _         -> pure Nothing
   embed $ do
     manager <- getGlobalManager
     firstJustM (open manager . BS.unpack) urls
@@ -126,9 +121,9 @@ streamUpstream uri response whenComplete write = go [] `finally` HC.responseClos
     go chunks = HC.brRead (HC.responseBody response) >>= \chunk -> if BS.null chunk
       then let
           content = BS.concat (reverse chunks)
-        in
+        in 
           when (BS.length content == fileSize uri && sha1Hex content == fileHash uri)
-            $ whenComplete content
+          $ whenComplete content
       else write chunk >> go (chunk : chunks)
 
 -- | Lower a Sem action into IO so it can run after the request handler has returned.

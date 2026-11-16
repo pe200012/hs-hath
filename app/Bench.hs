@@ -11,6 +11,9 @@
 --   * readers pulling /h/ files, cold (srfetch + upstream) and warm
 module Bench ( main ) where
 
+import           Control.Concurrent       ( forkIO, threadDelay )
+import           Control.Exception        ( try )
+
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Builder  as BB
 import qualified Data.ByteString.Char8    as BSC
@@ -21,6 +24,8 @@ import qualified Data.Text                as T
 import           Data.Time.Clock.System   ( getSystemTime, systemSeconds )
 
 import           GHC.Clock                ( getMonotonicTime )
+
+import           Hath.Protocol            ( sha1HexText )
 
 import           Network.Connection       ( TLSSettings(TLSSettingsSimple) )
 import qualified Network.HTTP.Client      as HC
@@ -41,81 +46,97 @@ import           System.Process           ( CreateProcess(env), proc, readCreate
 
 import           Text.Printf              ( printf )
 
-import           Control.Concurrent       ( forkIO, threadDelay )
-
-import           Control.Exception        ( try )
-
 import           UnliftIO                 ( pooledMapConcurrentlyN, timeout )
 
-import           Hath.Protocol            ( sha1HexText )
-
 data Opts
-  = Opts
-  { oClientId   :: !Text
-  , oClientKey  :: !Text
-  , oRpcPort    :: !Int
-  , oClientPort :: !Int
-  , oFiles      :: !Int
-  , oFileSize   :: !Int
-  , oUpDelayMs  :: !Int
-  , oUpKBps     :: !Int
-  , oWorkDir    :: !FilePath
-  , oClientHost :: !Text -- ^ where the bench reaches the client
-  , oPublicHost :: !Text -- ^ where the client reaches the bench (also its rpc_server_ip)
-  }
+  = Opts { oClientId   :: !Text
+         , oClientKey  :: !Text
+         , oRpcPort    :: !Int
+         , oClientPort :: !Int
+         , oFiles      :: !Int
+         , oFileSize   :: !Int
+         , oUpDelayMs  :: !Int
+         , oUpKBps     :: !Int
+         , oWorkDir    :: !FilePath
+         , oClientHost :: !Text -- ^ where the bench reaches the client
+         , oPublicHost :: !Text -- ^ where the client reaches the bench (also its rpc_server_ip)
+         }
 
 optsP :: Parser Opts
 optsP
   = Opts
-  <$> strOption (long "client-id" <> value "12345" <> showDefault <> help "Client ID of the client under test")
+  <$> strOption
+    (long "client-id" <> value "12345" <> showDefault <> help "Client ID of the client under test")
   <*> strOption
     (long "client-key"
      <> value "benchbenchbenchbench"
      <> showDefault
      <> help "Client key (the Java client wants 20 alphanumerics)")
-  <*> option auto
+  <*> option
+    auto
     (long "rpc-port"
      <> value 19800
      <> showDefault
      <> help "Port of the fake RPC server, image server and speed-test target")
-  <*> option auto (long "client-port" <> value 18443 <> showDefault <> help "Port the client is told to listen on")
-  <*> option auto (long "files" <> value 30 <> showDefault <> help "Gallery size for the /h/ phases")
-  <*> option auto (long "file-size" <> value 300000 <> showDefault <> help "Bytes per gallery file")
-  <*> option auto
+  <*> option
+    auto
+    (long "client-port"
+     <> value 18443
+     <> showDefault
+     <> help "Port the client is told to listen on")
+  <*> option
+    auto
+    (long "files" <> value 30 <> showDefault <> help "Gallery size for the /h/ phases")
+  <*> option
+    auto
+    (long "file-size" <> value 300000 <> showDefault <> help "Bytes per gallery file")
+  <*> option
+    auto
     (long "upstream-delay-ms"
      <> value 300
      <> showDefault
      <> help "Latency the fake image server adds before its first byte")
-  <*> option auto
+  <*> option
+    auto
     (long "upstream-kbps"
      <> value 1000
      <> showDefault
      <> help "Fake image server bandwidth in KB/s (0 = unlimited)")
-  <*> strOption (long "work-dir" <> value "bench-work" <> showDefault <> help "Where certs and client configs go")
-  <*> strOption (long "client-host" <> value "127.0.0.1" <> showDefault <> help "Address of the client under test")
+  <*> strOption
+    (long "work-dir"
+     <> value "bench-work"
+     <> showDefault
+     <> help "Where certs and client configs go")
+  <*> strOption
+    (long "client-host"
+     <> value "127.0.0.1"
+     <> showDefault
+     <> help "Address of the client under test")
   <*> strOption
     (long "public-host"
      <> value "127.0.0.1"
      <> showDefault
-     <> help "Address the client uses to reach this bench; anything but 127.0.0.1 listens on all IPv4 interfaces")
+     <> help
+       "Address the client uses to reach this bench; anything but 127.0.0.1 listens on all IPv4 interfaces")
 
 data GFile = GFile { gIndex :: !Int, gId :: !Text, gBytes :: !ByteString }
 
 data Bench
-  = Bench
-  { bOpts     :: !Opts
-  , bP12      :: !ByteString
-  , bFiles    :: !(Map Text GFile)
-  , bRpcCalls :: !(IORef (Map Text Int))
-  , bSrfetch  :: !(IORef Int)
-  , bStarted  :: !(MVar ())
-  }
+  = Bench { bOpts     :: !Opts
+          , bP12      :: !ByteString
+          , bFiles    :: !(Map Text GFile)
+          , bRpcCalls :: !(IORef (Map Text Int))
+          , bSrfetch  :: !(IORef Int)
+          , bStarted  :: !(MVar ())
+          }
 
 main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   o <- execParser
-    (info (optsP <**> helper) (fullDesc <> progDesc "Fake H@H RPC server that measures a local client"))
+    (info
+       (optsP <**> helper)
+       (fullDesc <> progDesc "Fake H@H RPC server that measures a local client"))
   when (oFileSize o < 64) $ die "--file-size must be at least 64"
   wd <- makeAbsolute (oWorkDir o)
   createDirectoryIfMissing True (wd </> "java" </> "data")
@@ -124,14 +145,16 @@ main = do
   -- a fresh nonce per run gives new file ids, so the cold phase is really cold
   nonce <- systemSeconds <$> getSystemTime
   let files = mkGallery nonce (oFiles o) (oFileSize o)
-  b <- Bench o p12 (Map.fromList [ ( gId f, f ) | f <- files ])
-    <$> newIORef mempty
+  b <- Bench o p12 (Map.fromList [ ( gId f, f ) | f <- files ]) <$> newIORef mempty
     <*> newIORef 0
     <*> newEmptyMVar
   void
     $ forkIO
     $ Warp.runSettings
-      (Warp.setHost (if oPublicHost o == "127.0.0.1" then "127.0.0.1" else "*4")
+      (Warp.setHost
+         (if oPublicHost o == "127.0.0.1"
+            then "127.0.0.1"
+            else "*4")
        $ Warp.setPort (oRpcPort o) Warp.defaultSettings)
       (app b)
   putTextLn (instructions o wd)
@@ -151,18 +174,41 @@ main = do
 makeCert :: Opts -> FilePath -> IO ByteString
 makeCert o wd = do
   environment <- getEnvironment
-  let openssl args = void
+  let openssl args
+        = void
         $ readCreateProcess
           (proc "openssl" args)
           { env = Just (( "HATH_BENCH_PASS", toString (oClientKey o) ) : environment) }
           ""
   openssl
-    [ "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "7", "-subj", "/CN=127.0.0.1"
-    , "-keyout", wd </> "key.pem", "-out", wd </> "cert.pem" ]
+    [ "req"
+    , "-x509"
+    , "-newkey"
+    , "rsa:2048"
+    , "-nodes"
+    , "-days"
+    , "7"
+    , "-subj"
+    , "/CN=127.0.0.1"
+    , "-keyout"
+    , wd </> "key.pem"
+    , "-out"
+    , wd </> "cert.pem"
+    ]
   openssl
-    [ "pkcs12", "-export", "-inkey", wd </> "key.pem", "-in", wd </> "cert.pem"
-    , "-out", wd </> "cert.p12", "-passout", "env:HATH_BENCH_PASS"
-    , "-name", "hath.network" ] -- the alias the Java client looks up
+    [ "pkcs12"
+    , "-export"
+    , "-inkey"
+    , wd </> "key.pem"
+    , "-in"
+    , wd </> "cert.pem"
+    , "-out"
+    , wd </> "cert.p12"
+    , "-passout"
+    , "env:HATH_BENCH_PASS"
+    , "-name"
+    , "hath.network"
+    ] -- the alias the Java client looks up
   readFileBS (wd </> "cert.p12")
 
 writeClientConfigs :: Opts -> FilePath -> IO ()
@@ -231,14 +277,20 @@ app b req respond = case Wai.pathInfo req of
       = respond
       $ Wai.responseLBS
         H.status200
-        [ ( H.hContentType, "text/plain;charset=UTF-8" ), ( H.hContentLength, show (BS.length body) ) ]
+        [ ( H.hContentType, "text/plain;charset=UTF-8" )
+        , ( H.hContentLength, show (BS.length body) )
+        ]
         (fromStrict body)
 
     -- 1.6.6 signs replies: OK-<t>-<sha1("<t>-<key>" ++ concatMap ("\n" ++) lines)>
     okWith signed ls = do
       now <- systemSeconds <$> getSystemTime
-      let sig = sha1HexText (encodeUtf8 (T.concat ([i|#{now}-#{oClientKey o}|] : map ("\n" <>) ls)))
-          status = if signed then [i|OK-#{now}-#{sig}|] else "OK"
+      let sig
+            = sha1HexText (encodeUtf8 (T.concat ([i|#{now}-#{oClientKey o}|] : map ("\n" <>) ls)))
+          status
+            = if signed
+              then [i|OK-#{now}-#{sig}|]
+              else "OK"
       rpcResponse (encodeUtf8 (unlines (status : ls)))
 
     settings
@@ -249,7 +301,8 @@ app b req respond = case Wai.pathInfo req of
         , "throttle_bytes=640000000"
         , "disable_bwm=true"
         , "disklimit_bytes=1073741824"
-        , "diskremaining_bytes=1073741824" ]
+        , "diskremaining_bytes=1073741824"
+        ]
 
     rpc signed = do
       let ok = okWith signed
@@ -257,7 +310,8 @@ app b req respond = case Wai.pathInfo req of
       atomicModifyIORef' (bRpcCalls b) (\m -> ( Map.insertWith (+) act 1 m, () ))
       now <- systemSeconds <$> getSystemTime
       case act of
-        "server_stat" -> ok [ "min_client_build=1", "cur_client_build=999", [i|server_time=#{now}|] ]
+        "server_stat"
+          -> ok [ "min_client_build=1", "cur_client_build=999", [i|server_time=#{now}|] ]
         "client_login" -> ok settings
         "client_settings" -> ok settings
         "get_cert" -> rpcResponse (bP12 b)
@@ -283,31 +337,32 @@ app b req respond = case Wai.pathInfo req of
             when (oUpKBps o > 0) $ threadDelay (BS.length c * 1000 `div` oUpKBps o)
 
     testTarget sizeText testKey = case readMaybe @Int (toString sizeText) of
-      Nothing -> respond $ Wai.responseLBS H.status400 [] ""
+      Nothing   -> respond $ Wai.responseLBS H.status400 [] ""
       Just size
         | testKey == "broken403" -> respond $ Wai.responseLBS H.status403 [] ""
         -- no Content-Length and only half the bytes: the tester sees a clean, early EOF
         | testKey == "brokenshort" -> zeros [] (size `div` 2)
         | otherwise -> zeros [ ( H.hContentLength, show size ) ] size
 
-    zeros headers n
-      = respond
-      $ Wai.responseStream H.status200 headers
-      $ \write _ -> forM_ (chunksOf 65536 (BS.replicate n 48)) (write . BB.byteString)
+    zeros headers n = respond $ Wai.responseStream H.status200 headers $ \write _
+      -> forM_ (chunksOf 65536 (BS.replicate n 48)) (write . BB.byteString)
 
 chunksOf :: Int -> ByteString -> [ ByteString ]
 chunksOf n bs
   | BS.null bs = []
-  | otherwise = let ( a, rest ) = BS.splitAt n bs in a : chunksOf n rest
+  | otherwise
+    = let
+        ( a, rest ) = BS.splitAt n bs
+      in 
+        a : chunksOf n rest
 
 data Sample
-  = Sample
-  { sStatus :: !(Maybe Int) -- ^ Nothing: connection error or timeout
-  , sTtfb   :: !Double      -- ^ seconds until response headers
-  , sTotal  :: !Double      -- ^ seconds until the body is drained
-  , sBytes  :: !Int
-  , sHead   :: !ByteString  -- ^ first bytes of the body
-  }
+  = Sample { sStatus :: !(Maybe Int) -- ^ Nothing: connection error or timeout
+           , sTtfb   :: !Double      -- ^ seconds until response headers
+           , sTotal  :: !Double      -- ^ seconds until the body is drained
+           , sBytes  :: !Int
+           , sHead   :: !ByteString  -- ^ first bytes of the body
+           }
 
 -- | GET with redirects followed, timing headers and body separately.
 fetch :: HC.Manager -> String -> IO Sample
@@ -319,7 +374,11 @@ fetch mgr url = do
       t1 <- getMonotonicTime
       let drain !n acc = HC.brRead (HC.responseBody resp) >>= \c -> if BS.null c
             then pure ( n, acc )
-            else drain (n + BS.length c) (if BS.length acc < 256 then acc <> BS.take 256 c else acc)
+            else drain
+              (n + BS.length c)
+              (if BS.length acc < 256
+                 then acc <> BS.take 256 c
+                 else acc)
       ( n, headBytes ) <- drain 0 ""
       t2 <- getMonotonicTime
       pure $ Sample (Just (H.statusCode (HC.responseStatus resp))) (t1 - t0) (t2 - t0) n headBytes
@@ -329,13 +388,12 @@ fetch mgr url = do
     _ -> Sample Nothing (t3 - t0) (t3 - t0) 0 ""
 
 data Row
-  = Row
-  { rowName    :: !Text
-  , rowSamples :: ![ Sample ]
-  , rowWall    :: !Double
-  , rowPassed  :: !Bool
-  , rowNote    :: !Text
-  }
+  = Row { rowName    :: !Text
+        , rowSamples :: ![ Sample ]
+        , rowWall    :: !Double
+        , rowPassed  :: !Bool
+        , rowNote    :: !Text
+        }
 
 runPhases :: Bench -> HC.Manager -> [ GFile ] -> IO [ Row ]
 runPhases b mgr files = do
@@ -347,7 +405,8 @@ runPhases b mgr files = do
       servercmd :: Text -> Text -> String
       servercmd cmd add
         = let
-            sig = sha1 [i|hentai@home-servercmd-#{cmd}-#{add}-#{oClientId o}-#{now}-#{oClientKey o}|]
+            sig
+              = sha1 [i|hentai@home-servercmd-#{cmd}-#{add}-#{oClientId o}-#{now}-#{oClientKey o}|]
           in 
             [i|#{base}/servercmd/#{cmd}/#{add}/#{now}/#{sig}|]
 
@@ -375,27 +434,40 @@ runPhases b mgr files = do
 
       allFull size = all (\s -> sStatus s == Just 200 && sBytes s == size)
       bodyText = decodeUtf8 . sHead :: Sample -> Text
-      bodyIs p ss = ( all (\s -> sStatus s == Just 200 && p (bodyText s)) ss, T.intercalate " " (bodyText <$> ss) )
+      bodyIs p ss
+        = ( all (\s -> sStatus s == Just 200 && p (bodyText s)) ss
+          , T.intercalate " " (bodyText <$> ss)
+          )
 
       galleryPhase name expectFetches = do
         before <- readIORef (bSrfetch b)
         row <- phase name 4 (fileUrl <$> files) (\ss -> ( allFull (oFileSize o) ss, "" ))
         fetches <- subtract before <$> readIORef (bSrfetch b)
-        pure row { rowPassed = rowPassed row && fetches == expectFetches
-                 , rowNote = [i|srfetch=#{fetches} (want #{expectFetches})|] }
+        pure
+          row { rowPassed = rowPassed row && fetches == expectFetches
+              , rowNote   = [i|srfetch=#{fetches} (want #{expectFetches})|]
+              }
 
   -- for poking the client from a third machine (e.g. a flood-control burst)
   writeFileText (oWorkDir o </> "urls.txt") (unlines (toText . fileUrl <$> files))
   sequence
     [ phase "servercmd still_alive" 1 [ servercmd "still_alive" "" ] (bodyIs (const True))
-    , phase "servercmd speed_test" 2 (replicate 2 (servercmd "speed_test" "testsize=2500000"))
+    , phase
+        "servercmd speed_test"
+        2
+        (replicate 2 (servercmd "speed_test" "testsize=2500000"))
         (\ss -> ( allFull 2500000 ss, "" ))
-    , phase "servercmd unsigned" 1 [ [i|#{base}/servercmd/still_alive//#{now}/0|] ]
+    , phase
+        "servercmd unsigned"
+        1
+        [ [i|#{base}/servercmd/still_alive//#{now}/0|] ]
         (\ss -> ( map sStatus ss == [ Just 403 ], "want 403" ))
     , phase "proxy_test healthy" 1 [ proxyTest "ok" ] (bodyIs ("OK:5-" `T.isPrefixOf`))
     , phase "proxy_test target 403" 1 [ proxyTest "broken403" ] (bodyIs (== "OK:0-0"))
     , phase "proxy_test short body" 1 [ proxyTest "brokenshort" ] (bodyIs (== "OK:0-0"))
-    , phase "/t/ 5x5MB concurrent" 5
+    , phase
+        "/t/ 5x5MB concurrent"
+        5
         [ [i|#{base}/t/5000000/#{now}/#{speedKey}/#{k}|] | k <- [ 1 .. 5 :: Int ] ]
         (\ss -> ( allFull 5000000 ss, "" ))
     , galleryPhase "/h/ cold (cache miss)" (length files)
@@ -405,20 +477,36 @@ runPhases b mgr files = do
 report :: Opts -> [ Row ] -> Map Text Int -> IO ()
 report o rows calls = do
   printf "\nhath-bench results (client on %s:%d)\n\n" (toString (oClientHost o)) (oClientPort o)
-  printf "%-24s %-14s %15s %15s %8s  %s\n"
-    ("phase" :: String) ("status" :: String) ("ttfb p50/p95" :: String)
-    ("total p50/p95" :: String) ("MB/s" :: String) ("check" :: String)
+  printf
+    "%-24s %-14s %15s %15s %8s  %s\n"
+    ("phase" :: String)
+    ("status" :: String)
+    ("ttfb p50/p95" :: String)
+    ("total p50/p95" :: String)
+    ("MB/s" :: String)
+    ("check" :: String)
   forM_ rows $ \r -> do
-    let ss = rowSamples r
-        statuses = unwords
-          [ [i|#{maybe "err" (show @Text) s}x#{c}|] :: Text
-          | ( s, c ) <- Map.toList (Map.fromListWith (+) [ ( sStatus x, 1 :: Int ) | x <- ss ]) ]
+    let ss       = rowSamples r
+        statuses
+          = unwords
+            [ [i|#{maybe "err" (show @Text) s}x#{c}|] :: Text
+            | ( s, c ) <- Map.toList (Map.fromListWith (+) [ ( sStatus x, 1 :: Int ) | x <- ss ])
+            ]
         ms f = [i|#{msAt 0.5 f ss}/#{msAt 0.95 f ss}|] :: Text
-        mbps = fromIntegral (sum (sBytes <$> ss)) / max 1e-9 (rowWall r) / 1e6 :: Double
-    printf "%-24s %-14s %15s %15s %8.1f  %s %s\n"
-      (toString (rowName r)) (toString statuses) (toString (ms sTtfb)) (toString (ms sTotal)) mbps
-      (if rowPassed r then "ok" else "FAIL" :: String) (toString (rowNote r))
-  printf "\nRPC calls seen: %s\n"
+        mbps     = fromIntegral (sum (sBytes <$> ss)) / max 1e-9 (rowWall r) / 1e6 :: Double
+    printf
+      "%-24s %-14s %15s %15s %8.1f  %s %s\n"
+      (toString (rowName r))
+      (toString statuses)
+      (toString (ms sTtfb))
+      (toString (ms sTotal))
+      mbps
+      (if rowPassed r
+         then "ok"
+         else "FAIL" :: String)
+      (toString (rowNote r))
+  printf
+    "\nRPC calls seen: %s\n"
     (toString (unwords [ [i|#{a}x#{n}|] | ( a, n ) <- Map.toList calls ]))
   where
     msAt :: Double -> (Sample -> Double) -> [ Sample ] -> Int

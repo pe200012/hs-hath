@@ -31,18 +31,18 @@ data ServerAction
   = Cert
     -- ^ fetch a new certificate and serve it from now on
   | GracefulShutdown
-    -- ^ tell the RPC server we are leaving, then exit
+-- ^ tell the RPC server we are leaving, then exit
 
 data ServerEnv
   = ServerEnv
-  { envConfig            :: !ClientConfig
-  , envSettings          :: !(TVar HathSettings)
+  { envConfig :: !ClientConfig
+  , envSettings :: !(TVar HathSettings)
     -- ^ as assigned by the RPC server, and refreshed on its command
-  , envActions           :: !(TChan ServerAction)
-  , envGalleryTasks      :: !(TChan GalleryTask)
-  , envStats             :: !StatsEnv
-  , envCache             :: !CacheRunner
-  , envFloodControl      :: !(Maybe FloodControl)
+  , envActions :: !(TChan ServerAction)
+  , envGalleryTasks :: !(TChan GalleryTask)
+  , envStats :: !StatsEnv
+  , envCache :: !CacheRunner
+  , envFloodControl :: !(Maybe FloodControl)
     -- ^ Nothing: flood control is off (@--disable-rate-limit@)
   , envTrustProxyHeaders :: !Bool
     -- ^ take the reader's address from @X-Forwarded-For@

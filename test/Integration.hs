@@ -45,7 +45,12 @@ import           Network.HTTP.Client       ( Response
                                            , responseHeaders
                                            , responseStatus
                                            )
-import           Network.HTTP.Types        ( HeaderName, status200, status301, status403, status404 )
+import           Network.HTTP.Types        ( HeaderName
+                                           , status200
+                                           , status301
+                                           , status403
+                                           , status404
+                                           )
 import           Network.Socket            ( tupleToHostAddress )
 import qualified Network.Socket            as Sock
 import           Network.Socket.ByteString ( recv, sendAll )
@@ -69,33 +74,36 @@ import           UnliftIO                  ( TChan, newTChanIO, writeTChan )
 
 testConfig :: ClientConfig
 testConfig
-  = defaultClientConfig
-  { clientId = "test-client-001", key = "test-secret-key-12345", downloadDir = "/tmp/hs-hath-test" }
+  = defaultClientConfig { clientId    = "test-client-001"
+                        , key         = "test-secret-key-12345"
+                        , downloadDir = "/tmp/hs-hath-test"
+                        }
 
 -- * The application under test
 
 -- | Run the application on a free port. The upstream serves @content@ for any file.
 withAppUsing :: Bool -> CacheRunner -> ByteString -> (Int -> IO a) -> IO a
-withAppUsing floodControlOn cache content action = withMockRPC defaultMockRPC { mockFileContent = content } $ do
-  actions <- newTChanIO
-  galleryTasks <- newTChanIO
-  settings <- newTVarIO defaultHathSettings
-  stats <- newStatsEnv
-  floodControl <- if floodControlOn
-    then Just <$> newFloodControl
-    else pure Nothing
-  let app = makeApplication
-        ServerEnv
-        { envConfig            = testConfig
-        , envSettings          = settings
-        , envActions           = actions
-        , envGalleryTasks      = galleryTasks
-        , envStats             = stats
-        , envCache             = cache
-        , envFloodControl      = floodControl
-        , envTrustProxyHeaders = False
-        }
-  Warp.testWithApplication (pure app) action
+withAppUsing floodControlOn cache content action
+  = withMockRPC defaultMockRPC { mockFileContent = content } $ do
+    actions <- newTChanIO
+    galleryTasks <- newTChanIO
+    settings <- newTVarIO defaultHathSettings
+    stats <- newStatsEnv
+    floodControl <- if floodControlOn
+      then Just <$> newFloodControl
+      else pure Nothing
+    let app
+          = makeApplication
+            ServerEnv { envConfig = testConfig
+                      , envSettings = settings
+                      , envActions = actions
+                      , envGalleryTasks = galleryTasks
+                      , envStats = stats
+                      , envCache = cache
+                      , envFloodControl = floodControl
+                      , envTrustProxyHeaders = False
+                      }
+    Warp.testWithApplication (pure app) action
 
 -- | The application over an empty in-memory SQLite cache, without flood control.
 withApp :: ByteString -> (Int -> IO a) -> IO a
@@ -125,7 +133,8 @@ signedWithKey = sha1HexText . encodeUtf8
 
 -- | The id the server gives a file with this content and type.
 fileIdFor :: ByteString -> Text -> Text
-fileIdFor content ext = sha1HexText content <> "-" <> show (BS.length content) <> "-1024-768-" <> ext
+fileIdFor content ext
+  = sha1HexText content <> "-" <> show (BS.length content) <> "-1024-768-" <> ext
 
 -- | The path a reader asks for a file at, with a keystamp issued at @time@.
 -- @options@ are appended to the keystamp, e.g. 'fetchable'.
@@ -140,7 +149,8 @@ fetchable = ";fileindex=1;xres=1024"
 
 -- | The path of a server command sent at @time@.
 commandPath :: Text -> Text -> Int64 -> String
-commandPath command additional time = [i|/servercmd/#{command}/#{additional}/#{time}/#{commandKey}|]
+commandPath command additional time
+  = [i|/servercmd/#{command}/#{additional}/#{time}/#{commandKey}|]
   where
     commandKey
       = signedWithKey
@@ -149,7 +159,8 @@ commandPath command additional time = [i|/servercmd/#{command}/#{additional}/#{t
 -- | The key of a speed test of that size at @time@.
 speedTestKeyFor :: Int -> Int64 -> Text
 speedTestKeyFor size time
-  = signedWithKey [i|hentai@home-speedtest-#{size}-#{time}-#{clientId testConfig}-#{key testConfig}|]
+  = signedWithKey
+    [i|hentai@home-speedtest-#{size}-#{time}-#{clientId testConfig}-#{key testConfig}|]
 
 request :: ByteString -> Int -> String -> IO (Response LByteString)
 request verb port path = do
@@ -218,22 +229,20 @@ integrationSpecs = do
         writeFileBS (root </> toString (T.take 4 fileId) </> toString fileId) cached
         fs <- newFsCache root
         -- upstream would answer differently, so a match proves the bytes came from disk
-        withAppUsing False CacheRunner { runCacheWith = runCacheFilesystem fs } "UPSTREAM_CONTENT" $ \port -> do
-          time <- now
-          response <- fetch port (filePath fileId time fetchable)
-          responseStatus response `shouldBe` status200
-          body response `shouldBe` cached
-          header "Content-Length" response `shouldBe` Just (show (BS.length cached))
-          header "Content-Type" response `shouldBe` Just "application/octet-stream"
+        withAppUsing False CacheRunner { runCacheWith = runCacheFilesystem fs } "UPSTREAM_CONTENT"
+          $ \port -> do
+            time <- now
+            response <- fetch port (filePath fileId time fetchable)
+            responseStatus response `shouldBe` status200
+            body response `shouldBe` cached
+            header "Content-Length" response `shouldBe` Just (show (BS.length cached))
+            header "Content-Type" response `shouldBe` Just "application/octet-stream"
 
     it "still serves a fetched file when the cache write fails" $ do
       let content      = "WRITE_FAILS_CONTENT"
-          brokenWrites
-            = CacheRunner
-            { runCacheWith = interpret $ \case
-                LookupFile _  -> pure Nothing
-                StoreFile _ _ -> throw (StorageError "write refused")
-            }
+          brokenWrites = CacheRunner { runCacheWith = interpret $ \case
+                                         LookupFile _  -> pure Nothing
+                                         StoreFile _ _ -> throw (StorageError "write refused") }
       withAppUsing False brokenWrites content $ \port -> do
         time <- now
         response <- fetch port (filePath (fileIdFor content "txt") time fetchable)
@@ -265,8 +274,8 @@ integrationSpecs = do
       response <- fetch port (filePath (fileIdFor "x" "txt") time "")
       responseStatus response `shouldBe` status404
 
-    it "exempts local addresses from flood control" $ withMemoryCache $ \cache ->
-      withAppUsing True cache "x" $ \port -> do
+    it "exempts local addresses from flood control" $ withMemoryCache $ \cache
+      -> withAppUsing True cache "x" $ \port -> do
         time <- now
         responses <- replicateM 13 $ fetch port (filePath (fileIdFor "x" "txt") time fetchable)
         responseStatus <$> responses `shouldBe` replicate 13 status200
@@ -278,7 +287,12 @@ integrationSpecs = do
       responseStatus response `shouldBe` status200
       body response `shouldSatisfy` ("FANTASTIC" `BS.isInfixOf`)
 
-    forM_ [ ( "speed_test", "testsize=1000" ), ( "refresh_settings", "additional" ), ( "refresh_certs", "additional" ), ( "start_downloader", "additional" ) ]
+    forM_
+      [ ( "speed_test", "testsize=1000" )
+      , ( "refresh_settings", "additional" )
+      , ( "refresh_certs", "additional" )
+      , ( "start_downloader", "additional" )
+      ]
       $ \( command, additional ) -> it [i|accepts #{command}|] $ withApp "x" $ \port -> do
         time <- now
         response <- fetch port (commandPath command additional time)
@@ -294,8 +308,9 @@ integrationSpecs = do
       response <- fetch port (commandPath "threaded_proxy_test" "additional" time)
       responseStatus response `shouldBe` status403
 
-    it "reports the successful tests of threaded_proxy_test, and does not hang on a failing target" $
-      withApp "x" $ \port -> do
+    it "reports the successful tests of threaded_proxy_test, and does not hang on a failing target"
+      $ withApp "x"
+      $ \port -> do
         time <- now
         let proxyTest testKey = do
               -- the server tests itself
@@ -342,7 +357,8 @@ integrationSpecs = do
       responseStatus response `shouldBe` status200
       body response `shouldBe` ""
 
-    forM_ [ ( "GET", "/unknown-path" ), ( "GET", "/random/path/here" ), ( "POST", "/unknown-post" ) ]
+    forM_
+      [ ( "GET", "/unknown-path" ), ( "GET", "/random/path/here" ), ( "POST", "/unknown-post" ) ]
       $ \( verb, path ) -> it [i|does not find #{verb} #{path}|] $ withApp "x" $ \port -> do
         response <- request verb port path
         responseStatus response `shouldBe` status404
@@ -357,14 +373,38 @@ integrationSpecs = do
         responseStatus response `shouldBe` status200
         body response `shouldBe` content
 
-    it "swaps certificates in place: open connections survive, new handshakes get the new one" $
-      withSystemTempDirectory "hath-cert" $ \dir -> do
+    it "swaps certificates in place: open connections survive, new handshakes get the new one"
+      $ withSystemTempDirectory "hath-cert"
+      $ \dir -> do
         let openssl = void . flip (readProcess "openssl") ""
         -- the certificate the mock RPC server hands out on refresh
-        openssl [ "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=rotated"
-                , "-keyout", dir </> "key.pem", "-out", dir </> "cert.pem" ]
-        openssl [ "pkcs12", "-export", "-inkey", dir </> "key.pem", "-in", dir </> "cert.pem"
-                , "-out", dir </> "cert.p12", "-passout", "pass:" <> toString (key testConfig) ]
+        openssl
+          [ "req"
+          , "-x509"
+          , "-newkey"
+          , "rsa:2048"
+          , "-nodes"
+          , "-days"
+          , "1"
+          , "-subj"
+          , "/CN=rotated"
+          , "-keyout"
+          , dir </> "key.pem"
+          , "-out"
+          , dir </> "cert.pem"
+          ]
+        openssl
+          [ "pkcs12"
+          , "-export"
+          , "-inkey"
+          , dir </> "key.pem"
+          , "-in"
+          , dir </> "cert.pem"
+          , "-out"
+          , dir </> "cert.p12"
+          , "-passout"
+          , "pass:" <> toString (key testConfig)
+          ]
         p12 <- readFileBS (dir </> "cert.p12")
         rotated <- CertificateChain <$> readSignedObject (dir </> "cert.pem")
         withServer defaultMockRPC { mockCertificate = p12 } $ \port actions -> do
@@ -396,13 +436,14 @@ withServer mock action = withSystemTempDirectory "hath-server" $ \dir -> withMoc
   let config   = testConfig { cachePath = toText (dir </> "cache.db") }
       settings = defaultHathSettings { clientPort = port }
       options  = ServerOptions { disableRateLimit = True, trustProxyHeaders = False }
-  bracket (forkIO $ startServer config options settings ( certs, privateKey ) actions) killThread $ \_ -> do
-    waitUntilListening port
-    result <- action port actions
-    atomically $ writeTChan actions GracefulShutdown
-    -- time to tell the RPC server before the mock goes away
-    threadDelay 500000
-    pure result
+  bracket (forkIO $ startServer config options settings ( certs, privateKey ) actions) killThread
+    $ \_ -> do
+      waitUntilListening port
+      result <- action port actions
+      atomically $ writeTChan actions GracefulShutdown
+      -- time to tell the RPC server before the mock goes away
+      threadDelay 500000
+      pure result
 
 -- | Wait, up to ten seconds, until something accepts connections on the port.
 waitUntilListening :: Int -> IO ()
@@ -426,11 +467,12 @@ servedCertificate :: Int -> IO (Maybe CertificateChain)
 servedCertificate port = bracket (connectLocal port) Sock.close $ \sock -> do
   seen <- newIORef Nothing
   let params = TLS.defaultParamsClient "localhost" ""
-  ctx <- TLS.contextNew sock params
-    { TLS.clientUseServerNameIndication = False
-    , TLS.clientHooks = (TLS.clientHooks params)
-        { TLS.onServerCertificate = \_ _ _ chain -> [] <$ writeIORef seen (Just chain) }
-    }
+  ctx <- TLS.contextNew
+    sock
+    params { TLS.clientUseServerNameIndication = False
+           , TLS.clientHooks = (TLS.clientHooks params)
+               { TLS.onServerCertificate = \_ _ _ chain -> [] <$ writeIORef seen (Just chain) }
+           }
   TLS.handshake ctx
   void $ try @SomeException (TLS.bye ctx)
   readIORef seen

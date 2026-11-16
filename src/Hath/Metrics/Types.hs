@@ -31,12 +31,13 @@ data Gauge = Gauge { gaugeMetricId :: !MetricId, gaugeHelp :: !Text, gaugeRef ::
 
 -- | Histogram metric: observation counts per upper bound, plus +Inf, and their sum
 data Histogram
-  = Histogram { histogramMetricId :: !MetricId
-              , histogramHelp     :: !Text
-              , histogramBounds   :: ![ Double ]       -- ^ ascending upper bounds
-              , histogramCounts   :: ![ IORef Int64 ]  -- ^ one per bound, then +Inf (not cumulative)
-              , histogramSum      :: !(IORef Double)
-              }
+  = Histogram
+  { histogramMetricId :: !MetricId
+  , histogramHelp     :: !Text
+  , histogramBounds   :: ![ Double ]       -- ^ ascending upper bounds
+  , histogramCounts   :: ![ IORef Int64 ]  -- ^ one per bound, then +Inf (not cumulative)
+  , histogramSum      :: !(IORef Double)
+  }
 
 -- | Registry holding all registered metrics
 data Registry

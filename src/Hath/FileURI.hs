@@ -16,14 +16,13 @@ import           Relude                hiding ( show )
 import qualified Relude
 
 data FileURI
-  = FileURI
-  { fileHash :: !ByteString
-    -- ^ SHA-1 of the content, in hex
-  , fileSize :: !Int
-  , fileXRes :: !Int
-  , fileYRes :: !Int
-  , fileExt  :: !ByteString
-  }
+  = FileURI { fileHash :: !ByteString
+              -- ^ SHA-1 of the content, in hex
+            , fileSize :: !Int
+            , fileXRes :: !Int
+            , fileYRes :: !Int
+            , fileExt  :: !ByteString
+            }
   deriving ( Eq, Ord )
 
 -- | Shows the file id itself, which is what logs want.

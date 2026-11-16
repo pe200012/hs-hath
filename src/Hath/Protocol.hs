@@ -69,7 +69,13 @@ rpcActionKey :: ClientConfig -> Text -> Text -> Int64 -> Text
 rpcActionKey cfg act add time
   = decodeUtf8
   $ signature
-    [ "hentai@home", encodeUtf8 act, encodeUtf8 add, encodeUtf8 (clientId cfg), show time, encodeUtf8 (key cfg) ]
+    [ "hentai@home"
+    , encodeUtf8 act
+    , encodeUtf8 add
+    , encodeUtf8 (clientId cfg)
+    , show time
+    , encodeUtf8 (key cfg)
+    ]
 
 -- | The key the RPC server puts on a @servercmd@ request. Only it knows our key.
 serverCommandKey :: ClientConfig -> Text -> Text -> Int -> Text
@@ -87,11 +93,18 @@ serverCommandKey cfg command additional time
 -- | @testkey@ of a @\/t\/@ speed test of the given size and time.
 speedTestKey :: ClientConfig -> Int -> Int64 -> ByteString
 speedTestKey cfg size time
-  = signature [ "hentai@home-speedtest", show size, show time, encodeUtf8 (clientId cfg), encodeUtf8 (key cfg) ]
+  = signature
+    [ "hentai@home-speedtest"
+    , show size
+    , show time
+    , encodeUtf8 (clientId cfg)
+    , encodeUtf8 (key cfg)
+    ]
 
 -- | The second half of the keystamp that lets a reader fetch a file id at a given time.
 keystampHash :: ClientConfig -> Int64 -> ByteString -> ByteString
-keystampHash cfg time fileId = BS.take 10 $ signature [ show time, fileId, encodeUtf8 (key cfg), "hotlinkthis" ]
+keystampHash cfg time fileId
+  = BS.take 10 $ signature [ show time, fileId, encodeUtf8 (key cfg), "hotlinkthis" ]
 
 -- | Split a keystamp @\<time>-\<hash>@. A time that is not a number reads as 0,
 -- which no clock is close to.

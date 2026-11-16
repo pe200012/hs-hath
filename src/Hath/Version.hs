@@ -27,10 +27,14 @@ versionInfo
     commit :: Text
     commit
       = T.strip
-        $(runIO
-            (readProcess "git" [ "rev-parse", "--short=7", "HEAD" ] ""
-             `catch` \(_ :: SomeException) -> pure "unknown")
-          >>= stringE)
+        $( runIO
+          (readProcess "git" [ "rev-parse", "--short=7", "HEAD" ] "" `catch` \(_ :: SomeException)
+           -> pure "unknown")
+        >>= stringE
+        )
 
     date :: Text
-    date = $(runIO (formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S UTC" <$> getCurrentTime) >>= stringE)
+    date
+      = $( runIO (formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S UTC" <$> getCurrentTime)
+        >>= stringE
+        )

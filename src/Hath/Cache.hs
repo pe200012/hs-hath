@@ -35,8 +35,7 @@ makeSem ''Cache
 
 -- | A backend chosen at run time.
 newtype CacheRunner
-  = CacheRunner
-  { runCacheWith :: forall r a. Members '[ Embed IO, Log Message, Error HathError ] r
-                 => Sem (Cache : r) a
-                 -> Sem r a
-  }
+  = CacheRunner { runCacheWith :: forall r a. Members '[ Embed IO, Log Message, Error HathError ] r
+                               => Sem (Cache : r) a
+                               -> Sem r a
+                }

@@ -17,7 +17,7 @@ module Hath.Server.FloodControl
   , checkRateLimit
   ) where
 
-import           Data.Bits           ( shiftR, (.&.) )
+import           Data.Bits           ( (.&.), shiftR )
 import qualified Data.ByteString     as BS
 import qualified Data.HashMap.Strict as HashMap
 
@@ -58,10 +58,10 @@ parseIPv4 s = case traverse (readMaybe @Int . decodeUtf8) (BS.split 46 v4) of
 isLocalIP :: IP -> Bool
 isLocalIP (IPv4 address) = localV4 (hostAddressToTuple address)
 isLocalIP (IPv6 address) = case hostAddress6ToTuple address of
-  ( 0, 0, 0, 0, 0, 0, 0, 1 ) -> True
+  ( 0, 0, 0, 0, 0, 0, 0, 1 )        -> True
   -- IPv4-mapped (::ffff:a.b.c.d), as seen on dual-stack sockets
   ( 0, 0, 0, 0, 0, 0xffff, hi, lo ) -> localV4 ( byte hi 8, byte hi 0, byte lo 8, byte lo 0 )
-  ( w, _, _, _, _, _, _, _ ) -> (w .&. 0xfe00) == 0xfc00 -- fc00::/7
+  ( w, _, _, _, _, _, _, _ )        -> (w .&. 0xfe00) == 0xfc00 -- fc00::/7
   where
     byte w n = fromIntegral (w `shiftR` n)
 
@@ -87,13 +87,12 @@ idleSeconds = 60
 
 -- | Times are monotonic seconds.
 data IPRecord
-  = IPRecord
-  { hitCount    :: !Int
-    -- ^ hits left after draining
-  , lastHit     :: !Double
-    -- ^ when the last hit was counted
-  , bannedUntil :: !Double
-  }
+  = IPRecord { hitCount    :: !Int
+               -- ^ hits left after draining
+             , lastHit     :: !Double
+               -- ^ when the last hit was counted
+             , bannedUntil :: !Double
+             }
   deriving ( Eq, Show )
 
 type IPMap = HashMap IP IPRecord
@@ -105,16 +104,18 @@ registerHit :: Double -> IP -> IPMap -> ( IPMap, Bool )
 registerHit now ip records = case HashMap.lookup ip live of
   Just record
     | bannedUntil record > now -> ( live, False )
-  known -> let
+  known       -> let
       previous = fromMaybe (IPRecord 0 now 0) known
       hits     = max 0 (hitCount previous - floor (now - lastHit previous)) + 1
       blocked  = hits > floodLimit
       record
         = IPRecord { hitCount    = hits
                    , lastHit     = now
-                   , bannedUntil = if blocked then now + blockSeconds else bannedUntil previous
+                   , bannedUntil = if blocked
+                       then now + blockSeconds
+                       else bannedUntil previous
                    }
-    in
+    in 
       ( HashMap.insert ip record live, not blocked )
   where
     -- ponytail: O(n) prune once the map is large; fine for the few hundred IPs a client sees per minute

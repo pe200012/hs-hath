@@ -2,11 +2,11 @@
 
 module Hath.CLI ( Options(..), parseOptions, applyOptionsToConfig ) where
 
+import           Hath.Config         ( ClientConfig(..) )
+
 import           Options.Applicative
 
 import           Relude
-
-import           Hath.Config              ( ClientConfig(..) )
 
 -- | Command line options
 data Options

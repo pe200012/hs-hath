@@ -103,12 +103,13 @@ migrateOne :: MigrateOptions -> Text -> (Text -> IO (Either Text ())) -> Tally -
 migrateOne opts fileId upload tally
   | optDryRun opts = tally <$ say ("  Would upload: " <> fileId)
   | otherwise = maybe (pure $ Left "not a file id") upload objectKey >>= \case
-    Left err -> tally { failed = failed tally + 1 } <$ say ("  Error uploading " <> fileId <> ": " <> err)
+    Left err -> tally { failed = failed tally + 1 }
+      <$ say ("  Error uploading " <> fileId <> ": " <> err)
     Right () -> tally { migrated = migrated tally + 1 } <$ say ("  Uploaded: " <> fileId)
   where
     objectKey = fileURIToKey <$> parseFileURI (encodeUtf8 fileId)
 
-    say = when (optVerbose opts) . putTextLn
+    say       = when (optVerbose opts) . putTextLn
 
 -- | Rows are streamed, so the database is never in memory as a whole.
 migrateSQLite :: MigrateOptions -> R2Connection -> IO Tally
@@ -118,13 +119,21 @@ migrateSQLite opts r2 = withConnection (optSourcePath opts) $ \conn -> do
   putTextLn $ "Total files to migrate: " <> show total
   when (optDryRun opts) $ putTextLn "[DRY RUN] Would upload the following files:"
   fmap fst
-    $ fold_ conn "SELECT lru_counter, s4, file_id, file_name, bytes FROM files" ( Tally 0 0, 0 :: Int )
+    $ fold_
+      conn
+      "SELECT lru_counter, s4, file_id, file_name, bytes FROM files"
+      ( Tally 0 0, 0 :: Int )
     $ \( tally, done ) record -> do
       let bytes = fileRecordBytes record
-          size  = fromIntegral (BS.length bytes) :: Int64
+          size = fromIntegral (BS.length bytes) :: Int64
           upload objectKey
             = runR2 r2
-            $ Minio.putObject (r2ConnBucket r2) objectKey (C.yield bytes) (Just size) defaultPutObjectOptions
+            $ Minio.putObject
+              (r2ConnBucket r2)
+              objectKey
+              (C.yield bytes)
+              (Just size)
+              defaultPutObjectOptions
       tally' <- migrateOne opts (fileRecordFileId record) upload tally
       when ((done + 1) `mod` optBatchSize opts == 0)
         $ putTextLn

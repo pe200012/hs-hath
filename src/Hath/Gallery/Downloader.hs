@@ -31,9 +31,19 @@ import           Hath.RPC                ( RPC
                                          , reportDownloadFailures
                                          , runRPC
                                          )
-import           Hath.Stats              ( Stats, StatsEnv, addDlBytes, incDlFile, incDlTask, runStats )
+import           Hath.Stats              ( Stats
+                                         , StatsEnv
+                                         , addDlBytes
+                                         , incDlFile
+                                         , incDlTask
+                                         , runStats
+                                         )
 
-import           Network.HTTP.Client     ( HttpException, Request(host), parseRequest, responseBody )
+import           Network.HTTP.Client     ( HttpException
+                                         , Request(host)
+                                         , parseRequest
+                                         , responseBody
+                                         )
 import           Network.HTTP.Simple     ( httpLbs )
 
 import           Polysemy
@@ -74,7 +84,8 @@ runGalleryDownloader config stats tasks = infinitely $ do
 -- | Download the next queued gallery, if there is one, and report it complete
 -- once every file is on disk.
 downloadNextGallery
-  :: Members '[ RPC, Stats, Log Message, Reader ClientConfig, Error HathError, Embed IO ] r => Sem r ()
+  :: Members '[ RPC, Stats, Log Message, Reader ClientConfig, Error HathError, Embed IO ] r
+  => Sem r ()
 downloadNextGallery = do
   queued <- nextGallery
   incDlTask
@@ -91,7 +102,9 @@ downloadNextGallery = do
 -- 'Hath.Gallery.parseMetadata' has made sure the name and type are plain.
 galleryFilePath :: FilePath -> GalleryMetadata -> GalleryFile -> FilePath
 galleryFilePath directory gallery file
-  = directory </> show (galleryID gallery) </> (text (galleryFileName file) <.> text (galleryFileExt file))
+  = directory
+  </> show (galleryID gallery)
+  </> (text (galleryFileName file) <.> text (galleryFileExt file))
   where
     text = toString . decodeUtf8 @Text
 
@@ -153,7 +166,7 @@ downloadGalleryFile gallery file = do
     download url = case parseRequest url of
       Nothing  -> pure Nothing
       Just req -> embed (try @HttpException $ toStrict . responseBody <$> httpLbs req) >>= \case
-        Left _ -> pure Nothing
+        Left _      -> pure Nothing
         Right bytes
           | hasExpectedHash file bytes -> pure (Just bytes)
           | otherwise -> do

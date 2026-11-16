@@ -19,7 +19,7 @@ render = toStrict . toLazyByteString . foldMap renderMetric
 renderMetric :: MetricSnapshot -> Builder
 renderMetric = \case
   CounterSnapshot metricId help val -> renderMetricLines "counter" metricId help val
-  GaugeSnapshot metricId help val   -> renderMetricLines "gauge" metricId help val
+  GaugeSnapshot metricId help val -> renderMetricLines "gauge" metricId help val
   HistogramSnapshot (MetricId name labels) help buckets total -> mconcat
     $ [ "# HELP ", text name, " ", text help, "\n" ]
     <> [ "# TYPE ", text name, " histogram\n" ]

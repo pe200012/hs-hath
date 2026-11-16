@@ -19,7 +19,10 @@ import           Polysemy.Error        ( Error, runError )
 
 import           Relude
 
-import           System.Directory      ( createDirectoryIfMissing, doesFileExist, setModificationTime )
+import           System.Directory      ( createDirectoryIfMissing
+                                       , doesFileExist
+                                       , setModificationTime
+                                       )
 import           System.FilePath       ( (</>) )
 import           System.IO.Temp        ( withSystemTempDirectory )
 
@@ -68,7 +71,8 @@ filesystemSpecs = describe "Filesystem cache" $ do
       Nothing   -> expectationFailure "expected a hit"
       Just path -> readFileBS path >>= (`shouldBe` content)
 
-  it "misses a file it never stored" $ withCache $ \_ fs -> served fs content >>= (`shouldBe` Nothing)
+  it "misses a file it never stored" $ withCache $ \_ fs -> served fs content
+    >>= (`shouldBe` Nothing)
 
   it "drops a truncated file instead of serving it" $ withCache $ \_ fs -> do
     store fs content
@@ -80,7 +84,8 @@ filesystemSpecs = describe "Filesystem cache" $ do
   it "evicts the least recently served files, and only its own" $ withCache $ \root fs -> do
     let ( a, b, c ) = ( BS.replicate 1000 97, BS.replicate 1000 98, BS.replicate 1000 99 )
     paths <- forM [ a, b, c ] $ \x -> store fs x >> fromMaybe (error "stored") <$> served fs x
-    forM_ (zip paths [ 100, 200, 300 ]) $ \( p, t ) -> setModificationTime p (posixSecondsToUTCTime t)
+    forM_ (zip paths [ 100, 200, 300 ]) $ \( p, t )
+      -> setModificationTime p (posixSecondsToUTCTime t)
     -- serving a makes it the newest, so b is now the least recently served
     void $ served fs a
     createDirectoryIfMissing True (root </> "abcd")
@@ -89,7 +94,8 @@ filesystemSpecs = describe "Filesystem cache" $ do
     -- 3000 bytes against a 2500 byte limit (evicting down to 2250): one file has to go
     sweep fs 2500 >>= (`shouldBe` ( 1, 1000 ))
     mapM doesFileExist paths >>= (`shouldBe` [ True, False, True ])
-    mapM doesFileExist [ root </> "notes.txt", root </> "abcd" </> "other" ] >>= (`shouldBe` [ True, True ])
+    mapM doesFileExist [ root </> "notes.txt", root </> "abcd" </> "other" ]
+      >>= (`shouldBe` [ True, True ])
 
   it "evicts nothing under the limit, or without one" $ withCache $ \_ fs -> do
     store fs content

@@ -16,7 +16,12 @@ import           GHC.Clock                ( getMonotonicTime )
 import qualified Hath.Metrics.Gauge       as Gauge
 import qualified Hath.Metrics.Histogram   as Histogram
 import           Hath.Protocol            ( hathHeaders )
-import           Hath.Server.FloodControl ( FloodControl, IP, checkRateLimit, isLocalIP, sockAddrIP )
+import           Hath.Server.FloodControl ( FloodControl
+                                          , IP
+                                          , checkRateLimit
+                                          , isLocalIP
+                                          , sockAddrIP
+                                          )
 import           Hath.Stats               ( StatsEnv(..) )
 
 import           Network.HTTP.Types       ( hAccept, mkStatus )
@@ -50,7 +55,10 @@ rateLimitMiddleware floodControl exempt app req respond
 
 tooManyRequests :: Response
 tooManyRequests
-  = responseLBS (mkStatus 429 "Too Many Requests") [ ( "Content-Type", "text/plain" ) ] "Too Many Requests"
+  = responseLBS
+    (mkStatus 429 "Too Many Requests")
+    [ ( "Content-Type", "text/plain" ) ]
+    "Too Many Requests"
 
 -- | Count the requests being served.
 tracingConnections :: StatsEnv -> Middleware
@@ -69,7 +77,8 @@ tracingTimeUsage stats app req respond = do
 -- | Treat every request as accepting anything, so content negotiation never
 -- turns a reader away.
 normalizeAcceptMiddleware :: Middleware
-normalizeAcceptMiddleware app req = app req { requestHeaders = map acceptAnything (requestHeaders req) }
+normalizeAcceptMiddleware app req
+  = app req { requestHeaders = map acceptAnything (requestHeaders req) }
   where
     acceptAnything ( name, value )
       | name == hAccept = ( name, "*/*" )

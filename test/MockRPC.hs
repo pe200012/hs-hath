@@ -16,22 +16,20 @@ import           Relude
 import           System.Environment       ( setEnv )
 
 data MockRPC
-  = MockRPC
-  { mockFileContent :: ByteString
-    -- ^ what the image server sends, whichever file is asked for
-  , mockCertificate :: ByteString
-    -- ^ the reply to get_cert
-  , mockClientKey   :: ByteString
-    -- ^ the key OK replies are signed with
-  }
+  = MockRPC { mockFileContent :: ByteString
+              -- ^ what the image server sends, whichever file is asked for
+            , mockCertificate :: ByteString
+              -- ^ the reply to get_cert
+            , mockClientKey   :: ByteString
+              -- ^ the key OK replies are signed with
+            }
 
 defaultMockRPC :: MockRPC
 defaultMockRPC
-  = MockRPC
-  { mockFileContent = "TEST_FILE_CONTENT"
-  , mockCertificate = "FAIL\nNo test certificate available"
-  , mockClientKey   = "test-secret-key-12345"
-  }
+  = MockRPC { mockFileContent = "TEST_FILE_CONTENT"
+            , mockCertificate = "FAIL\nNo test certificate available"
+            , mockClientKey   = "test-secret-key-12345"
+            }
 
 -- | Run an action while @HATH_RPC_HOST@ names a mock server on a free port.
 withMockRPC :: MockRPC -> IO a -> IO a
@@ -51,12 +49,14 @@ application mock req respond = respond $ case ( Wai.rawPathInfo req, parameter "
   where
     parameter name = join (List.lookup name (Wai.queryString req))
 
-    plain = Wai.responseLBS HTTP.status200 [ ( "Content-Type", "text/plain; charset=utf-8" ) ] . fromStrict
+    plain
+      = Wai.responseLBS HTTP.status200 [ ( "Content-Type", "text/plain; charset=utf-8" ) ]
+      . fromStrict
 
     -- we are the image server too, at whatever address the client reached us
-    ownAddress = fromMaybe "localhost" (Wai.requestHeaderHost req)
+    ownAddress     = fromMaybe "localhost" (Wai.requestHeaderHost req)
 
-    rpcReply = \case
+    rpcReply       = \case
       -- the PKCS#12 file itself, never signed
       "get_cert" -> mockCertificate mock
       "client_login" -> signed
@@ -73,7 +73,14 @@ application mock req respond = respond $ case ( Wai.rawPathInfo req, parameter "
         | otherwise -> "FAIL\nUnknown action: " <> act
 
     answeredOK
-      = [ "server_stat", "still_alive", "client_start", "client_stop", "get_blacklist", "dlfetch", "dlfails" ]
+      = [ "server_stat"
+        , "still_alive"
+        , "client_start"
+        , "client_stop"
+        , "get_blacklist"
+        , "dlfetch"
+        , "dlfails"
+        ]
 
     -- the 1.6.6 server signs every OK reply with the client key
     signed payload

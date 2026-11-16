@@ -26,10 +26,11 @@ visitor = IPv4 (tupleToHostAddress ( 203, 0, 113, 7 ))
 hits :: [ Double ] -> ( IPMap, [ Bool ] )
 hits = foldl' hit ( HashMap.empty, [] )
   where
-    hit ( records, verdicts ) time = let
-        ( records', allowed ) = registerHit time visitor records
-      in
-        ( records', verdicts <> [ allowed ] )
+    hit ( records, verdicts ) time
+      = let
+          ( records', allowed ) = registerHit time visitor records
+        in 
+          ( records', verdicts <> [ allowed ] )
 
 floodControlSpecs :: Spec
 floodControlSpecs = describe "Flood control" $ do
@@ -54,7 +55,8 @@ floodControlSpecs = describe "Flood control" $ do
     isLocalIP (IPv4 (tupleToHostAddress ( 172, 32, 1, 1 ))) `shouldBe` False
     isLocalIP visitor `shouldBe` False
     isLocalIP (IPv6 (tupleToHostAddress6 ( 0, 0, 0, 0, 0, 0xffff, 0x7f00, 1 ))) `shouldBe` True
-    isLocalIP (IPv6 (tupleToHostAddress6 ( 0, 0, 0, 0, 0, 0xffff, 0xcb00, 0x7107 ))) `shouldBe` False
+    isLocalIP (IPv6 (tupleToHostAddress6 ( 0, 0, 0, 0, 0, 0xffff, 0xcb00, 0x7107 )))
+      `shouldBe` False
     isLocalIP (IPv6 (tupleToHostAddress6 ( 0xfd12, 0, 0, 0, 0, 0, 0, 1 ))) `shouldBe` True
 
   it "parses rpc_server_ip entries" $ do
@@ -63,11 +65,12 @@ floodControlSpecs = describe "Flood control" $ do
     parseIPv4 "300.1.1.1" `shouldBe` Nothing
     parseIPv4 "fe80::1" `shouldBe` Nothing
 
-  prop "never blocks a visitor who asks at most once a second" $ forAll (listOf (choose ( 1, 30 ))) $ \gaps ->
-    snd (hits (scanl (+) 1000 gaps)) === (True <$ (1000 : gaps))
+  prop "never blocks a visitor who asks at most once a second"
+    $ forAll (listOf (choose ( 1, 30 )))
+    $ \gaps -> snd (hits (scanl (+) 1000 gaps)) === (True <$ (1000 : gaps))
 
-  it "allows ten hits at once and refuses the eleventh" $
-    snd (hits (replicate 11 1000)) `shouldBe` replicate 10 True <> [ False ]
+  it "allows ten hits at once and refuses the eleventh"
+    $ snd (hits (replicate 11 1000)) `shouldBe` replicate 10 True <> [ False ]
 
   it "refuses a blocked visitor without counting the request" $ do
     let blocked = fst (hits (replicate 11 1000))

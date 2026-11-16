@@ -27,14 +27,13 @@ import           Relude
 
 -- | A row of the @files@ table.
 data FileRecord
-  = FileRecord
-  { fileRecordLRUCounter :: !Int64
-  , fileRecordS4         :: !Text
-    -- ^ the first four characters of the file id
-  , fileRecordFileId     :: !Text
-  , fileRecordFileName   :: !(Maybe Text)
-  , fileRecordBytes      :: !ByteString
-  }
+  = FileRecord { fileRecordLRUCounter :: !Int64
+               , fileRecordS4         :: !Text
+                 -- ^ the first four characters of the file id
+               , fileRecordFileId     :: !Text
+               , fileRecordFileName   :: !(Maybe Text)
+               , fileRecordBytes      :: !ByteString
+               }
   deriving ( Show, Eq, Generic )
 
 instance FromRow FileRecord
@@ -57,7 +56,7 @@ initializeDB conn = do
 
 runCacheSQLite :: Member (Embed IO) r => Connection -> Sem (Cache : r) a -> Sem r a
 runCacheSQLite conn = interpret $ \case
-  LookupFile uri -> embed $ do
+  LookupFile uri      -> embed $ do
     let fileId = renderFileURIText uri
     execute conn "UPDATE files SET lru_counter = lru_counter + 1 WHERE file_id = ?" (Only fileId)
     rows <- query conn "SELECT bytes FROM files WHERE file_id = ?" (Only fileId)
@@ -71,12 +70,11 @@ runCacheSQLite conn = interpret $ \case
       ( 1 :: Int64, T.take 4 fileId, fileId, Nothing :: Maybe Text, bytes )
 
 data VerificationStats
-  = VerificationStats
-  { verifiedCount    :: !Int
-  , corruptedCount   :: !Int
-    -- ^ these were deleted
-  , verificationTime :: !NominalDiffTime
-  }
+  = VerificationStats { verifiedCount    :: !Int
+                      , corruptedCount   :: !Int
+                        -- ^ these were deleted
+                      , verificationTime :: !NominalDiffTime
+                      }
   deriving ( Show, Eq )
 
 -- | Whether the content still has the SHA-1 its file id promises.
@@ -91,15 +89,15 @@ verifyAllFiles :: Connection -> IO VerificationStats
 verifyAllFiles conn = do
   start <- getCurrentTime
   ( verified, corrupted )
-    <- fold_ conn "SELECT lru_counter, s4, file_id, file_name, bytes FROM files" ( 0, [] ) $ \( !ok, bad ) record -> pure
+    <- fold_ conn "SELECT lru_counter, s4, file_id, file_name, bytes FROM files" ( 0, [] )
+    $ \( !ok, bad ) record -> pure
     $ if intact record
       then ( ok + 1, bad )
       else ( ok, fileRecordFileId record : bad )
   forM_ corrupted $ \fileId -> execute conn "DELETE FROM files WHERE file_id = ?" (Only fileId)
   end <- getCurrentTime
   pure
-    VerificationStats
-    { verifiedCount    = verified
-    , corruptedCount   = length corrupted
-    , verificationTime = diffUTCTime end start
-    }
+    VerificationStats { verifiedCount    = verified
+                      , corruptedCount   = length corrupted
+                      , verificationTime = diffUTCTime end start
+                      }

@@ -6,7 +6,10 @@ import           Hath.CLI               ( Options(..), applyOptionsToConfig, par
 import           Hath.Cache.SQLite      ( VerificationStats(..), initializeDB, verifyAllFiles )
 import           Hath.Config            ( CacheBackend(..), ClientConfig(..), readClientConfig )
 import           Hath.RPC               ( clientLogin, getCertificate, runRPCIO, serverStat )
-import           Hath.Server            ( ServerAction(GracefulShutdown), ServerOptions(..), startServer )
+import           Hath.Server            ( ServerAction(GracefulShutdown)
+                                        , ServerOptions(..)
+                                        , startServer
+                                        )
 import           Hath.Version           ( versionInfo )
 
 import           Relude

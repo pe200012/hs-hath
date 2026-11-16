@@ -22,7 +22,11 @@ import           GHC.Clock             ( getMonotonicTime )
 
 import qualified Hath.Metrics.Counter  as Counter
 import qualified Hath.Metrics.Gauge    as Gauge
-import           Hath.Metrics.Registry ( newRegistry, registerCounter, registerGauge, registerHistogram )
+import           Hath.Metrics.Registry ( newRegistry
+                                       , registerCounter
+                                       , registerGauge
+                                       , registerHistogram
+                                       )
 import           Hath.Metrics.Snapshot ( getCachedSnapshot, startSnapshotWorker )
 import           Hath.Metrics.Types    ( Counter, Gauge, Histogram, Registry )
 
@@ -51,17 +55,23 @@ newStatsEnv :: IO StatsEnv
 newStatsEnv = do
   start <- getMonotonicTime
   registry <- newRegistry
-  uploadBytes <- registerCounter "hath_cache_sent_bytes_total" "Total bytes sent from cache" registry
+  uploadBytes
+    <- registerCounter "hath_cache_sent_bytes_total" "Total bytes sent from cache" registry
   downloadBytes
     <- registerCounter "hath_cache_received_bytes_total" "Total bytes received into cache" registry
   served <- registerCounter "hath_cache_sent_total" "Total number of cache hits" registry
   fetched <- registerCounter "hath_cache_received_total" "Total number of cache misses" registry
-  activeConnections <- registerGauge "hath_active_connections" "Number of active connections" registry
+  activeConnections
+    <- registerGauge "hath_active_connections" "Number of active connections" registry
   uptime <- registerGauge "hath_uptime_seconds" "Server uptime in seconds" registry
-  dlTasks <- registerCounter "hath_download_task_count_total" "Total gallery download tasks" registry
-  dlFiles <- registerCounter "hath_download_file_count_total" "Total gallery files downloaded" registry
-  dlBytes
-    <- registerCounter "hath_download_size_bytes_total" "Total bytes downloaded from galleries" registry
+  dlTasks
+    <- registerCounter "hath_download_task_count_total" "Total gallery download tasks" registry
+  dlFiles
+    <- registerCounter "hath_download_file_count_total" "Total gallery files downloaded" registry
+  dlBytes <- registerCounter
+    "hath_download_size_bytes_total"
+    "Total bytes downloaded from galleries"
+    registry
   -- includes sending the body, so large files land in the upper buckets
   latency <- registerHistogram
     "hath_request_duration_seconds"

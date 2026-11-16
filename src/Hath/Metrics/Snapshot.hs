@@ -1,6 +1,6 @@
 module Hath.Metrics.Snapshot ( generateSnapshot, startSnapshotWorker, getCachedSnapshot ) where
 
-import           Control.Concurrent ( forkIO, threadDelay )
+import           Control.Concurrent      ( forkIO, threadDelay )
 
 import qualified Hath.Metrics.Counter    as Counter
 import qualified Hath.Metrics.Gauge      as Gauge
@@ -32,7 +32,11 @@ generateSnapshot reg = do
     total <- readIORef (histogramSum h)
     let les = (Just <$> histogramBounds h) <> [ Nothing ]
     pure
-      $ HistogramSnapshot (histogramMetricId h) (histogramHelp h) (zip les (scanl1 (+) counts)) total
+      $ HistogramSnapshot
+        (histogramMetricId h)
+        (histogramHelp h)
+        (zip les (scanl1 (+) counts))
+        total
 
   -- Render to Prometheus text format
   pure $ Prometheus.render (counterSnapshots <> gaugeSnapshots <> histogramSnapshots)
