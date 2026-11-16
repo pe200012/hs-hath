@@ -4,11 +4,13 @@ module Hath.Protocol
   ( -- * Identity
     clientBuild
   , hathHeaders
+  , outgoingHeaders
     -- * Hashing
   , sha1Hex
   , sha1HexText
     -- * Request signatures
   , rpcActionKey
+  , rpcQuery
   , serverCommandKey
   , speedTestKey
   , keystampHash
@@ -20,6 +22,7 @@ module Hath.Protocol
     -- * RPC replies
   , verifyRPCResponse
   , rpcPayload
+  , retryWithServerTime
     -- * Parameters
   , parseURLParams
   ) where
@@ -35,23 +38,32 @@ import           Hath.Config             ( ClientConfig(..) )
 import           Hath.Error              ( HathError(..) )
 import           Hath.FileURI            ( FileURI, renderFileURIBytes )
 
-import           Network.HTTP.Types      ( HeaderName )
+import           Network.HTTP.Types      ( Header, urlEncode )
 
 import           Relude
 
 -- | The protocol level this client implements (official 1.6.6), sent as @clientbuild@.
-clientBuild :: Text
-clientBuild = "181"
+clientBuild :: Int64
+clientBuild = 181
 
--- | Sent with every response, and with our own requests as well.
-hathHeaders :: [ ( HeaderName, ByteString ) ]
+userAgent :: Header
+userAgent = ( "User-Agent", "Hentai@Home 1.6.6" )
+
+-- | Sent with every response.
+hathHeaders :: [ Header ]
 hathHeaders
   = [ ( "Connection", "close" )
-    , ( "User-Agent", "Hentai@Home 1.6.6" )
+    , userAgent
     , ( "Cache-Control", "public, max-age=31536000" )
     , ( "Server", "Genetic Lifeform and Distributed Open Server 1.6.6" )
     , ( "X-Content-Type-Options", "nosniff" )
     ]
+
+-- | The headers of a request of ours: the given ones and the official client's
+-- User-Agent. The empty Accept-Encoding keeps http-client from adding
+-- @gzip@, which the official client never asks for.
+outgoingHeaders :: [ Header ] -> [ Header ]
+outgoingHeaders headers = headers <> [ userAgent, ( "Accept-Encoding", "" ) ]
 
 -- | SHA-1 in lower-case hex, the form every H\@H signature and file id uses.
 sha1Hex :: ByteString -> ByteString
@@ -76,6 +88,28 @@ rpcActionKey cfg act add time
     , show time
     , encodeUtf8 (key cfg)
     ]
+
+-- | The query of a request to the RPC server, in the order the official client
+-- writes it (ServerHandler.getURLQueryString), @add@ included even when empty.
+-- The official client does not escape the values. We do, except the @;@
+-- between the parts of @add@: a legitimate request goes out byte for byte the
+-- same, and what a reader puts in @fileindex@ or @xres@ cannot add parameters.
+rpcQuery :: ClientConfig -> Text -> Text -> Int64 -> ByteString
+rpcQuery cfg act add time
+  = BS.intercalate
+    "&"
+    [ name <> "=" <> escape value
+    | ( name, value )
+    <- [ ( "clientbuild", show clientBuild )
+       , ( "act", encodeUtf8 act )
+       , ( "add", encodeUtf8 add )
+       , ( "cid", encodeUtf8 (clientId cfg) )
+       , ( "acttime", show time )
+       , ( "actkey", encodeUtf8 (rpcActionKey cfg act add time) )
+       ]
+    ]
+  where
+    escape = BS.intercalate ";" . map (urlEncode True) . BS.split ';'
 
 -- | The key the RPC server puts on a @servercmd@ request. Only it knows our key.
 serverCommandKey :: ClientConfig -> Text -> Text -> Int -> Text
@@ -149,6 +183,12 @@ rpcPayload reply = case BS.lines reply of
   [] -> Left EmptyResponse
   "OK" : payload -> Right payload
   status : _ -> Left $ RequestFailure $ decodeUtf8 status
+
+-- | Whether to take the server's time and send the request again. On
+-- @KEY_EXPIRED@ the official client refreshes server_stat and retries once,
+-- but only a request without @add@ (ServerResponse.java:103-107).
+retryWithServerTime :: Text -> ByteString -> Bool
+retryWithServerTime add reply = add == "" && BS.takeWhile (/= '\n') reply == "KEY_EXPIRED"
 
 -- | Parse @key1=value1;key2=value2;flag@. A key without a value maps to the
 -- empty string, and a value may itself contain @=@.

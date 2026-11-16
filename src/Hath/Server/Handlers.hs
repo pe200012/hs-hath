@@ -11,7 +11,6 @@ import           Data.ByteString.Builder ( byteString )
 import qualified Data.ByteString.Char8   as BSC
 import qualified Data.Map.Strict         as Map
 import           Data.String.Interpolate ( i )
-import           Data.Time.Clock.System  ( SystemTime(systemSeconds), getSystemTime )
 
 import           Hath.Cache              ( CacheHit(..) )
 import           Hath.Config             ( ClientConfig )
@@ -31,6 +30,7 @@ import           Hath.Protocol           ( hathHeaders
 import           Hath.RPC                ( clientSettings )
 import           Hath.Server.API         ( API, Body, ServerCommand(..), renderServerCommand )
 import           Hath.Server.App         ( App, ServerAction(..), ServerEnv(..) )
+import           Hath.ServerTime         ( serverNow )
 import           Hath.Settings           ( HathSettings )
 import           Hath.Stats              ( addDownload, addUpload, incServed, readMetrics )
 
@@ -105,7 +105,7 @@ resource fileIdText optionsText _fileName req respond = case Wai.requestMethod r
   -- answer HEAD like any other path instead of opening an upstream body nobody reads
   "HEAD" -> embed $ respond $ Wai.responseLBS status200 hathHeaders ""
   _      -> do
-    now <- embed $ systemSeconds <$> getSystemTime
+    now <- embed serverNow
     cfg <- ask @ClientConfig
     when (abs (stampTime - now) > maxKeystampDrift)
       $ throw err403 { errBody = "Your time is out of sync. Please update your system time." }
@@ -152,7 +152,7 @@ fileHeaders uri len = [ ( hContentType, mimeType uri ), ( hContentLength, show l
 -- RPC server knows ours.
 serverCommand :: ServerEnv -> ServerCommand -> Text -> Int -> Text -> App Body
 serverCommand env command additional time commandKey = do
-  now <- embed $ systemSeconds <$> getSystemTime
+  now <- embed serverNow
   cfg <- ask @ClientConfig
   when
     (abs (fromIntegral time - now) > maxCommandDrift
@@ -188,7 +188,7 @@ serverCommand env command additional time commandKey = do
 -- or for another client it sent ('ThreadedProxyTest').
 speedTest :: Int -> Int64 -> Text -> Text -> App Body
 speedTest size time testKey _ = do
-  now <- embed $ systemSeconds <$> getSystemTime
+  now <- embed serverNow
   cfg <- ask @ClientConfig
   when (abs (time - now) > maxKeystampDrift) $ throw err403
   when (encodeUtf8 testKey /= speedTestKey cfg size time) $ throw err403

@@ -49,6 +49,16 @@ protocolSpecs = describe "Protocol" $ do
 
     it "is an error for an empty reply" $ rpcPayload "" `shouldBe` Left EmptyResponse
 
+  describe "retryWithServerTime" $ do
+    it "is for KEY_EXPIRED on a request without add" $ do
+      retryWithServerTime "" "KEY_EXPIRED" `shouldBe` True
+      retryWithServerTime "" "KEY_EXPIRED\n" `shouldBe` True
+
+    it "is not for a request with add, nor for another status" $ do
+      retryWithServerTime "60" "KEY_EXPIRED" `shouldBe` False
+      retryWithServerTime "" "FAIL" `shouldBe` False
+      retryWithServerTime "" "KEY_EXPIRED_SOON" `shouldBe` False
+
   describe "verifyRPCResponse" $ do
     it "drops the empty line a reply ends with"
       $ verifyRPCResponse "k" (signed "k" "7" [ "a=1", "b=2" ] <> "\n") `shouldBe` "OK\na=1\nb=2"
@@ -94,6 +104,15 @@ protocolSpecs = describe "Protocol" $ do
     it "knows the keystamp of a file"
       $ keystampHash cfg 1700000000 "abc-1-2-3-jpg"
       `shouldBe` BS.take 10 (sha1Hex "1700000000-abc-1-2-3-jpg-secretkey-hotlinkthis")
+
+    it "writes an RPC query in the official order, with add= even when empty"
+      $ rpcQuery cfg "server_stat" "" 1700000000
+      `shouldBe` "clientbuild=181&act=server_stat&add=&cid=12345&acttime=1700000000&actkey="
+      <> encodeUtf8 (rpcActionKey cfg "server_stat" "" 1700000000)
+
+    it "keeps the ; between the parts of add and escapes the rest"
+      $ rpcQuery cfg "srfetch" "1;org;x&act=y" 1700000000
+      `shouldSatisfy` ("&add=1;org;x%26act%3Dy&" `BS.isInfixOf`)
 
     it "identifies itself to an image server"
       $ hathRequestToken cfg (FileURI "abc" 1 2 3 "jpg") `shouldBe` "12345-"

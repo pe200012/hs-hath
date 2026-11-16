@@ -1,5 +1,5 @@
 -- | The settings the RPC server assigns to this client.
-module Hath.Settings ( HathSettings(..), defaultHathSettings, parseSettings ) where
+module Hath.Settings ( HathSettings(..), defaultHathSettings, parseSettings, settingNumber ) where
 
 import qualified Data.ByteString.Char8 as BS
 
@@ -46,6 +46,17 @@ parseSettings = foldl' apply
       ( "rpc_server_ip", _ ) -> settings { rpcServerIPs = BS.split ';' value }
       _ -> settings
       where
-        ( name, rest ) = BS.span (/= '=') line
+        ( name, value ) = nameValue line
 
-        value          = BS.drop 1 rest
+-- | The number one of a reply's @name=value@ lines gives, such as @server_time@.
+settingNumber :: ByteString -> [ ByteString ] -> Maybe Int64
+settingNumber wanted reply
+  = listToMaybe
+    [ n
+    | ( name, value ) <- map nameValue reply
+    , name == wanted
+    , Just n <- [ readMaybe (BS.unpack value) ]
+    ]
+
+nameValue :: ByteString -> ( ByteString, ByteString )
+nameValue = second (BS.drop 1) . BS.span (/= '=')

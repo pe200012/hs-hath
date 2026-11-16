@@ -32,9 +32,7 @@ main = do
   forM_ [ sigINT, sigTERM ] $ \signal
     -> installHandler signal (Catch $ atomically $ writeTChan actions GracefulShutdown) Nothing
 
-  runRPCIO config serverStat >>= \case
-    Right True -> pass
-    failure    -> giveUp failure "RPC is not available, exiting..."
+  runRPCIO config serverStat >>= either (`giveUp` "RPC is not available, exiting...") pure
   settings <- runRPCIO config clientLogin >>= either (`giveUp` "Unable to login, exiting...") pure
   certs <- runRPCIO config getCertificate
     >>= either (`giveUp` "Unable to fetch certs, exiting...") pure

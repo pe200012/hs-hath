@@ -15,7 +15,11 @@ import           Hath.Config      ( CacheBackend(..)
                                   , defaultClientConfig
                                   , readClientConfig
                                   )
-import           Hath.Settings    ( HathSettings(..), defaultHathSettings, parseSettings )
+import           Hath.Settings    ( HathSettings(..)
+                                  , defaultHathSettings
+                                  , parseSettings
+                                  , settingNumber
+                                  )
 import           Hath.Stats       ( addDlBytes
                                   , addDownload
                                   , addUpload
@@ -38,6 +42,8 @@ import           ProtocolSpec     ( protocolSpecs )
 
 import           R2Spec           ( r2Specs )
 
+import           RPCSpec          ( rpcSpecs )
+
 import           Relude           hiding ( runReader )
 
 import           Test.Hspec
@@ -49,6 +55,7 @@ main = hspec $ do
   floodControlSpecs
   gallerySpecs
   settingsSpecs
+  rpcSpecs
   configSpecs
   metricsSpecs
   integrationSpecs
@@ -56,15 +63,26 @@ main = hspec $ do
   filesystemSpecs
 
 settingsSpecs :: Spec
-settingsSpecs = describe "parseSettings" $ it "keeps what a refresh does not mention" $ do
-  let login
-        = parseSettings
-          defaultHathSettings
-          [ "port=443", "disklimit_bytes=1000", "rpc_server_ip=192.0.2.1;192.0.2.2" ]
-      refreshed = parseSettings login [ "disklimit_bytes=2000" ]
-  clientPort refreshed `shouldBe` 443
-  diskLimitBytes refreshed `shouldBe` 2000
-  rpcServerIPs refreshed `shouldBe` [ "192.0.2.1", "192.0.2.2" ]
+settingsSpecs = do
+  describe "parseSettings" $ it "keeps what a refresh does not mention" $ do
+    let login
+          = parseSettings
+            defaultHathSettings
+            [ "port=443", "disklimit_bytes=1000", "rpc_server_ip=192.0.2.1;192.0.2.2" ]
+        refreshed = parseSettings login [ "disklimit_bytes=2000" ]
+    clientPort refreshed `shouldBe` 443
+    diskLimitBytes refreshed `shouldBe` 2000
+    rpcServerIPs refreshed `shouldBe` [ "192.0.2.1", "192.0.2.2" ]
+
+  describe "settingNumber" $ do
+    let stat = [ "min_client_build=176", "cur_client_build=181", "server_time=1763300000" ]
+
+    it "reads server_time from a server_stat reply"
+      $ settingNumber "server_time" stat `shouldBe` Just 1763300000
+
+    it "is Nothing for a line that is missing or not a number" $ do
+      settingNumber "server_time" [ "min_client_build=176" ] `shouldBe` Nothing
+      settingNumber "server_time" [ "server_time=soon" ] `shouldBe` Nothing
 
 -- | hath-bench writes its config this way.
 configSpecs :: Spec

@@ -19,7 +19,7 @@ import           Hath.Config             ( ClientConfig )
 import           Hath.Error              ( HathError )
 import           Hath.FileURI            ( FileURI(..) )
 import           Hath.Log                ( logInfo, logWarning )
-import           Hath.Protocol           ( hathHeaders, hathRequestToken, sha1Hex )
+import           Hath.Protocol           ( hathRequestToken, outgoingHeaders, sha1Hex )
 import           Hath.RPC                ( RPC, fileSources )
 import           Hath.Stats              ( StatsEnv, addDownload, incFetched )
 
@@ -96,7 +96,7 @@ openUpstream :: Members '[ RPC, Reader ClientConfig, Error HathError, Embed IO ]
 openUpstream uri fileIndex xres = do
   urls <- fileSources uri fileIndex xres
   cfg <- ask @ClientConfig
-  let headers          = ( "Hath-Request", hathRequestToken cfg uri ) : hathHeaders
+  let headers          = outgoingHeaders [ ( "Hath-Request", hathRequestToken cfg uri ) ]
       open manager url = case HC.parseRequest url of
         Nothing  -> pure Nothing
         Just req -> try

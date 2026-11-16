@@ -20,6 +20,8 @@ and this project adheres to the
 - Errors that end a gallery download are logged; they used to be dropped
 - An option value containing `=` (in `/h/` and `/servercmd/` URLs) no longer fails the request
 - The release build (`stack-release.yaml`) pointed at directories that no longer exist
+- **Clock skew**: keystamps, server commands, speed tests and the signatures of our RPC requests are now checked against the RPC server's clock, taken from the `server_time` of the `server_stat`, `client_login` and `client_settings` replies, as the official client does. A node whose clock is off no longer fails to log in or refuses readers with "time is out of sync". A request without arguments that gets `KEY_EXPIRED` takes the time from `server_stat` and is sent once more
+- **`server_stat`**: a reply other than a signed OK (`FAIL`, a forged reply) no longer counts as the server being available. A server that requires a newer client (`min_client_build` above 181) stops hs-hath at startup with a message saying so; a newer client being out (`cur_client_build`) is logged as a warning
 
 ### Changed
 - **Certificate refresh** swaps the certificate in place for new handshakes instead of restarting the listener, so transfers in progress are no longer cut off and `client_start` is not re-sent
@@ -34,6 +36,9 @@ and this project adheres to the
 - The SQLite backend no longer records the file name a file was first requested under, and a hit no longer writes to the database (the `lru_counter` column, which nothing read, stays as it is)
 - **R2 backend**: a file just uploaded after a cache miss is redirected at once on its next request, instead of first asking the bucket whether it is there (a 40–350 ms round trip)
 - `hath-bench` writes the hs-hath config through `ClientConfig`'s `ToDhall` instance instead of a hand-written copy of the record
+- **RPC requests** are sent as the official client sends them: the query carries `clientbuild`, `act`, `add`, `cid`, `acttime`, `actkey` in that order, `add=` even when empty, with the `;` inside `add` unescaped. Requests to the RPC server, to image servers (cache misses) and for gallery files carry `User-Agent: Hentai@Home 1.6.6` and, as in the official client, `Connection: Close` (RPC, gallery files) or `Hath-Request` (image servers), and nothing else: no longer our response headers (`Cache-Control`, `Server`, `X-Content-Type-Options`) or `Accept-Encoding: gzip`
+- **RPC transport**: a request whose exchange fails (no connection, a broken reply, an HTTP error other than 404/410) is sent again at once, three times in all, and a connection attempt gives up after 5 s, as in the official client. The reply may still take up to 60 s
+- **Library API** (RPC): `CallRPC` and `CallDownloader` take `add` as `Text`, empty when there is none; `HathError`'s `TransportError` carries a `Text`; `serverStat` returns `()` and fails unless the server answers OK; `clientLogin` and `clientSettings` need `Embed IO`; `Hath.Protocol.clientBuild` is an `Int64`. New: `Hath.ServerTime` (`serverNow`, `setServerTime`), `Hath.Settings.settingNumber`, `Hath.Protocol`'s `rpcQuery`, `outgoingHeaders` and `retryWithServerTime`, `Hath.RPC.worthRetrying`
 - **Library API**: `Hath.Stats` counts with plain functions over `Reader StatsEnv` (no effect to interpret) and adds `readMetrics`, `renderMetrics`, `trackConnection` and `observeDuration`; `Hath.Server.Handlers.server` takes the `ServerEnv`, and `App` no longer carries `Reader ServerEnv` or `AtomicState HathSettings`; `Hath.Cache.R2.putR2Object` uploads a file (the cache and `migrate-to-r2` share it)
 
 ### Removed
@@ -44,6 +49,7 @@ and this project adheres to the
 - `Hath.Server.FloodControl`: the constructor and fields of `IPRecord`, and the `Hashable IP` instance
 - The `galleryFileCount` and `galleryTitle` fields of `Hath.Gallery.GalleryMetadata`; the `optShowVersion` field of `Hath.CLI.Options` (the option parser answers `--version` itself)
 - The internal library `hs-hath-placeholder` (vendored `placeholder`), the parts of the vendored `minio-hs` that are not built, `Setup.hs`, and the dependencies `extra`, `http-conduit` and `unordered-containers`; `crypton-connection` is only a dependency of `hath-bench`
+- The dependencies `servant-client` and `servant-client-core`: the RPC client uses `http-client` directly
 
 ## [1.2.0] - 2026-11-08
 

@@ -52,6 +52,7 @@ library
       Hath.Server.Handlers
       Hath.Server.LegacyCiphers
       Hath.Server.Middleware
+      Hath.ServerTime
       Hath.Settings
       Hath.Stats
       Hath.Version
@@ -95,8 +96,6 @@ library
     , process ==1.6.*
     , relude ==1.2.*
     , servant >=0.20.2 && <0.21
-    , servant-client >=0.20.2 && <0.21
-    , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*
@@ -181,8 +180,6 @@ library hs-hath-cryptostore
     , process ==1.6.*
     , relude ==1.2.*
     , servant >=0.20.2 && <0.21
-    , servant-client >=0.20.2 && <0.21
-    , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*
@@ -282,8 +279,6 @@ library hs-hath-minio
     , resourcet ==1.*
     , retry ==0.*
     , servant >=0.20.2 && <0.21
-    , servant-client >=0.20.2 && <0.21
-    , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*
@@ -348,8 +343,6 @@ library hs-hath-warp-tls
     , recv ==0.*
     , relude ==1.2.*
     , servant >=0.20.2 && <0.21
-    , servant-client >=0.20.2 && <0.21
-    , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , streaming-commons ==0.*
@@ -403,8 +396,6 @@ executable hath-bench
     , process ==1.6.*
     , relude ==1.2.*
     , servant >=0.20.2 && <0.21
-    , servant-client >=0.20.2 && <0.21
-    , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*
@@ -456,8 +447,6 @@ executable hs-hath
     , process ==1.6.*
     , relude ==1.2.*
     , servant >=0.20.2 && <0.21
-    , servant-client >=0.20.2 && <0.21
-    , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*
@@ -510,8 +499,6 @@ executable migrate-to-r2
     , process ==1.6.*
     , relude ==1.2.*
     , servant >=0.20.2 && <0.21
-    , servant-client >=0.20.2 && <0.21
-    , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*
@@ -539,6 +526,7 @@ test-suite hs-hath-test
       MockRPC
       ProtocolSpec
       R2Spec
+      RPCSpec
       Paths_hs_hath
   autogen-modules:
       Paths_hs_hath
@@ -579,8 +567,6 @@ test-suite hs-hath-test
     , process ==1.6.*
     , relude ==1.2.*
     , servant >=0.20.2 && <0.21
-    , servant-client >=0.20.2 && <0.21
-    , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*

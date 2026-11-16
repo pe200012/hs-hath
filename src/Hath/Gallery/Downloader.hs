@@ -17,7 +17,7 @@ import           Hath.Config             ( ClientConfig(..) )
 import           Hath.Error              ( HathError )
 import           Hath.Gallery            ( GalleryFile(..), GalleryMetadata(..) )
 import           Hath.Log                ( logInfo, logWarning )
-import           Hath.Protocol           ( sha1Hex )
+import           Hath.Protocol           ( outgoingHeaders, sha1Hex )
 import           Hath.RPC                ( RPC
                                          , completeGallery
                                          , galleryFileSources
@@ -28,7 +28,7 @@ import           Hath.RPC                ( RPC
 import           Hath.Stats              ( StatsEnv, addDlBytes, incDlFile, incDlTask )
 
 import           Network.HTTP.Client     ( HttpException
-                                         , Request(host)
+                                         , Request(host, requestHeaders)
                                          , httpLbs
                                          , parseRequest
                                          , responseBody
@@ -157,7 +157,10 @@ downloadGalleryFile gallery file = do
     download url = case parseRequest url of
       Nothing  -> pure Nothing
       Just req -> embed
-        (try @HttpException $ toStrict . responseBody <$> (httpLbs req =<< getGlobalManager))
+        (try @HttpException
+         $ toStrict . responseBody
+         <$> (httpLbs req { requestHeaders = outgoingHeaders [ ( "Connection", "Close" ) ] }
+              =<< getGlobalManager))
         >>= \case
           Left _      -> pure Nothing
           Right bytes

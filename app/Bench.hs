@@ -267,15 +267,12 @@ app b req respond = case Wai.pathInfo req of
       $ find ((k <> "=") `BS.isPrefixOf`)
       $ BSC.split '&' (BS.dropWhile (== 63) (Wai.rawQueryString req))
 
-    -- hs-hath's servant client insists on the real server's content type,
-    -- the Java client on a Content-Length
+    -- the Java client insists on a Content-Length
     rpcResponse body
       = respond
       $ Wai.responseLBS
         H.status200
-        [ ( H.hContentType, "text/plain;charset=UTF-8" )
-        , ( H.hContentLength, show (BS.length body) )
-        ]
+        [ ( H.hContentLength, show (BS.length body) ) ]
         (fromStrict body)
 
     -- 1.6.6 signs replies: OK-<t>-<sha1("<t>-<key>" ++ concatMap ("\n" ++) lines)>

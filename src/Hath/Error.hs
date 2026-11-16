@@ -3,11 +3,9 @@ module Hath.Error ( HathError(..) ) where
 
 import           Relude
 
-import           Servant.Client.Core ( ClientError )
-
 data HathError
-  = TransportError !ClientError
-    -- ^ The HTTP exchange with the RPC server failed.
+  = TransportError !Text
+    -- ^ The HTTP exchange with the RPC server failed, every time it was tried.
   | EmptyResponse
     -- ^ The RPC server sent nothing.
   | RequestFailure !Text
