@@ -2,7 +2,12 @@
 
 -- | The gallery downloader: fetches the galleries queued for this client on the
 -- H\@H site into the download directory.
-module Hath.Gallery.Downloader ( GalleryTask(..), runGalleryDownloader, downloadNextGallery ) where
+module Hath.Gallery.Downloader
+  ( GalleryTask(..)
+  , runGalleryDownloader
+  , downloadNextGallery
+  , galleryFilePath
+  ) where
 
 import           Colog                   ( Message, richMessageAction )
 import           Colog.Polysemy          ( Log, runLogAction )
@@ -15,7 +20,7 @@ import qualified Data.ByteString.Lazy    as LBS
 import           Data.String.Interpolate ( i )
 
 import           Hath.AtomicFile         ( writeFileAtomic )
-import           Hath.Config             ( ClientConfig )
+import           Hath.Config             ( ClientConfig(..) )
 import           Hath.Error              ( HathError )
 import           Hath.Gallery            ( GalleryFile(..), GalleryMetadata(..) )
 import           Hath.Log                ( logInfo, logWarning )
@@ -34,12 +39,13 @@ import           Network.HTTP.Simple     ( httpLbs )
 
 import           Polysemy
 import           Polysemy.Error          ( Error, errorToIOFinal )
-import           Polysemy.Reader         ( Reader, runReader )
+import           Polysemy.Reader         ( Reader, ask, runReader )
 import           Polysemy.State          ( modify, runState )
 
-import           Relude                  hiding ( Reader, modify, runReader, runState )
+import           Relude                  hiding ( Reader, ask, modify, runReader, runState )
 
 import           System.Directory        ( doesFileExist )
+import           System.FilePath         ( (<.>), (</>) )
 import           System.IO               ( hPutStrLn )
 
 import           UnliftIO                ( TChan, readTChan )
@@ -78,16 +84,26 @@ downloadNextGallery = do
     Left reason -> logWarning [i|Gallery download refused: #{reason}|]
     Right gallery -> do
       logInfo [i|Starting download for gallery #{galleryID gallery}|]
-      complete <- mapM (ensureFile gallery) (galleryFileList gallery)
+      directory <- toString . downloadDir <$> ask
+      complete <- mapM (ensureFile directory gallery) (galleryFileList gallery)
       when (and complete) (completeGallery gallery)
+
+-- | Where a gallery file goes: @\<download directory>\/\<gallery id>\/\<name>.\<type>@.
+-- 'Hath.Gallery.parseMetadata' has made sure the name and type are plain.
+galleryFilePath :: FilePath -> GalleryMetadata -> GalleryFile -> FilePath
+galleryFilePath directory gallery file
+  = directory </> show (galleryID gallery) </> text (galleryFileName file) <.> text (galleryFileExt file)
+  where
+    text = toString . decodeUtf8 @Text
 
 -- | Whether the file is on disk afterwards: it was already there and intact,
 -- or it has just been downloaded.
 ensureFile :: Members '[ RPC, Stats, Log Message, Error HathError, Embed IO ] r
-           => GalleryMetadata
+           => FilePath
+           -> GalleryMetadata
            -> GalleryFile
            -> Sem r Bool
-ensureFile gallery file = do
+ensureFile directory gallery file = do
   existing <- embed $ do
     exists <- doesFileExist path
     if exists
@@ -111,8 +127,7 @@ ensureFile gallery file = do
     name :: String
     name = [i|#{galleryFileName file}.#{galleryFileExt file}|]
 
-    path :: FilePath
-    path = [i|download/#{galleryID gallery}/#{name}|]
+    path = galleryFilePath directory gallery file
 
 -- | A file generated on demand has no known hash; like the official client, accept it.
 hasExpectedHash :: GalleryFile -> ByteString -> Bool

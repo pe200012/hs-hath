@@ -4,6 +4,8 @@ import           FilesystemSpec        ( filesystemSpecs )
 
 import           FloodControlSpec      ( floodControlSpecs )
 
+import           GallerySpec           ( gallerySpecs )
+
 import qualified Hath.Metrics.Histogram as Histogram
 import           Hath.Metrics.Registry ( newRegistry, registerHistogram )
 import           Hath.Metrics.Snapshot ( generateSnapshot )
@@ -24,6 +26,7 @@ main = hspec $ do
   fileURISpecs
   protocolSpecs
   floodControlSpecs
+  gallerySpecs
   settingsSpecs
   metricsSpecs
   integrationSpecs
