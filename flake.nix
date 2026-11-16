@@ -9,13 +9,13 @@
         pkgs = nixpkgs.legacyPackages.${system};
 
         hPkgs =
-          pkgs.haskell.packages."ghc966"; # need to match Stackage LTS version
+          pkgs.haskell.packages."ghc9122"; # need to match Stackage LTS version
         # from stack.yaml snapshot
 
         myDevTools = [
           hPkgs.ghc # GHC compiler in the desired version (will be available on PATH)
           hPkgs.ghcid # Continuous terminal Haskell compile checker
-          hPkgs.ormolu # Haskell formatter
+          hPkgs.floskell # Haskell formatter
           hPkgs.hlint # Haskell codestyle checker
           hPkgs.hoogle # Lookup Haskell documentation
           hPkgs.haskell-language-server # LSP server for editor
