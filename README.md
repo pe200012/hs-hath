@@ -1,119 +1,196 @@
-# hs-hath - A Haskell Implementation of the Hentai@Home Client
+<a id="readme-top"></a>
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Contributors][contributors-shield]][contributors-url]
+[![Forks][forks-shield]][forks-url]
+[![Stargazers][stars-shield]][stars-url]
+[![Issues][issues-shield]][issues-url]
+[![GPL-3.0 License][license-shield]][license-url]
 
-A high-performance Haskell implementation of the Hentai@Home client. The client caches and serves gallery files, communicates with the H@H server via TLS-secured RPC, and supports S3-compatible storage backends including Cloudflare R2.
+<br />
+<div align="center">
+  <h3 align="center">hs-hath</h3>
 
-## Features
+  <p align="center">
+    A Hentai@Home client written in Haskell.
+    <br />
+    <a href="https://hackage.haskell.org/package/hs-hath"><strong>Hackage »</strong></a>
+    <br />
+    <br />
+    <a href="https://github.com/pe200012/hs-hath/issues/new?labels=bug">Report Bug</a>
+    &middot;
+    <a href="https://github.com/pe200012/hs-hath/issues/new?labels=enhancement">Request Feature</a>
+  </p>
+</div>
 
-Files are cached on the local filesystem, in Cloudflare R2 (or another S3-compatible store), or in SQLite; see [Cache backends](#cache-backends). Cache misses are streamed to the requester while they are fetched. RPC replies are verified against the client key (protocol 1.6.6). Flood control matches the official client. Prometheus metrics are available at the `/metrics` endpoint. The client tracks build information via the `--version` flag.
+<details>
+  <summary>Table of Contents</summary>
+  <ol>
+    <li>
+      <a href="#about-the-project">About The Project</a>
+      <ul>
+        <li><a href="#built-with">Built With</a></li>
+      </ul>
+    </li>
+    <li>
+      <a href="#getting-started">Getting Started</a>
+      <ul>
+        <li><a href="#prerequisites">Prerequisites</a></li>
+        <li><a href="#installation">Installation</a></li>
+      </ul>
+    </li>
+    <li><a href="#usage">Usage</a></li>
+    <li><a href="#notes--caveats">Notes &amp; Caveats</a></li>
+    <li><a href="#roadmap">Roadmap</a></li>
+    <li><a href="#contributing">Contributing</a></li>
+    <li><a href="#license">License</a></li>
+    <li><a href="#contact">Contact</a></li>
+    <li><a href="#acknowledgments">Acknowledgments</a></li>
+  </ol>
+</details>
 
-## Installation
+## About The Project
+
+`hs-hath` is a Hentai@Home client written in Haskell.
+
+It tracks cached files in an SQLite LRU index with support for both local disk and S3-compatible storage (such as Cloudflare R2), uses Dhall for configuration, and exposes Prometheus metrics at `/metrics`.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+### Built With
+
+* [![Haskell][Haskell-badge]][Haskell-url]
+* [![SQLite][SQLite-badge]][SQLite-url]
+* [![Dhall][Dhall-badge]][Dhall-url]
+* [![OpenSSL][OpenSSL-badge]][OpenSSL-url]
+* [![Prometheus][Prometheus-badge]][Prometheus-url]
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Getting Started
 
 ### Prerequisites
-- Stack (Haskell toolchain)
-- SQLite 3
-- OpenSSL libraries
 
-### Building
-```bash
-git clone https://github.com/pe200012/hs-hath.git
-cd hs-hath
-stack build
-```
+* [Stack](https://docs.haskellstack.org/)
+* SQLite 3
+* OpenSSL (development headers/libraries)
 
-## Configuration
+### Installation
 
-Copy `client-login.example` to `client-login` and fill in your client id and key. The file is a [Dhall](https://dhall-lang.org) expression; the example defines the record with its defaults, so a configuration only names what differs:
+1. Clone the repository:
+   ```sh
+   git clone https://github.com/pe200012/hs-hath.git
+   cd hs-hath
+   ```
+2. Build the project:
+   ```sh
+   stack build
+   ```
+3. Copy `client-login.example` to `client-login` and fill in your credentials and paths:
+   ```sh
+   cp client-login.example client-login
+   ```
+   ```dhall
+   { clientId = "your-client-id"
+   , key = "your-api-key"
+   , version = "1.0.0"
+   , proxy = None ClientProxy
+   , downloadDir = "./downloads"
+   , cachePath = "./cache.db"
+   }
+   ```
 
-```dhall
-in  ClientConfig::{
-    , clientId = "<YOURID>"
-    , key = "<YOURKEY>"
-    , version = "176"
-    , downloadDir = "./download"
-    , cachePath = "./cache"
-    , cacheBackend = CacheBackend.CacheBackendFilesystem
-    , r2Config = None R2Config
-    }
-```
-
-| Field | Meaning |
-| --- | --- |
-| `clientId`, `key` | The client id and key from the H@H site |
-| `downloadDir` | Where the gallery downloader puts galleries, as `<downloadDir>/<gallery id>/` |
-| `cachePath` | The cache directory (Filesystem) or database file (SQLite); not used by R2 |
-| `cacheBackend` | One of the [cache backends](#cache-backends) |
-| `r2Config` | Endpoint and bucket for the R2 backend. The credentials come from the environment: `R2_ACCESS_KEY` and `R2_SECRET_KEY` |
-| `version`, `proxy`, `lruCacheSize` | Not used. They are accepted so that existing files keep loading |
-
-### Cache backends
-- `CacheBackendFilesystem` (recommended for local disks): files live under `cachePath` as `xxxx/<file id>` and are sent straight from disk. The least recently served files are evicted to stay under the disk limit set on the H@H settings page.
-- `CacheBackendR2`: hits are answered with presigned redirects to the bucket; nothing is evicted.
-- `CacheBackendSQLite`: images are stored inside the database file at `cachePath`. Nothing is evicted, and every hit is a database write; kept for existing setups.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Usage
 
-Start the client:
-```bash
+Run the client:
+
+```sh
 stack exec hs-hath
 ```
 
-View version information:
-```bash
+Check version and build metadata:
+
+```sh
 stack exec hs-hath -- --version
 ```
 
-Options:
+Prometheus metrics are served at `/metrics`.
 
-| Option | Effect |
-| --- | --- |
-| `-c`, `--config FILE` | The configuration file (default `./client-login`) |
-| `-d`, `--download-dir DIR`, `--cache-path PATH` | Override `downloadDir` and `cachePath` |
-| `--skip-startup-verify` | SQLite backend: do not check every cached file against its hash at startup |
-| `--disable-rate-limit` | No flood control, for when every reader appears to come from one address (NAT, a proxy that hides it) |
-| `--trust-proxy-headers` | Take the reader's address from `X-Forwarded-For` (behind a proxy you trust) |
-| `--validate-config` | Load the configuration and exit |
-| `-v`, `--version` | Print the build's commit and date |
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-The client responds to `SIGINT` and `SIGTERM` for graceful shutdown. Settings reload automatically via RPC command. The Prometheus metrics endpoint is available at `/metrics` for monitoring.
+## Notes & Caveats
 
-## Architecture
+* **Memory usage**: Not optimized yet — expect ~200 MiB RAM on average.
+* **S3 / Cloudflare R2**: The object store must return `ETag`, `Content-Length`, and `Last-Modified` headers; missing `ETag` will fail cache writes.
 
-The library is in `src/Hath`. Effects are [polysemy](https://hackage.haskell.org/package/polysemy) effects.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-- `Hath.Protocol`, `Hath.FileURI`, `Hath.Settings`, `Hath.Gallery`: the wire formats as pure functions (signatures, reply verification, file ids, settings, download lists).
-- `Hath.RPC`: requests to the H@H RPC server.
-- `Hath.Cache` and `Hath.Cache.{Filesystem,R2,SQLite}`: the cache effect and its backends.
-- `Hath.Locate`: finds a requested file in the cache, or fetches it upstream and relays it as it arrives.
-- `Hath.Server` and `Hath.Server.*`: the Warp/TLS server, its routes, handlers, middleware and flood control.
-- `Hath.Gallery.Downloader`: the gallery downloader.
-- `Hath.Stats` and `Hath.Metrics.*`: the counters and their Prometheus rendering.
+## Roadmap
 
-`app/` holds the executables: `hs-hath` itself, `migrate-to-r2` (uploads an SQLite or Filesystem cache to a bucket) and `hath-bench` (plays the RPC server for a client under test and prints a scorecard).
+- [ ] Memory footprint optimization (currently ~200 MiB RAM on average)
 
-## Metrics
+See the [open issues][issues-url] for a full list of proposed features and known issues.
 
-The client exports Prometheus metrics in text format at the `/metrics` endpoint. Metrics include request counters, cache statistics, and operational counters for monitoring and alerting.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Performance
+## Contributing
 
-Has not been optimized yet. Currently, it will take ~200MiB RAM on average.
+Contributions are welcome. Feel free to fork the repository and open a pull request, or open an issue.
 
-## Troubleshooting
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-### Certificate errors
-Verify system clock synchronization and certificate file permissions. Certificate refresh occurs automatically every 24 hours.
+### Top contributors
 
-### Connection issues
-The `proxy` field of the configuration is not used; outgoing requests follow the `http_proxy` and `https_proxy` environment variables, as `http-client` does by default. Ensure the firewall allows outbound connections to the RPC server (port 80) and to image servers, and inbound connections on the port set on the H@H settings page.
+<a href="https://github.com/pe200012/hs-hath/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=pe200012/hs-hath" alt="contrib.rocks image" />
+</a>
 
-### Storage backend errors
-For S3-compatible backends like Cloudflare R2, verify that the storage server returns required headers: `ETag`, `Content-Length`, and `Last-Modified`. Missing `ETag` headers cause write failures.
-
-### Rate limiting
-The client implements strict request throttling. Banned IPs and rate limit violations appear in console logs. Verify client configuration if legitimate requests are being rejected.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+Distributed under the GPL-3.0 License. See [`LICENSE`][license-url] for more information.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Contact
+
+pe200012 - [@pe200012](https://github.com/pe200012)
+
+Project Link: [https://github.com/pe200012/hs-hath](https://github.com/pe200012/hs-hath)
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Acknowledgments
+
+* [Hentai@Home](https://ehwiki.org/wiki/Hentai@Home)
+* [Best-README-Template](https://github.com/othneildrew/Best-README-Template)
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- MARKDOWN LINKS & IMAGES -->
+[contributors-shield]: https://img.shields.io/github/contributors/pe200012/hs-hath.svg?style=for-the-badge
+[contributors-url]: https://github.com/pe200012/hs-hath/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/pe200012/hs-hath.svg?style=for-the-badge
+[forks-url]: https://github.com/pe200012/hs-hath/network/members
+[stars-shield]: https://img.shields.io/github/stars/pe200012/hs-hath.svg?style=for-the-badge
+[stars-url]: https://github.com/pe200012/hs-hath/stargazers
+[issues-shield]: https://img.shields.io/github/issues/pe200012/hs-hath.svg?style=for-the-badge
+[issues-url]: https://github.com/pe200012/hs-hath/issues
+[license-shield]: https://img.shields.io/github/license/pe200012/hs-hath.svg?style=for-the-badge
+[license-url]: https://github.com/pe200012/hs-hath/blob/HEAD/LICENSE
+[Haskell-badge]: https://img.shields.io/badge/Haskell-5e5086?style=for-the-badge&logo=haskell&logoColor=white
+[Haskell-url]: https://www.haskell.org/
+[SQLite-badge]: https://img.shields.io/badge/SQLite-07405e?style=for-the-badge&logo=sqlite&logoColor=white
+[SQLite-url]: https://www.sqlite.org/
+[Dhall-badge]: https://img.shields.io/badge/Dhall-222222?style=for-the-badge
+[Dhall-url]: https://dhall-lang.org/
+[OpenSSL-badge]: https://img.shields.io/badge/OpenSSL-721412?style=for-the-badge&logo=openssl&logoColor=white
+[OpenSSL-url]: https://www.openssl.org/
+[Prometheus-badge]: https://img.shields.io/badge/Prometheus-e6522c?style=for-the-badge&logo=prometheus&logoColor=white
+[Prometheus-url]: https://prometheus.io/
