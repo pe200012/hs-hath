@@ -48,6 +48,13 @@ protocolSpecs = describe "Protocol" $ do
     it "is an error for an empty reply" $ rpcPayload "" `shouldBe` Left EmptyResponse
 
   describe "verifyRPCResponse" $ do
+    it "drops the empty line a reply ends with" $
+      verifyRPCResponse "k" (signed "k" "7" [ "a=1", "b=2" ] <> "\n") `shouldBe` "OK\na=1\nb=2"
+
+    it "refuses an OK that is not signed" $ verifyRPCResponse "k" "OK\na=1" `shouldBe` "RESPONSE_HASH_FAILED"
+
+    it "passes any other status through" $ verifyRPCResponse "k" "KEY_EXPIRED" `shouldBe` "KEY_EXPIRED"
+
     prop "accepts a reply signed with the client key" $ forAll reply $ \( clientKey, time, payload ) ->
       verifyRPCResponse clientKey (signed clientKey time payload) === BS.intercalate "\n" ("OK" : payload)
 
