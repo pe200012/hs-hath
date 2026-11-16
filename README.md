@@ -24,18 +24,28 @@ stack build
 
 ## Configuration
 
-Create a `client-login` file with your credentials:
+Copy `client-login.example` to `client-login` and fill in your client id and key. The file is a [Dhall](https://dhall-lang.org) expression; the example defines the record with its defaults, so a configuration only names what differs:
+
 ```dhall
-{ clientId = "your-client-id"
-, key = "your-api-key" 
-, version = "1.0.0"
-, proxy = None ClientProxy
-, downloadDir = "./downloads"
-, cachePath = "./cache.db"
-}
+in  ClientConfig::{
+    , clientId = "<YOURID>"
+    , key = "<YOURKEY>"
+    , version = "176"
+    , downloadDir = "./download"
+    , cachePath = "./cache"
+    , cacheBackend = CacheBackend.CacheBackendFilesystem
+    , r2Config = None R2Config
+    }
 ```
 
-See `client-login.example` for every field, including `cacheBackend`.
+| Field | Meaning |
+| --- | --- |
+| `clientId`, `key` | The client id and key from the H@H site |
+| `downloadDir` | Where the gallery downloader puts galleries, as `<downloadDir>/<gallery id>/` |
+| `cachePath` | The cache directory (Filesystem) or database file (SQLite); not used by R2 |
+| `cacheBackend` | One of the [cache backends](#cache-backends) |
+| `r2Config` | Endpoint and bucket for the R2 backend. The credentials come from the environment: `R2_ACCESS_KEY` and `R2_SECRET_KEY` |
+| `version`, `proxy`, `lruCacheSize` | Not used. They are accepted so that existing files keep loading |
 
 ### Cache backends
 - `CacheBackendFilesystem` (recommended for local disks): files live under `cachePath` as `xxxx/<file id>` and are sent straight from disk. The least recently served files are evicted to stay under the disk limit set on the H@H settings page.
@@ -54,11 +64,33 @@ View version information:
 stack exec hs-hath -- --version
 ```
 
+Options:
+
+| Option | Effect |
+| --- | --- |
+| `-c`, `--config FILE` | The configuration file (default `./client-login`) |
+| `-d`, `--download-dir DIR`, `--cache-path PATH` | Override `downloadDir` and `cachePath` |
+| `--skip-startup-verify` | SQLite backend: do not check every cached file against its hash at startup |
+| `--disable-rate-limit` | No flood control, for when every reader appears to come from one address (NAT, a proxy that hides it) |
+| `--trust-proxy-headers` | Take the reader's address from `X-Forwarded-For` (behind a proxy you trust) |
+| `--validate-config` | Load the configuration and exit |
+| `-v`, `--version` | Print the build's commit and date |
+
 The client responds to `SIGINT` and `SIGTERM` for graceful shutdown. Settings reload automatically via RPC command. The Prometheus metrics endpoint is available at `/metrics` for monitoring.
 
 ## Architecture
 
-The RPC client handles communication with the H@H server, including certificate management and settings synchronization. An HTTP server built on Warp serves cached resources from one of the cache backends above, with flood control in front of it.
+The library is in `src/Hath`. Effects are [polysemy](https://hackage.haskell.org/package/polysemy) effects.
+
+- `Hath.Protocol`, `Hath.FileURI`, `Hath.Settings`, `Hath.Gallery`: the wire formats as pure functions (signatures, reply verification, file ids, settings, download lists).
+- `Hath.RPC`: requests to the H@H RPC server.
+- `Hath.Cache` and `Hath.Cache.{Filesystem,R2,SQLite}`: the cache effect and its backends.
+- `Hath.Locate`: finds a requested file in the cache, or fetches it upstream and relays it as it arrives.
+- `Hath.Server` and `Hath.Server.*`: the Warp/TLS server, its routes, handlers, middleware and flood control.
+- `Hath.Gallery.Downloader`: the gallery downloader.
+- `Hath.Stats` and `Hath.Metrics.*`: the counters and their Prometheus rendering.
+
+`app/` holds the executables: `hs-hath` itself, `migrate-to-r2` (uploads an SQLite or Filesystem cache to a bucket) and `hath-bench` (plays the RPC server for a client under test and prints a scorecard).
 
 ## Metrics
 
@@ -74,7 +106,7 @@ Has not been optimized yet. Currently, it will take ~200MiB RAM on average.
 Verify system clock synchronization and certificate file permissions. Certificate refresh occurs automatically every 24 hours.
 
 ### Connection issues
-Check proxy settings if configured. Ensure firewall allows outbound TLS connections on the required ports.
+The `proxy` field of the configuration is not used; outgoing requests follow the `http_proxy` and `https_proxy` environment variables, as `http-client` does by default. Ensure the firewall allows outbound connections to the RPC server (port 80) and to image servers, and inbound connections on the port set on the H@H settings page.
 
 ### Storage backend errors
 For S3-compatible backends like Cloudflare R2, verify that the storage server returns required headers: `ETag`, `Content-Length`, and `Last-Modified`. Missing `ETag` headers cause write failures.
