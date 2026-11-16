@@ -1,6 +1,6 @@
 module FloodControlSpec ( floodControlSpecs ) where
 
-import qualified Data.HashMap.Strict      as HashMap
+import qualified Data.Map.Strict          as Map
 
 import           Hath.Server.FloodControl ( IP(..)
                                           , IPMap
@@ -24,7 +24,7 @@ visitor = IPv4 (tupleToHostAddress ( 203, 0, 113, 7 ))
 
 -- | The records after hits at these times, and whether each hit was allowed.
 hits :: [ Double ] -> ( IPMap, [ Bool ] )
-hits = foldl' hit ( HashMap.empty, [] )
+hits = foldl' hit ( Map.empty, [] )
   where
     hit ( records, verdicts ) time
       = let

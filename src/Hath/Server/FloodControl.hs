@@ -17,17 +17,17 @@ module Hath.Server.FloodControl
   , checkRateLimit
   ) where
 
-import           Data.Bits           ( (.&.), shiftR )
-import qualified Data.ByteString     as BS
-import qualified Data.HashMap.Strict as HashMap
+import           Data.Bits             ( (.&.), shiftR )
+import qualified Data.ByteString.Char8 as BS
+import qualified Data.Map.Strict       as Map
 
-import           Network.Socket      ( HostAddress
-                                     , HostAddress6
-                                     , SockAddr(..)
-                                     , hostAddress6ToTuple
-                                     , hostAddressToTuple
-                                     , tupleToHostAddress
-                                     )
+import           Network.Socket        ( HostAddress
+                                       , HostAddress6
+                                       , SockAddr(..)
+                                       , hostAddress6ToTuple
+                                       , hostAddressToTuple
+                                       , tupleToHostAddress
+                                       )
 
 import           Relude
 
@@ -45,13 +45,18 @@ sockAddrIP _ = Nothing
 -- | @a.b.c.d@ or @::ffff:a.b.c.d@, the form @rpc_server_ip@ uses.
 -- ponytail: IPv4 only; the RPC servers have no IPv6 addresses.
 parseIPv4 :: ByteString -> Maybe IP
-parseIPv4 s = case traverse (readMaybe @Int . decodeUtf8) (BS.split 46 v4) of
-  Just [ a, b, c, d ]
-    | all (\x -> x >= 0 && x <= 255) [ a, b, c, d ] -> Just
-      (IPv4 (tupleToHostAddress ( fromIntegral a, fromIntegral b, fromIntegral c, fromIntegral d )))
+parseIPv4 s = case traverse octet (BS.split '.' v4) of
+  Just [ a, b, c, d ] -> Just (IPv4 (tupleToHostAddress ( a, b, c, d )))
   _ -> Nothing
   where
-    v4 = fromMaybe s (BS.stripPrefix "::ffff:" s)
+    v4         = fromMaybe s (BS.stripPrefix "::ffff:" s)
+
+    -- read without a String: this runs for every flood-controlled request.
+    -- Space around a number is allowed, as 'read' allowed it.
+    octet part = case BS.readInt (BS.strip part) of
+      Just ( n, "" )
+        | n >= 0 && n <= 255 -> Just (fromIntegral n)
+      _ -> Nothing
 
 -- | Loopback, private and link-local addresses, which the official client
 -- exempts from flood control (HTTPServer.localNetworkPattern).
@@ -95,13 +100,15 @@ data IPRecord
              }
   deriving ( Eq, Show )
 
-type IPMap = HashMap IP IPRecord
+-- | A 'Map' rather than a 'HashMap': 'registerHit' asks for the size on every
+-- hit, which a 'Map' knows and a 'HashMap' has to count.
+type IPMap = Map IP IPRecord
 
 -- | Count a request from an address at a time. The Bool says whether it may
 -- proceed. A request from a blocked address is refused without being counted,
 -- as in the official client.
 registerHit :: Double -> IP -> IPMap -> ( IPMap, Bool )
-registerHit now ip records = case HashMap.lookup ip live of
+registerHit now ip records = case Map.lookup ip live of
   Just record
     | bannedUntil record > now -> ( live, False )
   known       -> let
@@ -116,18 +123,18 @@ registerHit now ip records = case HashMap.lookup ip live of
                        else bannedUntil previous
                    }
     in 
-      ( HashMap.insert ip record live, not blocked )
+      ( Map.insert ip record live, not blocked )
   where
     -- ponytail: O(n) prune once the map is large; fine for the few hundred IPs a client sees per minute
     live
-      | HashMap.size records > 1000 = HashMap.filter ((> now - idleSeconds) . lastHit) records
+      | Map.size records > 1000 = Map.filter ((> now - idleSeconds) . lastHit) records
       | otherwise = records
 
 -- | The hit records of one server.
 newtype FloodControl = FloodControl (IORef IPMap)
 
 newFloodControl :: IO FloodControl
-newFloodControl = FloodControl <$> newIORef HashMap.empty
+newFloodControl = FloodControl <$> newIORef Map.empty
 
 -- | 'registerHit' on the shared records; False if the request should be refused.
 checkRateLimit :: FloodControl -> IP -> Double -> IO Bool

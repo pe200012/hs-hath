@@ -109,7 +109,7 @@ keystampHash cfg time fileId
 -- | Split a keystamp @\<time>-\<hash>@. A time that is not a number reads as 0,
 -- which no clock is close to.
 parseKeystamp :: ByteString -> ( Int64, ByteString )
-parseKeystamp stamp = ( maybe 0 (fromIntegral . fst) (BS.readInteger time), BS.drop 1 rest )
+parseKeystamp stamp = ( maybe 0 (fromIntegral . fst) (BS.readInt time), BS.drop 1 rest )
   where
     ( time, rest ) = BS.span (/= '-') stamp
 
