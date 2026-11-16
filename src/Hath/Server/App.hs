@@ -15,13 +15,13 @@ import           Hath.Server.FloodControl ( FloodControl )
 import           Hath.Settings            ( HathSettings )
 import           Hath.Stats               ( StatsEnv )
 
+import           Network.HTTP.Types       ( Status, status500 )
+
 import           Polysemy
 import           Polysemy.Error           ( Error, errorToIOFinal, mapError )
 import           Polysemy.Reader          ( Reader, runReader )
 
 import           Relude                   hiding ( Reader, runReader )
-
-import           Servant                  ( Handler(..), ServerError, err500 )
 
 import           UnliftIO                 ( TChan )
 
@@ -47,7 +47,8 @@ data ServerEnv
     -- ^ take the reader's address from @X-Forwarded-For@
   }
 
--- | The effects of a request handler.
+-- | The effects of a request handler. It ends a request with an error by
+-- throwing its status.
 type App
   = Sem
     '[ Cache
@@ -56,22 +57,20 @@ type App
      , Reader StatsEnv
      , Reader ClientConfig
      , Error HathError
-     , Error ServerError
+     , Error Status
      , Embed IO
      , Final IO
      ]
 
 -- | Run a handler. The effects are interpreted afresh for every request, so
--- whatever must outlive one request lives in the 'ServerEnv'. An error the
--- handler did not turn into a response is a 500.
-runApp :: ServerEnv -> App a -> Handler a
+-- whatever must outlive one request lives in the 'ServerEnv'. Left is the error
+-- status the handler threw, or 500 for an error it did not handle.
+runApp :: ServerEnv -> App a -> IO (Either Status a)
 runApp env
-  = Handler
-  . ExceptT
-  . runFinal
+  = runFinal
   . embedToFinal @IO
-  . errorToIOFinal @ServerError
-  . mapError @HathError (const err500)
+  . errorToIOFinal @Status
+  . mapError @HathError (const status500)
   . runReader (envConfig env)
   . runReader (envStats env)
   . runLogAction @IO @Message richMessageAction

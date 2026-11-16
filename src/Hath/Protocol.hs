@@ -3,7 +3,7 @@
 module Hath.Protocol
   ( -- * Identity
     clientBuild
-  , hathHeaders
+  , responseHeaders
   , outgoingHeaders
     -- * Hashing
   , sha1Hex
@@ -14,11 +14,11 @@ module Hath.Protocol
   , serverCommandKey
   , speedTestKey
   , keystampHash
-  , parseKeystamp
   , hathRequestToken
-    -- * Allowed clock difference
-  , maxKeystampDrift
-  , maxCommandDrift
+    -- * Checking requests
+  , keystampValid
+  , commandTimeValid
+  , fetchParams
     -- * RPC replies
   , verifyRPCResponse
   , rpcPayload
@@ -32,11 +32,11 @@ import qualified Crypto.Hash             as Crypto
 
 import           Data.ByteArray.Encoding ( Base(Base16), convertToBase )
 import qualified Data.ByteString.Char8   as BS
+import           Data.Char               ( isDigit, toLower )
 import qualified Data.Map.Strict         as Map
 
 import           Hath.Config             ( ClientConfig(..) )
 import           Hath.Error              ( HathError(..) )
-import           Hath.FileURI            ( FileURI, renderFileURIBytes )
 
 import           Network.HTTP.Types      ( Header, urlEncode )
 
@@ -49,15 +49,18 @@ clientBuild = 181
 userAgent :: Header
 userAgent = ( "User-Agent", "Hentai@Home 1.6.6" )
 
--- | Sent with every response.
-hathHeaders :: [ Header ]
-hathHeaders
-  = [ ( "Connection", "close" )
-    , userAgent
-    , ( "Cache-Control", "public, max-age=31536000" )
-    , ( "Server", "Genetic Lifeform and Distributed Open Server 1.6.6" )
-    , ( "X-Content-Type-Options", "nosniff" )
+-- | The headers of a response whose body has this Content-Type and length, as
+-- the official client writes them (HTTPSession.java:129-139); Warp adds the
+-- Date. The official client leaves the length out of an empty response and
+-- closes the connection; Warp would send that body chunked, so we say it is empty.
+responseHeaders :: ByteString -> Int -> [ Header ]
+responseHeaders contentType len
+  = [ ( "Server", "Genetic Lifeform and Distributed Open Server 1.6.6" )
+    , ( "Connection", "close" )
+    , ( "Content-Type", contentType )
+    , ( "Content-Length", show len )
     ]
+  <> [ ( "Cache-Control", "public, max-age=31536000" ) | len > 0 ]
 
 -- | The headers of a request of ours: the given ones and the official client's
 -- User-Agent. The empty Accept-Encoding keeps http-client from adding
@@ -140,25 +143,38 @@ keystampHash :: ClientConfig -> Int64 -> ByteString -> ByteString
 keystampHash cfg time fileId
   = BS.take 10 $ signature [ show time, fileId, encodeUtf8 (key cfg), "hotlinkthis" ]
 
--- | Split a keystamp @\<time>-\<hash>@. A time that is not a number reads as 0,
--- which no clock is close to.
-parseKeystamp :: ByteString -> ( Int64, ByteString )
-parseKeystamp stamp = ( maybe 0 (fromIntegral . fst) (BS.readInt time), BS.drop 1 rest )
+-- | The @Hath-Request@ header that authenticates us to an image server, for a
+-- file id as the reader asked for it.
+hathRequestToken :: ClientConfig -> ByteString -> ByteString
+hathRequestToken cfg fileId
+  = encodeUtf8 (clientId cfg) <> "-" <> sha1Hex (encodeUtf8 (key cfg) <> fileId)
+
+-- | Whether a keystamp, @\<time>-\<hash>@, entitles a reader to a file id at
+-- the server's time @now@ (HTTPResponse.java:174-186): issued less than 15
+-- minutes from it either way, with the hash in either case.
+keystampValid :: ClientConfig -> Int64 -> ByteString -> ByteString -> Bool
+keystampValid cfg now fileId stamp = case BS.split '-' stamp of
+  [ time, hash ]
+    | Just ( issued, "" ) <- BS.readInt time -> abs (now - fromIntegral issued) < 900
+      && BS.map toLower hash == keystampHash cfg (fromIntegral issued) fileId
+  _ -> False
+
+-- | Whether the time of a server command or a speed test is close enough to
+-- the server's @now@ (Settings.MAX_KEY_TIME_DRIFT): five minutes either way.
+commandTimeValid :: Int64 -> Int64 -> Bool
+commandTimeValid now time = abs (now - time) <= 300
+
+-- | The @fileindex@ and @xres@ of an @\/h\/@ request, which a file missing from
+-- the cache is fetched by, if they have the official form: a number, and a
+-- number or @org@ (HTTPResponse.java:194).
+fetchParams :: Map ByteString ByteString -> Maybe ( ByteString, ByteString )
+fetchParams options = do
+  fileIndex <- Map.lookup "fileindex" options
+  xres <- Map.lookup "xres" options
+  guard (number fileIndex && (xres == "org" || number xres))
+  pure ( fileIndex, xres )
   where
-    ( time, rest ) = BS.span (/= '-') stamp
-
--- | The @Hath-Request@ header that authenticates us to an image server.
-hathRequestToken :: ClientConfig -> FileURI -> ByteString
-hathRequestToken cfg uri
-  = encodeUtf8 (clientId cfg) <> "-" <> sha1Hex (encodeUtf8 (key cfg) <> renderFileURIBytes uri)
-
--- | How far the time in a keystamp or a speed test may be from our clock, in seconds.
-maxKeystampDrift :: Int64
-maxKeystampDrift = 600
-
--- | The same for @servercmd@ (official @Settings.MAX_KEY_TIME_DRIFT@).
-maxCommandDrift :: Int64
-maxCommandDrift = 300
+    number s = not (BS.null s) && BS.all isDigit s
 
 -- | Check the 1.6.6 RPC signature. A signed reply starts with @OK-\<time>-\<sha1>@, the
 -- sha1 covering @\<time>-\<client key>@ then @"\\n" ++ line@ for every later line. A

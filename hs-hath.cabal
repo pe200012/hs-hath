@@ -87,7 +87,6 @@ library
     , hs-hath-warp-tls
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
-    , http-media ==0.8.*
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
@@ -96,8 +95,6 @@ library
     , polysemy ==1.9.*
     , process ==1.6.*
     , relude ==1.2.*
-    , servant >=0.20.2 && <0.21
-    , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
@@ -170,7 +167,6 @@ library hs-hath-cryptostore
     , hourglass ==0.2.*
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
-    , http-media ==0.8.*
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
@@ -180,8 +176,6 @@ library hs-hath-cryptostore
     , polysemy ==1.9.*
     , process ==1.6.*
     , relude ==1.2.*
-    , servant >=0.20.2 && <0.21
-    , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
@@ -266,7 +260,6 @@ library hs-hath-minio
     , http-client ==0.*
     , http-client-tls ==0.*
     , http-conduit ==2.*
-    , http-media ==0.8.*
     , http-types ==0.*
     , ini ==0.*
     , lrucache ==1.2.*
@@ -279,8 +272,6 @@ library hs-hath-minio
     , relude ==1.*
     , resourcet ==1.*
     , retry ==0.*
-    , servant >=0.20.2 && <0.21
-    , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
@@ -333,7 +324,6 @@ library hs-hath-warp-tls
     , filepath >=1.4 && <1.6
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
-    , http-media ==0.8.*
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
@@ -343,8 +333,6 @@ library hs-hath-warp-tls
     , process ==1.6.*
     , recv ==0.*
     , relude ==1.2.*
-    , servant >=0.20.2 && <0.21
-    , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , streaming-commons ==0.*
     , string-interpolate ==0.3.*
@@ -387,7 +375,6 @@ executable hath-bench
     , hs-hath
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
-    , http-media ==0.8.*
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
@@ -396,8 +383,6 @@ executable hath-bench
     , polysemy ==1.9.*
     , process ==1.6.*
     , relude ==1.2.*
-    , servant >=0.20.2 && <0.21
-    , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
@@ -438,7 +423,6 @@ executable hs-hath
     , hs-hath
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
-    , http-media ==0.8.*
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
@@ -447,8 +431,6 @@ executable hs-hath
     , polysemy ==1.9.*
     , process ==1.6.*
     , relude ==1.2.*
-    , servant >=0.20.2 && <0.21
-    , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
@@ -490,7 +472,6 @@ executable migrate-to-r2
     , hs-hath-minio
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
-    , http-media ==0.8.*
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
@@ -499,8 +480,6 @@ executable migrate-to-r2
     , polysemy ==1.9.*
     , process ==1.6.*
     , relude ==1.2.*
-    , servant >=0.20.2 && <0.21
-    , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
@@ -519,6 +498,7 @@ test-suite hs-hath-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
+      APISpec
       FilesystemSpec
       FileURISpec
       FloodControlSpec
@@ -559,7 +539,6 @@ test-suite hs-hath-test
     , hspec ==2.11.*
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
-    , http-media ==0.8.*
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
@@ -568,8 +547,6 @@ test-suite hs-hath-test
     , polysemy ==1.9.*
     , process ==1.6.*
     , relude ==1.2.*
-    , servant >=0.20.2 && <0.21
-    , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24

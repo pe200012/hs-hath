@@ -1,3 +1,5 @@
+import           APISpec          ( apiSpecs )
+
 import           Data.X509        ( CertificateChain(..) )
 import           Data.X509.File   ( readSignedObject )
 
@@ -58,6 +60,7 @@ main :: IO ()
 main = hspec $ do
   fileURISpecs
   protocolSpecs
+  apiSpecs
   floodControlSpecs
   gallerySpecs
   settingsSpecs

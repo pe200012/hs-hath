@@ -1,6 +1,6 @@
 -- | A stand-in for the H\@H RPC server, which also plays the image server that
 -- files are fetched from.
-module MockRPC ( MockRPC(..), defaultMockRPC, withMockRPC ) where
+module MockRPC ( MockRPC(..), defaultMockRPC, withMockRPC, loginSettings ) where
 
 import qualified Data.ByteString.Char8    as BS
 import qualified Data.List                as List
@@ -34,6 +34,9 @@ data MockRPC
     -- ^ the lines of its get_blacklist reply
   , mockSeen        :: ByteString -> IO ()
     -- ^ told the act of each RPC request as it arrives
+  , mockRPCServerIP :: ByteString
+    -- ^ its address as its settings give it (@rpc_server_ip@); by default the
+    -- one the tests send server commands from
   }
 
 defaultMockRPC :: MockRPC
@@ -45,7 +48,19 @@ defaultMockRPC
             , mockOutages     = 0
             , mockBlacklist   = []
             , mockSeen        = const pass
+            , mockRPCServerIP = "127.0.0.1"
             }
+
+-- | The settings it assigns at login.
+loginSettings :: MockRPC -> [ ByteString ]
+loginSettings mock
+  = [ "host=127.0.0.1"
+    , "port=8080"
+    , "throttle_bytes=0"
+    , "disklimit_bytes=107374182400"
+    , "diskremaining_bytes=107374182400"
+    , "rpc_server_ip=" <> mockRPCServerIP mock
+    ]
 
 -- | Run an action while @HATH_RPC_HOST@ names a mock server on a free port.
 withMockRPC :: MockRPC -> IO a -> IO a
@@ -93,14 +108,9 @@ application mock outagesLeft req respond = case ( Wai.rawPathInfo req, parameter
     reply          = \case
       -- the PKCS#12 file itself, never signed
       "get_cert" -> mockCertificate mock
-      "client_login" -> signed
-        [ "host=127.0.0.1"
-        , "port=8080"
-        , "throttle_bytes=0"
-        , "disklimit_bytes=107374182400"
-        , "diskremaining_bytes=107374182400"
-        ]
-      "client_settings" -> signed [ "host=127.0.0.1", "port=8080" ]
+      "client_login" -> signed (loginSettings mock)
+      "client_settings"
+        -> signed [ "host=127.0.0.1", "port=8080", "rpc_server_ip=" <> mockRPCServerIP mock ]
       "srfetch" -> signed [ "http://" <> ownAddress <> "/file" ]
       "get_blacklist" -> signed (mockBlacklist mock)
       act

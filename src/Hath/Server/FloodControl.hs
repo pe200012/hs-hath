@@ -6,6 +6,7 @@ module Hath.Server.FloodControl
     IP(..)
   , sockAddrIP
   , parseIPv4
+  , isRPCServer
   , isLocalIP
     -- * The pure rule
   , IPRecord
@@ -55,6 +56,12 @@ parseIPv4 s = case traverse octet (BS.split '.' v4) of
       Just ( n, "" )
         | n >= 0 && n <= 255 -> Just (fromIntegral n)
       _ -> Nothing
+
+-- | Whether an address is one of those @rpc_server_ip@ lists (Settings.isValidRPCServer).
+-- Warp listens on IPv4 here; on a dual-stack socket the RPC servers would
+-- show up as @::ffff:a.b.c.d@ and not match.
+isRPCServer :: [ ByteString ] -> IP -> Bool
+isRPCServer rpcServers ip = ip `elem` mapMaybe parseIPv4 rpcServers
 
 -- | Loopback, private and link-local addresses, which the official client
 -- exempts from flood control (HTTPServer.localNetworkPattern).

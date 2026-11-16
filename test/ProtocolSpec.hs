@@ -1,11 +1,11 @@
 module ProtocolSpec ( protocolSpecs ) where
 
 import qualified Data.ByteString.Char8 as BS
+import           Data.Char             ( toUpper )
 import qualified Data.Map.Strict       as Map
 
 import           Hath.Config           ( ClientConfig(..), defaultClientConfig )
 import           Hath.Error            ( HathError(..) )
-import           Hath.FileURI          ( FileURI(..) )
 import           Hath.Protocol
 
 import           Relude
@@ -114,12 +114,76 @@ protocolSpecs = describe "Protocol" $ do
       $ rpcQuery cfg "srfetch" "1;org;x&act=y" 1700000000
       `shouldSatisfy` ("&add=1;org;x%26act%3Dy&" `BS.isInfixOf`)
 
-    it "identifies itself to an image server"
-      $ hathRequestToken cfg (FileURI "abc" 1 2 3 "jpg") `shouldBe` "12345-"
-      <> sha1Hex "secretkeyabc-1-2-3-jpg"
+    it "identifies itself to an image server with the file id as it was asked for"
+      $ hathRequestToken cfg "abc-01-2-3-jpg" `shouldBe` "12345-"
+      <> sha1Hex "secretkeyabc-01-2-3-jpg"
 
-  describe "parseKeystamp" $ do
-    it "splits the time from the hash"
-      $ parseKeystamp "1700000000-0123456789" `shouldBe` ( 1700000000, "0123456789" )
+  describe "keystampValid" $ do
+    let cfg     = defaultClientConfig { key = "secretkey" }
+        fileId  = "abc-1-2-3-jpg"
+        issued  = 1700000000
+        stamp t = show t <> "-" <> keystampHash cfg t fileId
 
-    it "reads a keystamp without a time as time 0" $ parseKeystamp "invalid" `shouldBe` ( 0, "" )
+    it "accepts a keystamp issued less than 900 s from the server's time, either way"
+      $ forM_ [ -899, 0, 899 ]
+      $ \drift -> keystampValid cfg (issued + drift) fileId (stamp issued) `shouldBe` True
+
+    it "refuses one 900 s or more away" $ forM_ [ -900, 900, 5000 ] $ \drift
+      -> keystampValid cfg (issued + drift) fileId (stamp issued) `shouldBe` False
+
+    it "compares the hash in either case"
+      $ keystampValid
+        cfg
+        issued
+        fileId
+        (show issued <> "-" <> BS.map toUpper (keystampHash cfg issued fileId))
+      `shouldBe` True
+
+    it "refuses another file id, and a keystamp that is not <time>-<hash>"
+      $ forM_
+        [ ( "abc-1-2-3-png", stamp issued )
+        , ( fileId, keystampHash cfg issued fileId )
+        , ( fileId, stamp issued <> "-x" )
+        , ( fileId, "x" <> stamp issued )
+        , ( fileId, "" )
+        ]
+      $ \( requested, given ) -> keystampValid cfg issued requested given `shouldBe` False
+
+  describe "commandTimeValid" $ do
+    it "accepts a time up to 300 s from the server's, either way"
+      $ map (commandTimeValid 1000) [ 700, 1000, 1300 ] `shouldBe` [ True, True, True ]
+
+    it "refuses one further away"
+      $ map (commandTimeValid 1000) [ 699, 1301 ] `shouldBe` [ False, False ]
+
+  describe "fetchParams" $ do
+    let params = fetchParams . Map.fromList
+
+    it "takes a numeric fileindex and a numeric or org xres" $ do
+      params [ ( "fileindex", "12" ), ( "xres", "org" ) ] `shouldBe` Just ( "12", "org" )
+      params [ ( "fileindex", "012" ), ( "xres", "1280" ), ( "keystamp", "x" ) ]
+        `shouldBe` Just ( "012", "1280" )
+
+    it "refuses missing, empty or other values"
+      $ forM_
+        [ [ ( "xres", "org" ) ]
+        , [ ( "fileindex", "12" ) ]
+        , [ ( "fileindex", "" ), ( "xres", "org" ) ]
+        , [ ( "fileindex", "12" ), ( "xres", "" ) ]
+        , [ ( "fileindex", "-12" ), ( "xres", "org" ) ]
+        , [ ( "fileindex", "12" ), ( "xres", "orgx" ) ]
+        , [ ( "fileindex", "12" ), ( "xres", "ORG" ) ]
+        ]
+      $ \given -> params given `shouldBe` Nothing
+
+  describe "responseHeaders" $ do
+    it "are the official client's: no User-Agent, Cache-Control only with a body" $ do
+      responseHeaders "image/jpeg" 10
+        `shouldBe` [ ( "Server", "Genetic Lifeform and Distributed Open Server 1.6.6" )
+                   , ( "Connection", "close" )
+                   , ( "Content-Type", "image/jpeg" )
+                   , ( "Content-Length", "10" )
+                   , ( "Cache-Control", "public, max-age=31536000" )
+                   ]
+      map fst (responseHeaders "text/html" 0)
+        `shouldBe` [ "Server", "Connection", "Content-Type", "Content-Length" ]

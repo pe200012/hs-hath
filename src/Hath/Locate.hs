@@ -11,7 +11,6 @@ import           Control.Exception       ( finally )
 
 import qualified Data.ByteString.Char8   as BS
 import qualified Data.List               as List
-import qualified Data.Map.Strict         as Map
 import           Data.String.Interpolate ( i )
 
 import           Hath.Cache              ( Cache, CacheHit, lookupFile, storeFile )
@@ -42,9 +41,9 @@ data Located
     -- It closes the upstream connection and caches the file once it is complete.
   | Streamed !((ByteString -> IO ()) -> IO ())
 
--- | Look in the cache; on a miss, ask the RPC server where the file is and
--- start relaying it. A miss can only be fetched when the request's options name
--- the @fileindex@ and @xres@ it came from.
+-- | Look in the cache; on a miss, ask the RPC server where the file is, by the
+-- @fileindex@ and @xres@ of the request and the file id as the reader asked for
+-- it, and start relaying it.
 --
 -- Like the official client, we serve any file the server sends readers here
 -- for; static ranges only matter for pruning the cache.
@@ -60,43 +59,43 @@ locateResource
      , Final IO
      ]
     r
-  => FileURI
-  -> Map ByteString ByteString
+  => ByteString
+  -> FileURI
+  -> ( ByteString, ByteString )
   -> Sem r (Maybe Located)
-locateResource uri options = lookupFile uri >>= \case
+locateResource fileId uri ( fileIndex, xres ) = lookupFile uri >>= \case
   Just hit -> pure $ Just $ Stored hit
-  Nothing  -> case ( Map.lookup "fileindex" options, Map.lookup "xres" options ) of
-    ( Just fileIndex, Just xres ) -> do
-      logInfo [i|Fetching resource: #{uri}|]
-      openUpstream uri fileIndex xres >>= \case
-        Just response -> do
-          incFetched
-          -- runs after the handler has returned, once the body has been relayed
-          cacheIt <- deferToIO $ \content -> do
-            addDownload (BS.length content)
-            -- a failed cache write only costs us the next hit
-            catch @HathError (storeFile uri content)
-              $ \e -> logWarning [i|Cache write failed for #{uri}: #{e}|]
-          pure $ Just $ Streamed $ streamUpstream uri response (void . forkIO . cacheIt)
-        Nothing       -> do
-          logWarning "Failed to fetch resource, sorry for you"
-          pure Nothing
-    _ -> do
-      logInfo [i|Not enough information to fetch resource: #{uri}|]
-      pure Nothing
+  Nothing  -> do
+    logInfo [i|Fetching resource: #{uri}|]
+    openUpstream fileId uri fileIndex xres >>= \case
+      Just response -> do
+        incFetched
+        -- runs after the handler has returned, once the body has been relayed
+        cacheIt <- deferToIO $ \content -> do
+          addDownload (BS.length content)
+          -- a failed cache write only costs us the next hit
+          catch @HathError (storeFile uri content)
+            $ \e -> logWarning [i|Cache write failed for #{uri}: #{e}|]
+        pure $ Just $ Streamed $ streamUpstream uri response (void . forkIO . cacheIt)
+      Nothing       -> do
+        logWarning "Failed to fetch resource, sorry for you"
+        pure Nothing
 
 -- | Open the first source that answers 200 with the expected length, as the
 -- official ProxyFileDownloader does. The caller reads the body and must close
 -- the response.
-openUpstream :: Members '[ RPC, Reader ClientConfig, Error HathError, Embed IO ] r
-             => FileURI
+openUpstream :: Members '[ RPC, Reader ClientConfig, Log Message, Error HathError, Embed IO ] r
+             => ByteString
+             -> FileURI
              -> ByteString
              -> ByteString
              -> Sem r (Maybe (HC.Response HC.BodyReader))
-openUpstream uri fileIndex xres = do
-  urls <- fileSources uri fileIndex xres
+openUpstream fileId uri fileIndex xres = do
+  -- without sources the reader gets a 404, as from the official client
+  urls <- fileSources fileIndex xres fileId `catch` \(e :: HathError)
+    -> [] <$ logWarning [i|srfetch failed for #{uri}: #{e}|]
   cfg <- ask @ClientConfig
-  let headers          = outgoingHeaders [ ( "Hath-Request", hathRequestToken cfg uri ) ]
+  let headers          = outgoingHeaders [ ( "Hath-Request", hathRequestToken cfg fileId ) ]
       open manager url = case HC.parseRequest url of
         Nothing  -> pure Nothing
         Just req -> try

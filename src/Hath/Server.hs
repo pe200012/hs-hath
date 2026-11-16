@@ -43,10 +43,9 @@ import           Hath.RPC                             ( StartFailure(..)
                                                       , stillAlive
                                                       , toldToStop
                                                       )
-import           Hath.Server.API                      ( api )
-import           Hath.Server.App                      ( ServerAction(..), ServerEnv(..), runApp )
-import           Hath.Server.FloodControl             ( newFloodControl, parseIPv4 )
-import           Hath.Server.Handlers                 ( server )
+import           Hath.Server.App                      ( ServerAction(..), ServerEnv(..) )
+import           Hath.Server.FloodControl             ( isRPCServer, newFloodControl )
+import           Hath.Server.Handlers                 ( application )
 import           Hath.Server.LegacyCiphers
 import           Hath.Server.Middleware
 import           Hath.ServerTime                      ( serverNow )
@@ -59,7 +58,7 @@ import           Network.TLS                          ( Credentials(Credentials)
                                                       )
 import           Network.TLS.Extra                    ( ciphersuite_all )
 import qualified Network.TLS.SessionManager           as SM
-import           Network.Wai                          ( Request )
+import           Network.Wai                          ( Application, Request )
 import           Network.Wai.Handler.Warp             ( defaultOnException
                                                       , defaultSettings
                                                       , setBeforeMainLoop
@@ -81,8 +80,6 @@ import           Polysemy.Error                       ( catch )
 
 import           Relude
 
-import           Servant                              ( Application, hoistServer, serve )
-
 import           UnliftIO                             ( TChan
                                                       , mapConcurrently_
                                                       , newTChanIO
@@ -94,27 +91,21 @@ import           UnliftIO                             ( TChan
                                                       , writeTChan
                                                       )
 
--- | The WAI application: the 'server' behind its middleware.
+-- | The WAI application: the 'application' behind its middleware.
 makeApplication :: ServerEnv -> Application
-makeApplication env
-  = realIp
-  $ floodControl
-  $ normalizeAcceptMiddleware
-  $ tracingConnections stats
-  $ tracingTimeUsage stats
-  $ withHathHeaders
-  $ serve api (hoistServer api (runApp env) (server env))
+makeApplication env = middleware (application env)
   where
-    stats          = envStats env
+    middleware = realIp . floodControl . tracingConnections stats . tracingTimeUsage stats
+
+    stats = envStats env
 
     realIp
       | envTrustProxyHeaders env = realIpHeader "X-Forwarded-For"
       | otherwise = id
 
-    floodControl   = maybe id (`rateLimitMiddleware` isRpcServer) (envFloodControl env)
+    floodControl = maybe id (`rateLimitMiddleware` fromRPCServer) (envFloodControl env)
 
-    -- dual-stack sockets would show RPC servers as ::ffff:a.b.c.d; Warp listens on IPv4 here
-    isRpcServer ip = elem ip . mapMaybe parseIPv4 . rpcServerIPs <$> readTVarIO (envSettings env)
+    fromRPCServer ip = (`isRPCServer` ip) . rpcServerIPs <$> readTVarIO (envSettings env)
 
 data ServerOptions
   = ServerOptions { disableRateLimit  :: !Bool

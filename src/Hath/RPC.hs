@@ -49,7 +49,7 @@ import           Data.X509                    ( CertificateChain, PrivKey )
 
 import           Hath.Config                  ( ClientConfig(..) )
 import           Hath.Error                   ( HathError(..) )
-import           Hath.FileURI                 ( FileURI, parseFileURI, renderFileURIBytes )
+import           Hath.FileURI                 ( FileURI, parseFileURI )
 import           Hath.Gallery                 ( GalleryFile(..)
                                               , GalleryMetadata(..)
                                               , parseMetadata
@@ -306,17 +306,15 @@ getBlacklist seconds
   = mapMaybe parseFileURI <$> (payload =<< callRPC "get_blacklist" (show seconds))
 
 -- | URLs a file of our static ranges can be fetched from (@srfetch@), given
--- the @fileindex@ and @xres@ of the request that asked for it.
+-- the @fileindex@ and @xres@ of the request that asked for it and the file id
+-- as it asked for it.
 fileSources :: Members '[ RPC, Error HathError ] r
-            => FileURI
+            => ByteString
             -> ByteString
             -> ByteString
             -> Sem r [ ByteString ]
-fileSources uri fileIndex xres
-  = payload
-  =<< callRPC
-    "srfetch"
-    (decodeUtf8 $ BS.intercalate ";" [ fileIndex, xres, renderFileURIBytes uri ])
+fileSources fileIndex xres fileId
+  = payload =<< callRPC "srfetch" (decodeUtf8 $ BS.intercalate ";" [ fileIndex, xres, fileId ])
 
 -- | The next gallery queued for download, or why there is none
 -- (@NO_PENDING_DOWNLOADS@, or a list that was refused).

@@ -1,297 +1,311 @@
-{-# LANGUAGE DataKinds #-}
+-- | The request handlers, one per route of "Hath.Server.API".
+module Hath.Server.Handlers ( application ) where
 
--- | The request handlers, one per route of the 'API'.
-module Hath.Server.Handlers ( server ) where
+import           Control.Concurrent           ( forkIO, threadDelay )
 
-import           Control.Concurrent      ( forkIO, threadDelay )
-import           Control.Exception       ( try )
+import           Data.ByteString.Builder      ( byteString )
+import qualified Data.ByteString.Char8        as BS
+import qualified Data.List                    as List
+import qualified Data.Map.Strict              as Map
+import           Data.String.Interpolate      ( i )
 
-import qualified Data.ByteString         as BS
-import           Data.ByteString.Builder ( byteString )
-import qualified Data.ByteString.Char8   as BSC
-import qualified Data.Map.Strict         as Map
-import           Data.String.Interpolate ( i )
+import           Hath.Cache                   ( CacheHit(..) )
+import           Hath.Config                  ( ClientConfig )
+import           Hath.Error                   ( HathError )
+import           Hath.FileURI                 ( FileURI(fileSize), mimeType, parseFileURI )
+import           Hath.Gallery.Downloader      ( GalleryTask(..) )
+import           Hath.Locate                  ( Located(..), locateResource )
+import           Hath.Log                     ( logInfo, logWarning )
+import           Hath.Protocol                ( commandTimeValid
+                                              , fetchParams
+                                              , keystampValid
+                                              , parseURLParams
+                                              , responseHeaders
+                                              , serverCommandKey
+                                              , speedTestKey
+                                              )
+import           Hath.RPC                     ( clientSettings )
+import           Hath.Server.API              ( ProxyTest(..)
+                                              , Route(..)
+                                              , ServerCommand(..)
+                                              , parseServerCommand
+                                              , route
+                                              )
+import           Hath.Server.App              ( App, ServerAction(..), ServerEnv(..), runApp )
+import           Hath.Server.FloodControl     ( isRPCServer, sockAddrIP )
+import           Hath.ServerTime              ( serverNow )
+import           Hath.Settings                ( HathSettings(rpcServerIPs) )
+import           Hath.Stats                   ( addDownload, addUpload, incServed, readMetrics )
 
-import           Hath.Cache              ( CacheHit(..) )
-import           Hath.Config             ( ClientConfig )
-import           Hath.FileURI            ( FileURI(fileSize), mimeType, parseFileURI )
-import           Hath.Gallery.Downloader ( GalleryTask(..) )
-import           Hath.Locate             ( Located(..), locateResource )
-import           Hath.Log                ( logInfo )
-import           Hath.Protocol           ( hathHeaders
-                                         , keystampHash
-                                         , maxCommandDrift
-                                         , maxKeystampDrift
-                                         , parseKeystamp
-                                         , parseURLParams
-                                         , serverCommandKey
-                                         , speedTestKey
-                                         )
-import           Hath.RPC                ( clientSettings )
-import           Hath.Server.API         ( API, Body, ServerCommand(..), renderServerCommand )
-import           Hath.Server.App         ( App, ServerAction(..), ServerEnv(..) )
-import           Hath.ServerTime         ( serverNow )
-import           Hath.Settings           ( HathSettings )
-import           Hath.Stats              ( addDownload, addUpload, incServed, readMetrics )
+import qualified Network.HTTP.Client          as HC
+import           Network.HTTP.Client.Internal ( throwHttp )
+import           Network.HTTP.Client.TLS      ( tlsManagerSettings )
+import           Network.HTTP.Types           ( Header
+                                              , Status
+                                              , hContentLength
+                                              , hLocation
+                                              , methodGet
+                                              , methodHead
+                                              , status200
+                                              , status301
+                                              , status302
+                                              , status400
+                                              , status403
+                                              , status404
+                                              , statusCode
+                                              )
+import           Network.Socket               ( SockAddr )
+import qualified Network.Wai                  as Wai
 
-import qualified Network.HTTP.Client     as HC
-import           Network.HTTP.Client.TLS ( tlsManagerSettings )
-import qualified Network.HTTP.Types      as HT
-import           Network.HTTP.Types      ( hContentLength, hContentType, status200, status404 )
-import qualified Network.Wai             as Wai
+import           Polysemy                     ( embed )
+import           Polysemy.Error               ( catch, throw )
+import           Polysemy.Reader              ( ask )
 
-import           Polysemy                ( embed )
-import           Polysemy.Error          ( throw )
-import           Polysemy.Reader         ( ask )
+import           Relude                       hiding ( ask )
 
-import           Relude                  hiding ( ask )
+import           UnliftIO                     ( getMonotonicTime
+                                              , replicateConcurrently
+                                              , timeout
+                                              , tryAny
+                                              , writeTChan
+                                              )
 
-import           Servant                 ( (:<|>)(..)
-                                         , Application
-                                         , NoContent
-                                         , ServerError(errBody, errHeaders)
-                                         , ServerT
-                                         , Tagged(..)
-                                         , addHeader
-                                         , err301
-                                         , err302
-                                         , err403
-                                         , err404
-                                         )
-import qualified Servant.Types.SourceT   as Source
+-- | The client's HTTP interface. Like the official client, it reads GET and
+-- HEAD requests only (HTTPSession.java:107), and answers a HEAD as the GET,
+-- without the body: Warp leaves that out.
+application :: ServerEnv -> Wai.Application
+application env req respond
+  | Wai.requestMethod req `notElem` [ methodGet, methodHead ] = respond (errorPage status400)
+  | otherwise = runApp env (handle env req) >>= respond . either errorPage id
 
-import           UnliftIO                ( getMonotonicTime
-                                         , replicateConcurrently
-                                         , timeout
-                                         , writeTChan
-                                         )
-
-server :: ServerEnv -> ServerT API App
-server env
-  = favicon
-  :<|> robots
-  :<|> resource
-  :<|> readMetrics
-  :<|> serverCommand env
-  :<|> speedTest
-  :<|> adminSettings (envSettings env)
-  :<|> Tagged fallback
-
-favicon :: App NoContent
-favicon = throw err301 { errHeaders = [ ( "Location", "https://e-hentai.org/favicon.ico" ) ] }
-
-robots :: App Text
-robots = pure "User-agent: *\nDisallow: /"
-
-adminSettings :: TVar HathSettings -> App Text
-adminSettings settings = show <$> embed @IO (readTVarIO settings)
-
--- | Any other path: HEAD is answered, nothing is found.
-fallback :: Application
-fallback req respond = respond $ case Wai.requestMethod req of
-  "HEAD" -> Wai.responseLBS status200 hathHeaders ""
-  _      -> Wai.responseLBS status404 [] ""
-
--- | @\/h\/\<file id>\/\<options>\/\<file name>@: a file for a reader. The options
--- carry the keystamp the H\@H server issued for this file, which is what
--- entitles the reader to it.
-resource :: Text
-         -> Text
-         -> Text
-         -> Wai.Request
-         -> (Wai.Response -> IO Wai.ResponseReceived)
-         -> App Wai.ResponseReceived
-resource fileIdText optionsText _fileName req respond = case Wai.requestMethod req of
-  -- answer HEAD like any other path instead of opening an upstream body nobody reads
-  "HEAD" -> embed $ respond $ Wai.responseLBS status200 hathHeaders ""
-  _      -> do
-    now <- embed serverNow
-    cfg <- ask @ClientConfig
-    when (abs (stampTime - now) > maxKeystampDrift)
-      $ throw err403 { errBody = "Your time is out of sync. Please update your system time." }
-    when (stampHash /= keystampHash cfg stampTime fileId)
-      $ throw err403 { errBody = "Invalid key." }
-    uri <- maybe (throw err404) pure (parseFileURI fileId)
-    locateResource uri options >>= \case
-      Nothing -> throw err404
-      Just (Stored (Redirect url)) -> throw
-        err302 { errHeaders = [ ( "Location", url ), ( "Cache-Control", "public, max-age=600" ) ] }
-      Just (Stored (LocalFile path)) -> do
-        incServed
-        addUpload (fileSize uri)
-        -- Warp streams the file and sets Content-Length from it
-        embed
-          $ respond
-          $ Wai.responseFile status200 [ ( hContentType, mimeType uri ) ] path Nothing
-      Just (Stored (InMemory bytes)) -> do
-        incServed
-        addUpload (BS.length bytes)
-        embed
-          $ respond
-          $ Wai.responseLBS status200 (fileHeaders uri (BS.length bytes)) (fromStrict bytes)
-      -- cache miss: relay upstream bytes as they arrive, like the official proxy mode
-      Just (Streamed relay) -> do
-        incServed
-        addUpload (fileSize uri)
-        embed
-          $ respond
-          $ Wai.responseStream status200 (fileHeaders uri (fileSize uri))
-          $ \write flush -> relay (\chunk -> write (byteString chunk) >> flush)
+handle :: ServerEnv -> Wai.Request -> App Wai.Response
+handle env req = case route (Wai.rawPathInfo req) of
+  Favicon -> pure $ redirect status301 "https://e-hentai.org/favicon.ico" []
+  Robots -> pure $ bytes status200 "text/plain; charset=ISO-8859-1" "User-agent: *\nDisallow: /"
+  File fileId options
+    -> resource (Wai.requestMethod req == methodHead) (encodeUtf8 fileId) (encodeUtf8 options)
+  ServerCmd command additional time commandKey
+    -> serverCommand env (Wai.remoteHost req) command additional time commandKey
+  Test size time testKey -> speedTest size time testKey
+  Metrics -> ours <$> readMetrics
+  AdminSettings -> ours . show <$> embed @IO (readTVarIO (envSettings env))
+  Refuse status -> throw status
   where
-    fileId = encodeUtf8 fileIdText
+    -- /metrics and /admin/settings are not the official client's
+    ours = bytes status200 "text/plain;charset=utf-8" . encodeUtf8
 
-    options = parseURLParams (encodeUtf8 optionsText)
-
-    ( stampTime, stampHash ) = parseKeystamp (fromMaybe "" (Map.lookup "keystamp" options))
-
-fileHeaders :: FileURI -> Int -> [ HT.Header ]
-fileHeaders uri len = [ ( hContentType, mimeType uri ), ( hContentLength, show len ) ]
+-- | @\/h\/\<file id>\/\<options>@: a file for a reader (HTTPResponse.java:161-228).
+-- The options carry the keystamp the H\@H server issued for this file, which
+-- entitles the reader to it, and the @fileindex@ and @xres@ to fetch it by.
+resource :: Bool -> ByteString -> ByteString -> App Wai.Response
+resource headOnly fileId optionsText = do
+  now <- embed serverNow
+  cfg <- ask @ClientConfig
+  unless (keystampValid cfg now fileId (fromMaybe "" (Map.lookup "keystamp" options)))
+    $ throw status403
+  ( uri, fetchBy )
+    <- maybe (throw status404) pure ((,) <$> parseFileURI fileId <*> fetchParams options)
+  let headers         = responseHeaders (mimeType uri) (fileSize uri)
+      served response = response <$ unless headOnly (incServed >> addUpload (fileSize uri))
+  locateResource fileId uri fetchBy >>= \case
+    Nothing -> throw status404
+    Just (Stored (Redirect url))
+      -> pure $ redirect status302 url [ ( "Cache-Control", "public, max-age=600" ) ]
+    -- Warp sets the length of a file it sends, and answers Range and If-Modified-Since
+    Just (Stored (LocalFile path)) -> served
+      $ Wai.responseFile status200 (filter ((/= hContentLength) . fst) headers) path Nothing
+    Just (Stored (InMemory content)) -> served
+      $ Wai.responseLBS status200 headers (fromStrict content)
+    -- a cache miss: relay upstream bytes as they arrive, like the official proxy mode
+    Just (Streamed relay) -> do
+      -- Warp does not run the body of a HEAD response; the official client
+      -- fetches the file all the same
+      when headOnly $ embed $ void $ forkIO $ relay (const pass)
+      served $ Wai.responseStream status200 headers $ \write flush -> relay
+        (\chunk -> write (byteString chunk) >> flush)
+  where
+    options = parseURLParams optionsText
 
 -- | @\/servercmd\/\<command>\/\<additional>\/\<time>\/\<key>@: a command from the
--- RPC server. As in the official client, the key proves the sender: only the
--- RPC server knows ours.
-serverCommand :: ServerEnv -> ServerCommand -> Text -> Int -> Text -> App Body
-serverCommand env command additional time commandKey = do
+-- RPC server (HTTPResponse.java:230-260). It must come from one of the RPC
+-- servers' addresses, as flood control sees the peer, and its key proves the
+-- sender: only the RPC server knows ours.
+serverCommand :: ServerEnv -> SockAddr -> Text -> Text -> Int -> Text -> App Wai.Response
+serverCommand env peer command additional time commandKey = do
+  settings <- embed @IO (readTVarIO (envSettings env))
   now <- embed serverNow
   cfg <- ask @ClientConfig
-  when
-    (abs (fromIntegral time - now) > maxCommandDrift
-     || commandKey /= serverCommandKey cfg (renderServerCommand command) additional time)
-    $ throw err403
-  case command of
-    StillAlive        -> body "I feel FANTASTIC and I'm still alive"
-    ThreadedProxyTest -> maybe (throw err403) runProxyTest (parseProxyTest params)
-    SpeedTest         -> do
-      let size
-            = maybe 1000000 (fromIntegral . fst) (BSC.readInteger =<< Map.lookup "testsize" params)
-      addDownload size
-      pure $ filler size
-    RefreshSettings   -> do
-      logInfo "Refreshing settings"
+  unless (maybe False (isRPCServer (rpcServerIPs settings)) (sockAddrIP peer)) $ throw status403
+  unless
+    (commandTimeValid now (fromIntegral time)
+     && commandKey == serverCommandKey cfg command additional time)
+    $ throw status403
+  maybe
+    (pure $ text "INVALID_COMMAND")
+    (runCommand env)
+    (parseServerCommand command (parseURLParams (encodeUtf8 additional)))
+
+runCommand :: ServerEnv -> ServerCommand -> App Wai.Response
+runCommand env = \case
+  StillAlive -> pure $ text "I feel FANTASTIC and I'm still alive"
+  ThreadedProxyTest test -> text <$> runProxyTest test
+  SpeedTest size -> do
+    addDownload size
+    pure $ filler size
+  RefreshSettings -> do
+    logInfo "Refreshing settings"
+    -- the official client answers the same whether the refresh worked
+    refresh `catch` \(e :: HathError) -> logWarning [i|Failed to refresh settings: #{e}|]
+    pure $ text ""
+  StartDownloader -> do
+    logInfo "Starting gallery downloader"
+    embed @IO $ atomically $ writeTChan (envGalleryTasks env) GalleryTask
+    pure $ text ""
+  RefreshCerts -> do
+    logInfo "Refreshing certificates"
+    void $ embed $ forkIO $ do
+      threadDelay (2 * 1000000)
+      atomically $ writeTChan (envActions env) Cert
+    pure $ text ""
+  where
+    refresh = do
       refreshed <- clientSettings =<< embed @IO (readTVarIO (envSettings env))
       embed @IO $ atomically $ writeTVar (envSettings env) refreshed
-      body ""
-    StartDownloader   -> do
-      logInfo "Starting gallery downloader"
-      embed @IO $ atomically $ writeTChan (envGalleryTasks env) GalleryTask
-      body ""
-    RefreshCerts      -> do
-      logInfo "Refreshing certificates"
-      void $ embed $ forkIO $ do
-        threadDelay (2 * 1000000)
-        atomically $ writeTChan (envActions env) Cert
-      body ""
-  where
-    params = parseURLParams (encodeUtf8 additional)
 
--- | @\/t\/\<size>\/\<time>\/\<key>\/\<anything>@: a speed test, for the RPC server
--- or for another client it sent ('ThreadedProxyTest').
-speedTest :: Int -> Int64 -> Text -> Text -> App Body
-speedTest size time testKey _ = do
+-- | @\/t\/\<size>\/\<time>\/\<key>@: a speed test, for the RPC server or for
+-- another client it sent ('ThreadedProxyTest') (HTTPResponse.java:261-290).
+speedTest :: Int -> Int64 -> Text -> App Wai.Response
+speedTest size time testKey = do
   now <- embed serverNow
   cfg <- ask @ClientConfig
-  when (abs (time - now) > maxKeystampDrift) $ throw err403
-  when (encodeUtf8 testKey /= speedTestKey cfg size time) $ throw err403
+  unless (commandTimeValid now time && encodeUtf8 testKey == speedTestKey cfg size time)
+    $ throw status403
   addUpload size
   pure $ filler size
 
 -- | A body sent in one piece.
-body :: ByteString -> App Body
-body bytes = pure $ addHeader @"Content-Length" (BS.length bytes) $ Source.source [ bytes ]
+bytes :: Status -> ByteString -> ByteString -> Wai.Response
+bytes status contentType content
+  = Wai.responseLBS status (responseHeaders contentType (BS.length content)) (fromStrict content)
 
--- | A body of that many filler bytes, produced one TCP segment's worth at a time.
-filler :: Int -> Body
-filler size = addHeader @"Content-Length" size $ Source.fromStepT $ segments size
+-- | A reply of the official client's HTTPResponseProcessorText.
+text :: ByteString -> Wai.Response
+text = bytes status200 textType
+
+-- | The page the official client answers an error with (HTTPResponse.getHTTPResponseProcessor).
+errorPage :: Status -> Wai.Response
+errorPage status = bytes status textType [i|An error has occurred. (#{statusCode status})|]
+
+redirect :: Status -> ByteString -> [ Header ] -> Wai.Response
+redirect status url headers
+  = Wai.responseLBS status (( hLocation, url ) : headers <> responseHeaders textType 0) ""
+
+-- | What the official client's text replies say they are; its other replies
+-- without a file type spell it in lower case ('filler').
+textType :: ByteString
+textType = "text/html; charset=ISO-8859-1"
+
+-- | @size@ filler bytes, produced one TCP segment's worth at a time
+-- (Settings.TCP_PACKET_SIZE), as HTTPResponseProcessorSpeedtest sends them.
+filler :: Int -> Wai.Response
+filler size
+  = Wai.responseStream status200 (responseHeaders "text/html; charset=iso-8859-1" (max 0 size))
+  $ \write _ -> let
+      go n = when (n > 0) $ write (byteString (BS.take n segment)) >> go (n - BS.length segment)
+    in 
+      go size
   where
-    segments 0 = Source.Stop
-    segments n
-      | n >= segmentSize = Source.Yield segment (segments (n - segmentSize))
-      | otherwise = Source.Yield (BS.take n segment) Source.Stop
-
-    segmentSize = 1460
-
-    segment     = BS.replicate segmentSize 54
-
--- | A download test against another client's @\/t\/@ route.
-data ProxyTest
-  = ProxyTest { proxyTestCount :: !Int, proxyTestSize :: !Int64, proxyTestURL :: !String }
-
-parseProxyTest :: Map ByteString ByteString -> Maybe ProxyTest
-parseProxyTest params = do
-  hostname <- param "hostname"
-  port <- param "port"
-  size <- number =<< param "testsize"
-  count <- number =<< param "testcount"
-  time <- number @Int64 =<< param "testtime"
-  testKey <- param "testkey"
-  let protocol = fromMaybe "http" (param "protocol")
-  pure
-    ProxyTest
-    { proxyTestCount = count
-    , proxyTestSize  = size
-    , proxyTestURL   = BSC.unpack
-        $ mconcat
-          [ protocol
-          , "://"
-          , hostname
-          , ":"
-          , port
-          , "/t/"
-          , show size
-          , "/"
-          , show time
-          , "/"
-          , testKey
-          , "/0"
-          ]
-    }
-  where
-    param name = Map.lookup name params
-
-    number :: Num a => ByteString -> Maybe a
-    number = fmap (fromIntegral . fst) . BSC.readInteger
+    segment = BS.replicate 1460 '6'
 
 -- | Run the downloads concurrently and report, in the official format,
 -- @OK:\<successful tests>-\<total milliseconds of the successful tests>@.
-runProxyTest :: ProxyTest -> App Body
+runProxyTest :: ProxyTest -> App ByteString
 runProxyTest test = case HC.parseRequest (proxyTestURL test) of
-  Nothing      -> throw err403
+  Nothing      -> pure "INVALID_COMMAND"
   Just request -> do
     results <- embed $ do
-      manager <- HC.newManager tlsManagerSettings
+      manager <- proxyTestManager
       replicateConcurrently
         (proxyTestCount test)
         (timedDownload (proxyTestSize test) request manager)
     let succeeded = catMaybes results
     addUpload (proxyTestCount test * fromIntegral (proxyTestSize test))
-    body [i|OK:#{length succeeded}-#{sum succeeded}|]
+    pure [i|OK:#{length succeeded}-#{sum succeeded}|]
 
--- | Whole-download cap for one test.
--- ponytail: one total timeout; the official client uses 10 s connect + 60 s per read.
+-- | Connections as FileDownloader opens them: 5 s to connect, then 10 s for
+-- every read, the reply's headers included (FileDownloader.java:165-166).
+proxyTestManager :: IO HC.Manager
+proxyTestManager
+  = HC.newManager
+    tlsManagerSettings
+    { HC.managerRawConnection   = within5s <$> HC.managerRawConnection tlsManagerSettings
+    , HC.managerTlsConnection   = within5s <$> HC.managerTlsConnection tlsManagerSettings
+      -- http-client counts the connection in this one
+    , HC.managerResponseTimeout = HC.responseTimeoutMicro (connectMicros + readMicros)
+    }
+  where
+    within5s connect address host port
+      = timeout connectMicros (connect address host port)
+      >>= maybe (throwHttp HC.ConnectionTimeout) pure
+
+connectMicros, readMicros :: Int
+connectMicros = 5 * 1000000
+
+readMicros = 10 * 1000000
+
+-- | A cap on one test download, its attempts included. The official client
+-- hands FileDownloader 60 s (HTTPResponse.java:105), which it never enforces;
+-- without a cap a target that trickles could hold the RPC server's request for minutes.
 testTimeoutMicros :: Int
 testTimeoutMicros = 60 * 1000000
 
--- | The milliseconds a download took, if the whole body arrived with status 200
--- within the timeout (official: FileDownloader + getContentLength() >= testsize).
+-- | How one attempt at a test download ended.
+data Attempt
+  = Complete !Int64 !Double
+    -- ^ a body of the announced length, finished at that monotonic time
+  | Retry
+  | NotFound
+-- ^ which the official client does not try again
+
+-- | The milliseconds a test download took, from its first byte to its end, as
+-- FileDownloader times it (FileDownloader.java:130-315): up to three attempts,
+-- and the first byte is the first any of them received. It counts if a body of
+-- the announced length arrived, at least the test size (HTTPResponse.java:112).
 timedDownload :: Int64 -> HC.Request -> HC.Manager -> IO (Maybe Int64)
-timedDownload size request manager = do
-  start <- getMonotonicTime
-  outcome
-    <- timeout testTimeoutMicros $ try @SomeException $ HC.withResponse request manager $ \response
-    -> let
-        drain n
-          | n <= 0 = pure True
-          | otherwise = do
-            chunk <- HC.brRead (HC.responseBody response)
-            -- an empty chunk is EOF: the body was shorter than promised
-            if BS.null chunk
-              then pure False
-              else drain (n - fromIntegral (BS.length chunk))
-      in 
-        if HT.statusCode (HC.responseStatus response) == 200
-          then drain size
-          else pure False
-  end <- getMonotonicTime
-  pure $ case outcome of
-    Just (Right True) -> Just (truncate ((end - start) * 1000))
-    _ -> Nothing
+timedDownload testSize request manager = do
+  firstByte <- newIORef Nothing
+  let attempt = fmap (fromRight Retry) $ tryAny $ HC.withResponse request manager $ \response
+        -> case ( statusCode (HC.responseStatus response), announcedLength response ) of
+          ( 404, _ ) -> pure NotFound
+          ( status, Just announced )
+            | status < 400 -> do
+              received <- drain (HC.responseBody response) 0
+              end <- getMonotonicTime
+              pure
+                $ if received == Just announced
+                  then Complete announced end
+                  else Retry
+          -- an error status, or no length, which the official client demands
+          _ -> pure Retry
+
+      -- Nothing if a read timed out
+      drain body received = timeout readMicros (HC.brRead body) >>= \case
+        Nothing    -> pure Nothing
+        Just chunk
+          | BS.null chunk -> pure (Just received)
+          | otherwise -> do
+            whenNothingM_ (readIORef firstByte) (writeIORef firstByte . Just =<< getMonotonicTime)
+            drain body (received + fromIntegral (BS.length chunk))
+
+      go attemptsLeft = attempt >>= \case
+        Complete announced end
+          | announced >= testSize -> do
+            start <- readIORef firstByte
+            pure $ Just $ maybe 0 (\t -> truncate ((end - t) * 1000)) start
+        Retry
+          | attemptsLeft > 1 -> go (attemptsLeft - 1)
+        _ -> pure Nothing
+  join <$> timeout testTimeoutMicros (go (3 :: Int))
+  where
+    announcedLength response
+      = readMaybe . BS.unpack =<< List.lookup hContentLength (HC.responseHeaders response)

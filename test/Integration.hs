@@ -28,7 +28,7 @@ import           Hath.Server               ( ServerAction(..)
                                            , startServer
                                            )
 import           Hath.Server.FloodControl  ( newFloodControl )
-import           Hath.Settings             ( HathSettings(..), defaultHathSettings )
+import           Hath.Settings             ( HathSettings(..), defaultHathSettings, parseSettings )
 import           Hath.Stats                ( newStatsEnv )
 
 import           MockRPC
@@ -47,8 +47,10 @@ import           Network.HTTP.Client       ( Response
 import           Network.HTTP.Types        ( HeaderName
                                            , status200
                                            , status301
+                                           , status400
                                            , status403
                                            , status404
+                                           , statusCode
                                            )
 import           Network.Socket            ( tupleToHostAddress )
 import qualified Network.Socket            as Sock
@@ -80,33 +82,53 @@ testConfig
 
 -- * The application under test
 
--- | Run the application on a free port. The upstream serves @content@ for any file.
-withAppUsing :: Bool -> CacheRunner -> ByteString -> (Int -> IO a) -> IO a
-withAppUsing floodControlOn cache content action
-  = withMockRPC defaultMockRPC { mockFileContent = content } $ do
-    actions <- newTChanIO
-    galleryTasks <- newTChanIO
-    settings <- newTVarIO defaultHathSettings
-    stats <- newStatsEnv
-    floodControl <- if floodControlOn
-      then Just <$> newFloodControl
-      else pure Nothing
-    let app
-          = makeApplication
-            ServerEnv { envConfig = testConfig
-                      , envSettings = settings
-                      , envActions = actions
-                      , envGalleryTasks = galleryTasks
-                      , envStats = stats
-                      , envCache = cache
-                      , envFloodControl = floodControl
-                      , envTrustProxyHeaders = False
-                      }
-    Warp.testWithApplication (pure app) action
+-- | Run the application on a free port, with the settings the mock RPC server
+-- assigns at login.
+withAppUsing :: Bool -> CacheRunner -> MockRPC -> (Int -> IO a) -> IO a
+withAppUsing floodControlOn cache mock action = withMockRPC mock $ do
+  actions <- newTChanIO
+  galleryTasks <- newTChanIO
+  settings <- newTVarIO (parseSettings defaultHathSettings (loginSettings mock))
+  stats <- newStatsEnv
+  floodControl <- if floodControlOn
+    then Just <$> newFloodControl
+    else pure Nothing
+  let app
+        = makeApplication
+          ServerEnv { envConfig = testConfig
+                    , envSettings = settings
+                    , envActions = actions
+                    , envGalleryTasks = galleryTasks
+                    , envStats = stats
+                    , envCache = cache
+                    , envFloodControl = floodControl
+                    , envTrustProxyHeaders = False
+                    }
+  Warp.testWithApplication (pure app) action
 
 -- | The application over an empty in-memory SQLite cache, without flood control.
+withMock :: MockRPC -> (Int -> IO a) -> IO a
+withMock mock action = withMemoryCache $ \cache -> withAppUsing False cache mock action
+
+-- | The same, with an upstream that serves @content@ for any file.
 withApp :: ByteString -> (Int -> IO a) -> IO a
-withApp content action = withMemoryCache $ \cache -> withAppUsing False cache content action
+withApp content = withMock defaultMockRPC { mockFileContent = content }
+
+-- | The application over a Filesystem cache that holds a file with this
+-- content, given its id. Upstream would send something else, so a match proves
+-- the bytes came from disk.
+withFilesystemHit :: ByteString -> (Int -> Text -> IO a) -> IO a
+withFilesystemHit content action = withSystemTempDirectory "hath-fs" $ \root -> do
+  let fileId    = fileIdFor content "jpg"
+      directory = root </> toString (T.take 4 fileId)
+  createDirectoryIfMissing True directory
+  writeFileBS (directory </> toString fileId) content
+  fs <- newFsCache root
+  withAppUsing
+    False
+    CacheRunner { runCacheWith = runCacheFilesystem fs }
+    defaultMockRPC { mockFileContent = "UPSTREAM_CONTENT" }
+    (`action` fileId)
 
 withMemoryCache :: (CacheRunner -> IO a) -> IO a
 withMemoryCache use = bracket (open ":memory:") closeWhenIdle $ \conn -> do
@@ -185,7 +207,7 @@ integrationSpecs = do
       let content = "TEST_FILE_CONTENT_123"
       withApp content $ \port -> do
         time <- now
-        response <- fetch port (filePath (fileIdFor content "txt") time fetchable)
+        response <- fetch port (filePath (fileIdFor content "jpg") time fetchable)
         responseStatus response `shouldBe` status200
         body response `shouldBe` content
 
@@ -193,7 +215,7 @@ integrationSpecs = do
       let content = "CACHED_CONTENT_TEST"
       withApp content $ \port -> do
         time <- now
-        let path = filePath (fileIdFor content "txt") time fetchable
+        let path = filePath (fileIdFor content "jpg") time fetchable
         fetched <- fetch port path
         responseStatus fetched `shouldBe` status200
         cached <- fetch port path
@@ -209,7 +231,6 @@ integrationSpecs = do
       , ( "wbp", "image/webp" )
       , ( "avf", "image/avif" )
       , ( "jxl", "image/jxl" )
-      , ( "xyz", "application/octet-stream" )
       ]
       $ \( ext, contentType ) -> it [i|serves a .#{ext} file as #{contentType}|] $ do
         let content = "CONTENT_OF_A_FILE"
@@ -220,22 +241,45 @@ integrationSpecs = do
           body response `shouldBe` content
           header "Content-Type" response `shouldBe` Just contentType
 
-    it "serves a Filesystem cache hit from disk" $ do
-      let cached = "ON_DISK_CONTENT"
-          fileId = fileIdFor cached "txt"
-      withSystemTempDirectory "hath-fs" $ \root -> do
-        createDirectoryIfMissing True (root </> toString (T.take 4 fileId))
-        writeFileBS (root </> toString (T.take 4 fileId) </> toString fileId) cached
-        fs <- newFsCache root
-        -- upstream would answer differently, so a match proves the bytes came from disk
-        withAppUsing False CacheRunner { runCacheWith = runCacheFilesystem fs } "UPSTREAM_CONTENT"
-          $ \port -> do
-            time <- now
-            response <- fetch port (filePath fileId time fetchable)
-            responseStatus response `shouldBe` status200
-            body response `shouldBe` cached
-            header "Content-Length" response `shouldBe` Just (show (BS.length cached))
-            header "Content-Type" response `shouldBe` Just "application/octet-stream"
+    it "sends the official client's headers, and no User-Agent" $ withApp "x" $ \port -> do
+      time <- now
+      response <- fetch port (filePath (fileIdFor "x" "jpg") time fetchable)
+      map (`header` response) [ "Server", "Connection", "Cache-Control", "Content-Length" ]
+        `shouldBe` map
+          Just
+          [ "Genetic Lifeform and Distributed Open Server 1.6.6"
+          , "close"
+          , "public, max-age=31536000"
+          , "1"
+          ]
+      map (`header` response) [ "User-Agent", "X-Content-Type-Options" ]
+        `shouldBe` [ Nothing, Nothing ]
+
+    it "serves a Filesystem cache hit from disk"
+      $ withFilesystemHit "ON_DISK_CONTENT"
+      $ \port fileId -> do
+        time <- now
+        response <- fetch port (filePath fileId time fetchable)
+        responseStatus response `shouldBe` status200
+        body response `shouldBe` "ON_DISK_CONTENT"
+        header "Content-Length" response `shouldBe` Just "15"
+        header "Content-Type" response `shouldBe` Just "image/jpeg"
+
+    it "does not serve even a cached file without its fileindex and xres, as the official client"
+      $ withFilesystemHit "ON_DISK_CONTENT"
+      $ \port fileId -> do
+        time <- now
+        response <- fetch port (filePath fileId time "")
+        responseStatus response `shouldBe` status404
+
+    it "serves a file id written with leading zeros" $ do
+      let content = "LEADING_ZEROS"
+          fileId  = sha1HexText content <> "-0013-01024-768-jpg"
+      withApp content $ \port -> do
+        time <- now
+        response <- fetch port (filePath fileId time fetchable)
+        responseStatus response `shouldBe` status200
+        body response `shouldBe` content
 
     it "still serves a fetched file when the cache write fails" $ do
       let content      = "WRITE_FAILS_CONTENT"
@@ -243,41 +287,60 @@ integrationSpecs = do
                                          LookupFile _  -> pure Nothing
                                          StoreFile _ _ -> throw (StorageError "write refused")
                                          DeleteFile _  -> pass }
-      withAppUsing False brokenWrites content $ \port -> do
+      withAppUsing False brokenWrites defaultMockRPC { mockFileContent = content } $ \port -> do
         time <- now
-        response <- fetch port (filePath (fileIdFor content "txt") time fetchable)
+        response <- fetch port (filePath (fileIdFor content "jpg") time fetchable)
         responseStatus response `shouldBe` status200
         body response `shouldBe` content
 
     it "refuses an invalid keystamp" $ withApp "x" $ \port -> do
-      response <- fetch port [i|/h/#{fileIdFor "x" "txt"}/keystamp=invalid#{fetchable}/file|]
+      response <- fetch port [i|/h/#{fileIdFor "x" "jpg"}/keystamp=invalid#{fetchable}/file|]
       responseStatus response `shouldBe` status403
 
-    it "refuses a keystamp 601 seconds old, and says why" $ withApp "x" $ \port -> do
-      time <- now
-      response <- fetch port (filePath (fileIdFor "x" "txt") (time - 601) fetchable)
-      responseStatus response `shouldBe` status403
-      body response `shouldSatisfy` ("time" `BS.isInfixOf`)
+    it "refuses a keystamp 900 seconds old, with the official error page" $ withApp "x" $ \port
+      -> do
+        time <- now
+        response <- fetch port (filePath (fileIdFor "x" "jpg") (time - 900) fetchable)
+        responseStatus response `shouldBe` status403
+        body response `shouldBe` "An error has occurred. (403)"
+        header "Content-Type" response `shouldBe` Just "text/html; charset=ISO-8859-1"
 
-    it "accepts a keystamp 500 seconds ahead" $ withApp "x" $ \port -> do
-      time <- now
-      response <- fetch port (filePath (fileIdFor "x" "txt") (time + 500) fetchable)
-      responseStatus response `shouldBe` status200
+    -- a few seconds short of 900, for the time the request takes
+    forM_ [ -890, 890 ]
+      $ \drift -> it [i|accepts a keystamp #{drift} seconds from now|] $ withApp "x" $ \port -> do
+        time <- now
+        response <- fetch port (filePath (fileIdFor "x" "jpg") (time + drift) fetchable)
+        responseStatus response `shouldBe` status200
 
     it "does not find a file it lacks when the request has no fileindex" $ withApp "x" $ \port -> do
       time <- now
-      response <- fetch port (filePath (fileIdFor "x" "txt") time ";xres=1024")
+      response <- fetch port (filePath (fileIdFor "x" "jpg") time ";xres=1024")
       responseStatus response `shouldBe` status404
 
     it "does not find a file it lacks when the request has no options" $ withApp "x" $ \port -> do
       time <- now
-      response <- fetch port (filePath (fileIdFor "x" "txt") time "")
+      response <- fetch port (filePath (fileIdFor "x" "jpg") time "")
       responseStatus response `shouldBe` status404
 
-    it "exempts local addresses from flood control" $ withMemoryCache $ \cache
-      -> withAppUsing True cache "x" $ \port -> do
+    it "does not ask the RPC server about a file id the official client refuses" $ do
+      seen <- newIORef []
+      withMock defaultMockRPC { mockSeen = atomicModifyIORef'_ seen . (:) } $ \port -> do
         time <- now
-        responses <- replicateM 13 $ fetch port (filePath (fileIdFor "x" "txt") time fetchable)
+        response <- fetch port (filePath (fileIdFor "x" "txt") time fetchable)
+        responseStatus response `shouldBe` status404
+      readIORef seen `shouldReturn` []
+
+    it "does not find a file when srfetch fails"
+      $ withMock defaultMockRPC { mockOutages = 3 }
+      $ \port -> do
+        time <- now
+        response <- fetch port (filePath (fileIdFor "x" "jpg") time fetchable)
+        responseStatus response `shouldBe` status404
+
+    it "exempts local addresses from flood control" $ withMemoryCache $ \cache
+      -> withAppUsing True cache defaultMockRPC { mockFileContent = "x" } $ \port -> do
+        time <- now
+        responses <- replicateM 13 $ fetch port (filePath (fileIdFor "x" "jpg") time fetchable)
         responseStatus <$> responses `shouldBe` replicate 13 status200
 
   describe "Server commands" $ do
@@ -285,6 +348,12 @@ integrationSpecs = do
       time <- now
       response <- fetch port (commandPath "still_alive" "additional" time)
       responseStatus response `shouldBe` status200
+      body response `shouldBe` "I feel FANTASTIC and I'm still alive"
+      header "Content-Type" response `shouldBe` Just "text/html; charset=ISO-8859-1"
+
+    it "takes a command name in any case" $ withApp "x" $ \port -> do
+      time <- now
+      response <- fetch port (commandPath "Still_Alive" "" time)
       body response `shouldSatisfy` ("FANTASTIC" `BS.isInfixOf`)
 
     forM_
@@ -298,15 +367,42 @@ integrationSpecs = do
         response <- fetch port (commandPath command additional time)
         responseStatus response `shouldBe` status200
 
+    it "answers refresh_settings with 200 and nothing when the refresh fails"
+      $ withMock defaultMockRPC { mockOutages = 3 }
+      $ \port -> do
+        time <- now
+        response <- fetch port (commandPath "refresh_settings" "" time)
+        responseStatus response `shouldBe` status200
+        body response `shouldBe` ""
+
+    forM_
+      [ ( "an unknown command", "stand_up", "" )
+      , ( "threaded_proxy_test without its parameters", "threaded_proxy_test", "additional" )
+      , ( "speed_test with a testsize that is not a number", "speed_test", "testsize=lots" )
+      ]
+      $ \( what :: Text, command, additional )
+      -> it [i|answers #{what} with INVALID_COMMAND|] $ withApp "x" $ \port -> do
+        time <- now
+        response <- fetch port (commandPath command additional time)
+        responseStatus response `shouldBe` status200
+        body response `shouldBe` "INVALID_COMMAND"
+
     it "refuses a command without a valid key" $ withApp "x" $ \port -> do
       time <- now
       response <- fetch port [i|/servercmd/still_alive/additional/#{time}/key|]
       responseStatus response `shouldBe` status403
 
-    it "refuses threaded_proxy_test without its parameters" $ withApp "x" $ \port -> do
+    it "refuses a command with a part missing" $ withApp "x" $ \port -> do
       time <- now
-      response <- fetch port (commandPath "threaded_proxy_test" "additional" time)
+      response <- fetch port [i|/servercmd/still_alive/additional/#{time}|]
       responseStatus response `shouldBe` status403
+
+    it "refuses a command from an address rpc_server_ip does not list"
+      $ withMock defaultMockRPC { mockRPCServerIP = "192.0.2.1" }
+      $ \port -> do
+        time <- now
+        response <- fetch port (commandPath "still_alive" "" time)
+        responseStatus response `shouldBe` status403
 
     it "reports the successful tests of threaded_proxy_test, and does not hang on a failing target"
       $ withApp "x"
@@ -326,15 +422,26 @@ integrationSpecs = do
         failed `shouldBe` Just "OK:0-0"
 
   describe "Speed tests" $ do
-    it "sends the bytes asked for with a valid key" $ withApp "x" $ \port -> do
-      time <- now
-      response <- fetch port [i|/t/1000/#{time}/#{speedTestKeyFor 1000 time}/nothing|]
-      responseStatus response `shouldBe` status200
-      BS.length (body response) `shouldBe` 1000
+    forM_ [ "/nothing", "" ] $ \(rest :: Text)
+      -> it [i|sends the bytes asked for with a valid key (#{rest})|] $ withApp "x" $ \port -> do
+        time <- now
+        response <- fetch port [i|/t/1000/#{time}/#{speedTestKeyFor 1000 time}#{rest}|]
+        responseStatus response `shouldBe` status200
+        BS.length (body response) `shouldBe` 1000
 
     it "refuses a test from another time" $ withApp "x" $ \port -> do
       response <- fetch port "/t/1000/1000000/invalid-key/nothing"
       responseStatus response `shouldBe` status403
+
+    it "refuses a test 301 seconds old" $ withApp "x" $ \port -> do
+      time <- subtract 301 <$> now
+      response <- fetch port [i|/t/1000/#{time}/#{speedTestKeyFor 1000 time}|]
+      responseStatus response `shouldBe` status403
+
+    it "does not understand a test with a part missing" $ withApp "x" $ \port -> do
+      time <- now
+      response <- fetch port [i|/t/1000/#{time}|]
+      responseStatus response `shouldBe` status400
 
   describe "Other routes" $ do
     it "reports metrics" $ withApp "x" $ \port -> do
@@ -345,23 +452,57 @@ integrationSpecs = do
     it "disallows robots" $ withApp "x" $ \port -> do
       response <- fetch port "/robots.txt"
       responseStatus response `shouldBe` status200
-      body response `shouldSatisfy` ("Disallow" `BS.isInfixOf`)
+      body response `shouldBe` "User-agent: *\nDisallow: /"
+      header "Content-Type" response `shouldBe` Just "text/plain; charset=ISO-8859-1"
 
     it "redirects /favicon.ico to e-hentai.org" $ withApp "x" $ \port -> do
       response <- fetch port "/favicon.ico"
       responseStatus response `shouldBe` status301
       header "Location" response `shouldBe` Just "https://e-hentai.org/favicon.ico"
 
-    it "answers HEAD on any path with 200 and no body" $ withApp "x" $ \port -> do
-      response <- request "HEAD" port "/anything"
+    forM_
+      [ ( "GET", "/unknown-path", status404 )
+      , ( "GET", "/random/path/here", status404 )
+      , ( "GET", "/h/only-an-id", status400 )
+      , ( "POST", "/unknown-post", status400 )
+      , ( "PUT", "/robots.txt", status400 )
+      ]
+      $ \( verb, path, status )
+      -> it [i|answers #{verb} #{path} with #{statusCode status}|] $ withApp "x" $ \port -> do
+        response <- request verb port path
+        responseStatus response `shouldBe` status
+        body response `shouldBe` [i|An error has occurred. (#{statusCode status})|]
+
+  describe "HEAD" $ do
+    it "is answered as GET, without the body" $ withApp "CONTENT" $ \port -> do
+      time <- now
+      let path = filePath (fileIdFor "CONTENT" "png") time fetchable
+      response <- request "HEAD" port path
       responseStatus response `shouldBe` status200
+      map (`header` response) [ "Content-Type", "Content-Length" ]
+        `shouldBe` [ Just "image/png", Just "7" ]
       body response `shouldBe` ""
 
-    forM_
-      [ ( "GET", "/unknown-path" ), ( "GET", "/random/path/here" ), ( "POST", "/unknown-post" ) ]
-      $ \( verb, path ) -> it [i|does not find #{verb} #{path}|] $ withApp "x" $ \port -> do
-        response <- request verb port path
-        responseStatus response `shouldBe` status404
+    it "goes through the same checks" $ withApp "x" $ \port -> do
+      time <- now
+      refused <- request "HEAD" port (filePath (fileIdFor "x" "jpg") (time - 900) fetchable)
+      responseStatus refused `shouldBe` status403
+      unknown <- request "HEAD" port "/anything"
+      responseStatus unknown `shouldBe` status404
+      header "Content-Length" unknown `shouldBe` Just "28"
+      body unknown `shouldBe` ""
+
+    it "of a file it lacks fetches it, as the official client" $ do
+      seen <- newIORef []
+      withMock defaultMockRPC { mockFileContent = "x", mockSeen = atomicModifyIORef'_ seen . (:) }
+        $ \port -> do
+          time <- now
+          let path = filePath (fileIdFor "x" "jpg") time fetchable
+          responseStatus <$> request "HEAD" port path `shouldReturn` status200
+          -- the fetch finishes on its own; give it a moment to reach the cache
+          threadDelay 1000000
+          body <$> fetch port path `shouldReturn` "x"
+      readIORef seen `shouldReturn` [ "srfetch" ]
 
   describe "The TLS server" $ do
     it "starts, and serves a file" $ do
@@ -369,7 +510,7 @@ integrationSpecs = do
       withServer (const defaultMockRPC { mockFileContent = content }) $ \port _ -> do
         time <- now
         -- plain HTTP is allowed on the TLS port
-        response <- fetch port (filePath (fileIdFor content "txt") time fetchable)
+        response <- fetch port (filePath (fileIdFor content "jpg") time fetchable)
         responseStatus response `shouldBe` status200
         body response `shouldBe` content
 

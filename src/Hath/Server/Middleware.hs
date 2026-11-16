@@ -1,11 +1,5 @@
 -- | What every request passes through before it reaches a handler.
-module Hath.Server.Middleware
-  ( rateLimitMiddleware
-  , tracingConnections
-  , tracingTimeUsage
-  , normalizeAcceptMiddleware
-  , withHathHeaders
-  ) where
+module Hath.Server.Middleware ( rateLimitMiddleware, tracingConnections, tracingTimeUsage ) where
 
 import           Control.Exception        ( finally )
 
@@ -13,7 +7,6 @@ import qualified Data.ByteString          as BS
 
 import           GHC.Clock                ( getMonotonicTime )
 
-import           Hath.Protocol            ( hathHeaders )
 import           Hath.Server.FloodControl ( FloodControl
                                           , IP
                                           , checkRateLimit
@@ -22,13 +15,11 @@ import           Hath.Server.FloodControl ( FloodControl
                                           )
 import           Hath.Stats               ( StatsEnv, observeDuration, trackConnection )
 
-import           Network.HTTP.Types       ( hAccept, mkStatus )
+import           Network.HTTP.Types       ( mkStatus )
 import           Network.Wai              ( Middleware
                                           , Response
-                                          , mapResponseHeaders
                                           , rawPathInfo
                                           , remoteHost
-                                          , requestHeaders
                                           , responseLBS
                                           )
 
@@ -69,19 +60,3 @@ tracingTimeUsage stats app req respond = do
   app req respond `finally` do
     end <- getMonotonicTime
     observeDuration stats (end - start)
-
--- | Treat every request as accepting anything, so content negotiation never
--- turns a reader away.
-normalizeAcceptMiddleware :: Middleware
-normalizeAcceptMiddleware app req
-  = app req { requestHeaders = map acceptAnything (requestHeaders req) }
-  where
-    acceptAnything ( name, value )
-      | name == hAccept = ( name, "*/*" )
-      | otherwise = ( name, value )
-
--- | Add 'hathHeaders' to a response, except those it already sets.
-withHathHeaders :: Middleware
-withHathHeaders app req respond = app req (respond . mapResponseHeaders addMissing)
-  where
-    addMissing headers = filter ((`notElem` map fst headers) . fst) hathHeaders ++ headers
