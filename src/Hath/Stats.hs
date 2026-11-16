@@ -18,7 +18,10 @@ module Hath.Stats
   , runStats
   ) where
 
+import           GHC.Clock             ( getMonotonicTime )
+
 import qualified Hath.Metrics.Counter  as Counter
+import qualified Hath.Metrics.Gauge    as Gauge
 import           Hath.Metrics.Registry ( newRegistry, registerCounter, registerGauge, registerHistogram )
 import           Hath.Metrics.Snapshot ( getCachedSnapshot, startSnapshotWorker )
 import           Hath.Metrics.Types    ( Counter, Gauge, Histogram, Registry )
@@ -46,6 +49,7 @@ data StatsEnv
 -- | Register the metrics and start the worker that renders them every 5 seconds.
 newStatsEnv :: IO StatsEnv
 newStatsEnv = do
+  start <- getMonotonicTime
   registry <- newRegistry
   uploadBytes <- registerCounter "hath_cache_sent_bytes_total" "Total bytes sent from cache" registry
   downloadBytes
@@ -64,7 +68,9 @@ newStatsEnv = do
     "Time from request to the last byte sent"
     [ 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60 ]
     registry
-  startSnapshotWorker registry (5 * 1000000)
+  startSnapshotWorker registry (5 * 1000000) $ do
+    now <- getMonotonicTime
+    Gauge.set (round (now - start)) uptime
   pure
     StatsEnv
     { statsRegistry = registry

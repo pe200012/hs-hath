@@ -15,6 +15,7 @@ and this project adheres to the
 - Removed the disabled static-range check: like the official client, any file the server routes here is served
 - The CI workflow now runs the test suite
 - **`downloadDir`** and `--download-dir` had no effect: the gallery downloader always wrote to `./download`. It now writes to the configured directory, as `<downloadDir>/<gallery id>/`; files of a download in progress under `./download` are fetched again unless that is the configured directory
+- `hath_uptime_seconds` was always 0; it is now brought up to date with every metrics snapshot
 
 ### Changed
 - **Certificate refresh** swaps the certificate in place for new handshakes instead of restarting the listener, so transfers in progress are no longer cut off and `client_start` is not re-sent

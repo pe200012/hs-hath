@@ -37,10 +37,12 @@ generateSnapshot reg = do
   -- Render to Prometheus text format
   pure $ Prometheus.render (counterSnapshots <> gaugeSnapshots <> histogramSnapshots)
 
--- | Start a background worker that periodically updates the cached snapshot
--- This decouples metrics reads from the /metrics endpoint, eliminating blocking
-startSnapshotWorker :: Registry -> Int -> IO ()
-startSnapshotWorker reg intervalMicros = void $ forkIO $ forever $ do
+-- | Start a background worker that renders the snapshot now and then at the
+-- given interval, so that reading \/metrics never has to. The action runs before
+-- each rendering; it is where gauges that are computed, not counted, get their value.
+startSnapshotWorker :: Registry -> Int -> IO () -> IO ()
+startSnapshotWorker reg intervalMicros refresh = void $ forkIO $ forever $ do
+  refresh
   snapshot <- generateSnapshot reg
   atomically $ writeTVar (registryCachedSnapshot reg) snapshot
   threadDelay intervalMicros
