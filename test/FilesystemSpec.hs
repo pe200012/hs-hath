@@ -39,7 +39,7 @@ runFs :: FsCache -> Sem '[ Cache, Log Message, Error HathError, Embed IO ] a -> 
 runFs fs program = do
   result <- runM
     . runError @HathError
-    . runLogAction @IO @Message (LogAction $ \_ -> pure ())
+    . runLogAction @IO @Message (LogAction $ const pass)
     . runCacheFilesystem fs
     $ program
   either (\e -> fail $ "unexpected error: " <> show e) pure result

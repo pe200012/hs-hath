@@ -2,7 +2,6 @@
 module Hath.Metrics.Prometheus ( render ) where
 
 import           Data.ByteString.Builder ( Builder, byteString, int64Dec, toLazyByteString )
-import qualified Data.ByteString.Lazy    as LBS
 import qualified Data.Map.Strict         as Map
 import qualified Data.Text               as Text
 import           Data.Text.Encoding      ( encodeUtf8Builder )
@@ -15,7 +14,7 @@ import           Relude
 
 -- | Render metric snapshots, each with its HELP and TYPE lines.
 render :: [ MetricSnapshot ] -> ByteString
-render = LBS.toStrict . toLazyByteString . foldMap renderMetric
+render = toStrict . toLazyByteString . foldMap renderMetric
 
 renderMetric :: MetricSnapshot -> Builder
 renderMetric = \case

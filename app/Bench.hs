@@ -14,7 +14,6 @@ module Bench ( main ) where
 import qualified Data.ByteString          as BS
 import qualified Data.ByteString.Builder  as BB
 import qualified Data.ByteString.Char8    as BSC
-import qualified Data.ByteString.Lazy     as LBS
 import qualified Data.List                as List
 import qualified Data.Map.Strict          as Map
 import           Data.String.Interpolate  ( i )
@@ -197,12 +196,15 @@ instructions o wd
 Waiting for client_start...|]
 
 mkGallery :: Int64 -> Int -> Int -> [ GFile ]
-mkGallery nonce n size
-  = [ GFile k fileId body
-    | k <- [ 1 .. n ]
-    , let prefix = encodeUtf8 ([i|hath-bench #{nonce} #{k} |] :: Text)
-          body   = prefix <> BS.replicate (size - BS.length prefix) 46
-          fileId = [i|#{sha1HexText body}-#{size}-1280-1707-jpg|] ]
+mkGallery nonce n size = file <$> [ 1 .. n ]
+  where
+    file k = GFile k fileId body
+      where
+        prefix = encodeUtf8 ([i|hath-bench #{nonce} #{k} |] :: Text)
+
+        body   = prefix <> BS.replicate (size - BS.length prefix) 46
+
+        fileId = [i|#{sha1HexText body}-#{size}-1280-1707-jpg|]
 
 -- | RPC endpoint, fake image server (/up) and speed-test target (/t) on one port.
 app :: Bench -> Wai.Application
@@ -230,14 +232,14 @@ app b req respond = case Wai.pathInfo req of
       $ Wai.responseLBS
         H.status200
         [ ( H.hContentType, "text/plain;charset=UTF-8" ), ( H.hContentLength, show (BS.length body) ) ]
-        (LBS.fromStrict body)
+        (fromStrict body)
 
     -- 1.6.6 signs replies: OK-<t>-<sha1("<t>-<key>" ++ concatMap ("\n" ++) lines)>
     okWith signed ls = do
       now <- systemSeconds <$> getSystemTime
       let sig = sha1HexText (encodeUtf8 (T.concat ([i|#{now}-#{oClientKey o}|] : map ("\n" <>) ls)))
           status = if signed then [i|OK-#{now}-#{sig}|] else "OK"
-      rpcResponse (encodeUtf8 (T.unlines (status : ls)))
+      rpcResponse (encodeUtf8 (unlines (status : ls)))
 
     settings
       = [ [i|rpc_server_ip=#{oPublicHost o}|]
@@ -371,7 +373,7 @@ runPhases b mgr files = do
         let ( passed, note ) = check ss
         pure $ Row name ss (t1 - t0) passed note
 
-      allFull size ss = all (\s -> sStatus s == Just 200 && sBytes s == size) ss
+      allFull size = all (\s -> sStatus s == Just 200 && sBytes s == size)
       bodyText = decodeUtf8 . sHead :: Sample -> Text
       bodyIs p ss = ( all (\s -> sStatus s == Just 200 && p (bodyText s)) ss, T.intercalate " " (bodyText <$> ss) )
 
@@ -383,7 +385,7 @@ runPhases b mgr files = do
                  , rowNote = [i|srfetch=#{fetches} (want #{expectFetches})|] }
 
   -- for poking the client from a third machine (e.g. a flood-control burst)
-  writeFileText (oWorkDir o </> "urls.txt") (T.unlines (toText . fileUrl <$> files))
+  writeFileText (oWorkDir o </> "urls.txt") (unlines (toText . fileUrl <$> files))
   sequence
     [ phase "servercmd still_alive" 1 [ servercmd "still_alive" "" ] (bodyIs (const True))
     , phase "servercmd speed_test" 2 (replicate 2 (servercmd "speed_test" "testsize=2500000"))
@@ -408,7 +410,7 @@ report o rows calls = do
     ("total p50/p95" :: String) ("MB/s" :: String) ("check" :: String)
   forM_ rows $ \r -> do
     let ss = rowSamples r
-        statuses = T.unwords
+        statuses = unwords
           [ [i|#{maybe "err" (show @Text) s}x#{c}|] :: Text
           | ( s, c ) <- Map.toList (Map.fromListWith (+) [ ( sStatus x, 1 :: Int ) | x <- ss ]) ]
         ms f = [i|#{msAt 0.5 f ss}/#{msAt 0.95 f ss}|] :: Text
@@ -417,7 +419,7 @@ report o rows calls = do
       (toString (rowName r)) (toString statuses) (toString (ms sTtfb)) (toString (ms sTotal)) mbps
       (if rowPassed r then "ok" else "FAIL" :: String) (toString (rowNote r))
   printf "\nRPC calls seen: %s\n"
-    (toString (T.unwords [ [i|#{a}x#{n}|] | ( a, n ) <- Map.toList calls ]))
+    (toString (unwords [ [i|#{a}x#{n}|] | ( a, n ) <- Map.toList calls ]))
   where
     msAt :: Double -> (Sample -> Double) -> [ Sample ] -> Int
     msAt p f ss = case sort (f <$> ss) of

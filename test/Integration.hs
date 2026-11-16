@@ -6,7 +6,6 @@ import           Control.Concurrent        ( forkIO, killThread, threadDelay )
 import           Control.Exception         ( IOException, bracket, catch, throwIO, try )
 
 import qualified Data.ByteString           as BS
-import qualified Data.ByteString.Lazy      as LBS
 import qualified Data.List                 as List
 import           Data.String.Interpolate   ( i )
 import qualified Data.Text                 as T
@@ -162,7 +161,7 @@ fetch :: Int -> String -> IO (Response LByteString)
 fetch = request "GET"
 
 body :: Response LByteString -> ByteString
-body = LBS.toStrict . responseBody
+body = toStrict . responseBody
 
 header :: HeaderName -> Response LByteString -> Maybe ByteString
 header name = List.lookup name . responseHeaders

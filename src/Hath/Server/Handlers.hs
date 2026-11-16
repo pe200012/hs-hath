@@ -9,7 +9,6 @@ import           Control.Exception       ( try )
 import qualified Data.ByteString         as BS
 import           Data.ByteString.Builder ( byteString )
 import qualified Data.ByteString.Char8   as BSC
-import qualified Data.ByteString.Lazy    as LBS
 import qualified Data.Map.Strict         as Map
 import           Data.String.Interpolate ( i )
 import           Data.Time.Clock.System  ( SystemTime(systemSeconds), getSystemTime )
@@ -99,10 +98,10 @@ resource :: Text
          -> Wai.Request
          -> (Wai.Response -> IO Wai.ResponseReceived)
          -> App Wai.ResponseReceived
-resource (encodeUtf8 -> fileId) (parseURLParams . encodeUtf8 -> options) _fileName req respond
+resource fileIdText optionsText _fileName req respond = case Wai.requestMethod req of
   -- answer HEAD like any other path instead of opening an upstream body nobody reads
-  | Wai.requestMethod req == "HEAD" = embed $ respond $ Wai.responseLBS status200 hathHeaders ""
-  | otherwise = do
+  "HEAD" -> embed $ respond $ Wai.responseLBS status200 hathHeaders ""
+  _      -> do
     now <- embed $ systemSeconds <$> getSystemTime
     cfg <- ask @ClientConfig
     when (abs (stampTime - now) > maxKeystampDrift)
@@ -123,7 +122,7 @@ resource (encodeUtf8 -> fileId) (parseURLParams . encodeUtf8 -> options) _fileNa
         addUpload (BS.length bytes)
         embed
           $ respond
-          $ Wai.responseLBS status200 (fileHeaders uri (BS.length bytes)) (LBS.fromStrict bytes)
+          $ Wai.responseLBS status200 (fileHeaders uri (BS.length bytes)) (fromStrict bytes)
       -- cache miss: relay upstream bytes as they arrive, like the official proxy mode
       Just (Streamed relay) -> do
         incServed
@@ -133,6 +132,10 @@ resource (encodeUtf8 -> fileId) (parseURLParams . encodeUtf8 -> options) _fileNa
           $ Wai.responseStream status200 (fileHeaders uri (fileSize uri))
           $ \write flush -> relay (\chunk -> write (byteString chunk) >> flush)
   where
+    fileId = encodeUtf8 fileIdText
+
+    options = parseURLParams (encodeUtf8 optionsText)
+
     ( stampTime, stampHash ) = parseKeystamp (fromMaybe "" (Map.lookup "keystamp" options))
 
 fileHeaders :: FileURI -> Int -> [ HT.Header ]

@@ -37,7 +37,6 @@ import           Crypto.Store.PKCS12     ( readP12FileFromMemory
                                          )
 
 import qualified Data.ByteString.Char8   as BS
-import qualified Data.ByteString.Lazy    as LBS
 import           Data.String.Interpolate ( i )
 import qualified Data.Text               as T
 import           Data.Time.Clock.System  ( SystemTime(systemSeconds), getSystemTime )
@@ -127,7 +126,7 @@ instance Accept RPCText where
   contentType _ = "text" // "plain" /: ( "charset", "utf-8" )
 
 instance MimeUnrender RPCText ByteString where
-  mimeUnrender _ = Right . LBS.toStrict
+  mimeUnrender _ = Right . toStrict
 
 rpcClient
   :: Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> Maybe Text -> ClientM ByteString

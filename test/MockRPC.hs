@@ -3,7 +3,6 @@
 module MockRPC ( MockRPC(..), defaultMockRPC, withMockRPC ) where
 
 import qualified Data.ByteString.Char8    as BS
-import qualified Data.ByteString.Lazy     as LBS
 import qualified Data.List                as List
 
 import           Hath.Protocol            ( sha1Hex )
@@ -47,12 +46,12 @@ application mock req respond = respond $ case ( Wai.rawPathInfo req, parameter "
     HTTP.status200
     -- image servers always send the length
     [ ( "Content-Length", show (BS.length (mockFileContent mock)) ) ]
-    (LBS.fromStrict (mockFileContent mock))
+    (fromStrict (mockFileContent mock))
   _ -> Wai.responseLBS HTTP.status404 [ ( "Content-Type", "text/plain" ) ] "Not Found"
   where
     parameter name = join (List.lookup name (Wai.queryString req))
 
-    plain = Wai.responseLBS HTTP.status200 [ ( "Content-Type", "text/plain; charset=utf-8" ) ] . LBS.fromStrict
+    plain = Wai.responseLBS HTTP.status200 [ ( "Content-Type", "text/plain; charset=utf-8" ) ] . fromStrict
 
     -- we are the image server too, at whatever address the client reached us
     ownAddress = fromMaybe "localhost" (Wai.requestHeaderHost req)

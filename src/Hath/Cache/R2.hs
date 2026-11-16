@@ -64,12 +64,12 @@ mkR2Connection cfg = do
     ( Just accessKey, Just secretKey ) -> do
       let creds
             = CredentialValue
-            { cvAccessKey    = AccessKey $ T.pack accessKey
+            { cvAccessKey    = AccessKey $ toText accessKey
             , cvSecretKey    = SecretKey $ BA.convert (encodeUtf8 @String @ByteString secretKey)
             , cvSessionToken = Nothing
             }
           -- the IsString instance parses the endpoint URL
-          baseConnInfo = fromString $ T.unpack $ r2Endpoint cfg
+          baseConnInfo = fromString $ toString $ r2Endpoint cfg
       manager <- newManager tlsManagerSettings
       minioConn <- Minio.mkMinioConn (setCreds creds $ setRegion "auto" baseConnInfo) manager
       -- ponytail: fixed capacity; links expire after 10 min, so it only has to hold ~10 min of distinct hits

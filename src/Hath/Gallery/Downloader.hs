@@ -16,7 +16,6 @@ import           Control.Exception       ( try )
 import           Control.Monad.Extra     ( firstJustM )
 
 import qualified Data.ByteString.Char8   as BS
-import qualified Data.ByteString.Lazy    as LBS
 import           Data.String.Interpolate ( i )
 
 import           Hath.AtomicFile         ( writeFileAtomic )
@@ -55,8 +54,8 @@ data GalleryTask = GalleryTask
 
 -- | Serve 'GalleryTask's forever, one gallery per task. A failed download is
 -- logged; the server will ask again.
-runGalleryDownloader :: ClientConfig -> StatsEnv -> TChan GalleryTask -> IO ()
-runGalleryDownloader config stats tasks = forever $ do
+runGalleryDownloader :: ClientConfig -> StatsEnv -> TChan GalleryTask -> IO Void
+runGalleryDownloader config stats tasks = infinitely $ do
   GalleryTask <- atomically $ readTChan tasks
   outcome <- try @SomeException
     $ runFinal
@@ -92,7 +91,7 @@ downloadNextGallery = do
 -- 'Hath.Gallery.parseMetadata' has made sure the name and type are plain.
 galleryFilePath :: FilePath -> GalleryMetadata -> GalleryFile -> FilePath
 galleryFilePath directory gallery file
-  = directory </> show (galleryID gallery) </> text (galleryFileName file) <.> text (galleryFileExt file)
+  = directory </> show (galleryID gallery) </> (text (galleryFileName file) <.> text (galleryFileExt file))
   where
     text = toString . decodeUtf8 @Text
 
@@ -153,7 +152,7 @@ downloadGalleryFile gallery file = do
 
     download url = case parseRequest url of
       Nothing  -> pure Nothing
-      Just req -> embed (try @HttpException $ LBS.toStrict . responseBody <$> httpLbs req) >>= \case
+      Just req -> embed (try @HttpException $ toStrict . responseBody <$> httpLbs req) >>= \case
         Left _ -> pure Nothing
         Right bytes
           | hasExpectedHash file bytes -> pure (Just bytes)

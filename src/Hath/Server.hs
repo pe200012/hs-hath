@@ -9,7 +9,7 @@ module Hath.Server
   , GalleryTask(..)
   ) where
 
-import           Control.Concurrent                   ( forkIO, threadDelay )
+import           Control.Concurrent                   ( threadDelay )
 
 import           Data.X509                            ( CertificateChain, PrivKey )
 
@@ -109,22 +109,27 @@ startServer config options settings certs actions = do
   floodControl <- if disableRateLimit options
     then pure Nothing
     else Just <$> newFloodControl
-  void $ forkIO $ runGalleryDownloader config stats galleryTasks
-  print =<< runRPCIO config (getBlacklist 259200)
-  withCacheBackend config (diskLimitBytes <$> readTVarIO settingsVar)
-    $ \cache -> withHousekeeping config
-    $ serverLoop
-      ServerEnv
-      { envConfig            = config
-      , envSettings          = settingsVar
-      , envActions           = actions
-      , envGalleryTasks      = galleryTasks
-      , envStats             = stats
-      , envCache             = cache
-      , envFloodControl      = floodControl
-      , envTrustProxyHeaders = trustProxyHeaders options
-      }
-      certs
+  runGalleryDownloader config stats galleryTasks `alongside` do
+    print =<< runRPCIO config (getBlacklist 259200)
+    withCacheBackend config (diskLimitBytes <$> readTVarIO settingsVar)
+      $ \cache -> withHousekeeping config
+      $ serverLoop
+        ServerEnv
+        { envConfig            = config
+        , envSettings          = settingsVar
+        , envActions           = actions
+        , envGalleryTasks      = galleryTasks
+        , envStats             = stats
+        , envCache             = cache
+        , envFloodControl      = floodControl
+        , envTrustProxyHeaders = trustProxyHeaders options
+        }
+        certs
+
+-- | Run the second action with the first running beside it. The first is
+-- stopped when the second ends.
+alongside :: IO a -> IO b -> IO b
+alongside background action = withAsync background (const action)
 
 -- | Open the cache the config asks for. The Filesystem backend also gets its
 -- evictor, which follows the disk limit the server assigns.
@@ -140,17 +145,17 @@ withCacheBackend config diskLimit use = case cacheBackend config of
       Right conn -> use CacheRunner { runCacheWith = runCacheR2 conn }
   CacheBackendFilesystem -> do
     fs <- newFsCache (toString $ cachePath config)
-    withAsync (runEvictor fs diskLimit) $ \_ -> use CacheRunner { runCacheWith = runCacheFilesystem fs }
+    runEvictor fs diskLimit `alongside` use CacheRunner { runCacheWith = runCacheFilesystem fs }
 
 -- | Run an action while a heartbeat goes to the RPC server every minute and
 -- the blacklist is fetched every 36 minutes.
 withHousekeeping :: ClientConfig -> IO a -> IO a
-withHousekeeping config action
-  = withAsync (every (minutes 1) $ void $ runRPCIO config stillAlive)
-  $ \_ -> withAsync (every (minutes 36) $ print =<< runRPCIO config (getBlacklist 43200))
-  $ \_ -> action
+withHousekeeping config
+  = alongside (every (minutes 1) $ void $ runRPCIO config stillAlive)
+  . alongside (every (minutes 36) $ print =<< runRPCIO config (getBlacklist 43200))
   where
-    every delay task = forever $ threadDelay delay >> task
+    every :: Int -> IO () -> IO Void
+    every delay task = infinitely $ threadDelay delay >> task
 
     minutes n = n * 60 * 1000000
 
@@ -168,7 +173,8 @@ serverLoop env certs = do
   let untilShutdown = atomically (readTChan (envActions env)) >>= \case
         Cert -> refreshCerts config >>= writeIORef credentials >> untilShutdown
         GracefulShutdown -> pass
-  outcome <- withAsync (notifyStart config) $ \_ -> race untilShutdown
+  outcome <- alongside (notifyStart config)
+    $ race untilShutdown
     $ runTLS
       -- asked on every handshake (SNI or not), so a swapped certificate applies at once
       ((tlsSettingsSni $ \_ -> Credentials . pure <$> readIORef credentials)

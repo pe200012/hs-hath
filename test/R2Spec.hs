@@ -41,7 +41,7 @@ sampleContent = "test content for R2 storage"
 -- | Run against a bucket, without the log.
 runR2Cache :: R2Connection -> Sem '[ Cache, Log Message, Error HathError, Embed IO ] a -> IO (Either HathError a)
 runR2Cache conn
-  = runM . runError @HathError . runLogAction @IO @Message (LogAction $ \_ -> pure ()) . runCacheR2 conn
+  = runM . runError @HathError . runLogAction @IO @Message (LogAction $ const pass) . runCacheR2 conn
 
 redirected :: Either HathError (Maybe CacheHit) -> Bool
 redirected (Right (Just (Redirect _))) = True

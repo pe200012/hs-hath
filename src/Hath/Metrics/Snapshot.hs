@@ -41,7 +41,7 @@ generateSnapshot reg = do
 -- given interval, so that reading \/metrics never has to. The action runs before
 -- each rendering; it is where gauges that are computed, not counted, get their value.
 startSnapshotWorker :: Registry -> Int -> IO () -> IO ()
-startSnapshotWorker reg intervalMicros refresh = void $ forkIO $ forever $ do
+startSnapshotWorker reg intervalMicros refresh = void $ forkIO $ void $ infinitely $ do
   refresh
   snapshot <- generateSnapshot reg
   atomically $ writeTVar (registryCachedSnapshot reg) snapshot

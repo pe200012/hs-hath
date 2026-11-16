@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 
+-- | What this binary was built from, fixed when this module is compiled.
 module Hath.Version ( versionInfo ) where
 
 import           Control.Exception   ( catch )
@@ -14,26 +15,22 @@ import           Relude
 
 import           System.Process      ( readProcess )
 
--- | Version information string
-versionInfo :: T.Text
+versionInfo :: Text
 versionInfo
-  = T.unlines
-    [ "hs-hath " <> commitStr <> " (" <> dateStr <> ")"
-    , "Build Commit: " <> commitStr
-    , "Build Date:   " <> dateStr
+  = unlines
+    [ "hs-hath " <> commit <> " (" <> date <> ")"
+    , "Build Commit: " <> commit
+    , "Build Date:   " <> date
     ]
   where
-    commitStr :: T.Text
-    commitStr
-      = T.strip $ T.pack $( runIO (do
-                                     c <- catch
-                                       (readProcess "git" [ "rev-parse", "--short=7", "HEAD" ] "")
-                                       (\(_ :: SomeException) -> return "unknown")
-                                     stringE c) )
+    -- "unknown" when the build does not run in a git checkout
+    commit :: Text
+    commit
+      = T.strip
+        $(runIO
+            (readProcess "git" [ "rev-parse", "--short=7", "HEAD" ] ""
+             `catch` \(_ :: SomeException) -> pure "unknown")
+          >>= stringE)
 
-    dateStr :: T.Text
-    dateStr
-      = T.strip $ T.pack $( runIO (do
-                                     t <- getCurrentTime
-                                     let d = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S UTC" t
-                                     stringE d) )
+    date :: Text
+    date = $(runIO (formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S UTC" <$> getCurrentTime) >>= stringE)

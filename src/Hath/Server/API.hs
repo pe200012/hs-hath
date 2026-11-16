@@ -3,7 +3,6 @@
 -- | The HTTP interface this client offers to readers and to the RPC server.
 module Hath.Server.API ( API, api, Body, ServerCommand(..), renderServerCommand ) where
 
-import qualified Data.ByteString.Lazy as LBS
 import qualified Data.List            as List
 
 import           Network.HTTP.Media   ( (//), (/:) )
@@ -43,7 +42,7 @@ renderServerCommand command = maybe "" fst (find ((== command) . snd) serverComm
 data SpeedTest
 
 instance MimeRender SpeedTest ByteString where
-  mimeRender _ = LBS.fromStrict
+  mimeRender _ = fromStrict
 
 instance Accept SpeedTest where
   contentTypes _

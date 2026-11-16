@@ -11,7 +11,6 @@ import           Colog.Polysemy          ( Log )
 import           Control.Concurrent      ( threadDelay )
 
 import qualified Data.ByteString         as BS
-import qualified Data.ByteString.Short   as SBS
 import           Data.String.Interpolate ( i )
 
 import           Foreign.C.Types         ( CTime(..) )
@@ -85,10 +84,10 @@ runCacheFilesystem fs = interpret $ \case
 wantFree :: Int64 -> Int64
 wantFree limit = min (100 * 1024 * 1024) (limit `div` 10)
 
--- | Keep the cache under the disk limit (0 = no limit yet). The first sweep
--- learns how much is already on disk; after that we only rescan when over.
-runEvictor :: FsCache -> IO Int64 -> IO ()
-runEvictor fs getLimit = attempt >> forever (do
+-- | Keep the cache under the disk limit (0 = no limit yet), forever. The first
+-- sweep learns how much is already on disk; after that we only rescan when over.
+runEvictor :: FsCache -> IO Int64 -> IO Void
+runEvictor fs getLimit = attempt >> infinitely (do
   threadDelay (10 * 1000000)
   limit <- getLimit
   used <- readIORef (fsUsed fs)
@@ -96,7 +95,7 @@ runEvictor fs getLimit = attempt >> forever (do
   where
     attempt = tryAny (getLimit >>= sweep fs) >>= \case
       Left err -> putStrLn [i|Cache eviction failed: #{err}|]
-      Right ( 0, _ ) -> pure ()
+      Right ( 0, _ ) -> pass
       Right ( n, bytes ) -> putStrLn
         [i|Evicted #{n} least recently served files (#{bytes `div` 1048576} MiB) to stay under the disk limit|]
 
@@ -112,7 +111,7 @@ sweep fs limit = do
         | limit > 0 && total > limit = takeBytes (total - limit + wantFree limit) (sortOn fst3 files)
         | otherwise = []
   freed <- fmap catMaybes $ forM victims $ \( _, size, rel ) ->
-    rightToMaybe . (size <$) <$> tryAny (removeFile (fsRoot fs </> decodeUtf8 (SBS.fromShort rel)))
+    rightToMaybe . (size <$) <$> tryAny (removeFile (fsRoot fs </> decodeUtf8 (fromShort rel)))
   -- keep what was written meanwhile (a file written mid-scan may count twice;
   -- that only costs an extra rescan)
   atomicModifyIORef' (fsUsed fs) $ \used -> ( used - before + total - sum freed, () )
@@ -138,5 +137,5 @@ scanCache root = do
           | Posix.isRegularFile st -> let
               CTime mtime = Posix.modificationTime st
             in
-              Just ( mtime, fromIntegral (Posix.fileSize st), SBS.toShort (encodeUtf8 rel) )
+              Just ( mtime, fromIntegral (Posix.fileSize st), toShort (encodeUtf8 rel) )
         _ -> Nothing
