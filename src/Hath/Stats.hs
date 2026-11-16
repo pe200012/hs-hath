@@ -91,7 +91,7 @@ incServed = count statsSent 1
 incFetched :: Members '[ Reader StatsEnv, Embed IO ] r => Sem r ()
 incFetched = count statsReceived 1
 
--- | One look at the gallery download queue.
+-- | One gallery taken from the download queue.
 incDlTask :: Members '[ Reader StatsEnv, Embed IO ] r => Sem r ()
 incDlTask = count statsDlTasks 1
 

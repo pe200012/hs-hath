@@ -495,6 +495,8 @@ integrationSpecs = do
       response <- fetch port "/metrics"
       responseStatus response `shouldBe` status200
       body response `shouldSatisfy` ("hath_cache_sent_total" `BS.isInfixOf`)
+      -- a scrape must not be cached like a file
+      header "Cache-Control" response `shouldBe` Nothing
 
     it "disallows robots" $ withApp "x" $ \port -> do
       response <- fetch port "/robots.txt"

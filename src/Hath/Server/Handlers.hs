@@ -39,6 +39,7 @@ import           Hath.Stats               ( addDownload, addUpload, incServed, r
 import qualified Network.HTTP.Client      as HC
 import           Network.HTTP.Types       ( Header
                                           , Status
+                                          , hCacheControl
                                           , hContentLength
                                           , hLocation
                                           , methodGet
@@ -86,8 +87,12 @@ handle env req = case route (Wai.rawPathInfo req) of
   AdminSettings -> ours . show <$> embed @IO (readTVarIO (envSettings env))
   Refuse status -> throw status
   where
-    -- /metrics and /admin/settings are not the official client's
-    ours = bytes status200 "text/plain;charset=utf-8" . encodeUtf8
+    -- /metrics and /admin/settings are not the official client's; what they
+    -- say changes, so they do not carry its year of Cache-Control
+    ours
+      = Wai.mapResponseHeaders (filter ((/= hCacheControl) . fst))
+      . bytes status200 "text/plain;charset=utf-8"
+      . encodeUtf8
 
 -- | @\/h\/\<file id>\/\<options>@: a file for a reader (HTTPResponse.java:161-228).
 -- The options carry the keystamp the H\@H server issued for this file, which
