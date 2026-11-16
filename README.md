@@ -52,7 +52,7 @@
 
 `hs-hath` is a Hentai@Home client written in Haskell.
 
-It tracks cached files in an SQLite LRU index with support for both local disk and S3-compatible storage (such as Cloudflare R2), uses Dhall for configuration, and exposes Prometheus metrics at `/metrics`.
+It caches files on the local disk, in an SQLite database, or in S3-compatible storage (such as Cloudflare R2), uses Dhall for configuration, and exposes Prometheus metrics at `/metrics`.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -61,7 +61,6 @@ It tracks cached files in an SQLite LRU index with support for both local disk a
 * [![Haskell][Haskell-badge]][Haskell-url]
 * [![SQLite][SQLite-badge]][SQLite-url]
 * [![Dhall][Dhall-badge]][Dhall-url]
-* [![OpenSSL][OpenSSL-badge]][OpenSSL-url]
 * [![Prometheus][Prometheus-badge]][Prometheus-url]
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -72,7 +71,7 @@ It tracks cached files in an SQLite LRU index with support for both local disk a
 
 * [Stack](https://docs.haskellstack.org/)
 * SQLite 3
-* OpenSSL (development headers/libraries)
+* The `openssl` command, only to run the test suite and `hath-bench`, which create certificates with it
 
 ### Installation
 
@@ -90,14 +89,21 @@ It tracks cached files in an SQLite LRU index with support for both local disk a
    cp client-login.example client-login
    ```
    ```dhall
-   { clientId = "your-client-id"
-   , key = "your-api-key"
-   , version = "1.0.0"
-   , proxy = None ClientProxy
-   , downloadDir = "./downloads"
-   , cachePath = "./cache.db"
-   }
+   in  ClientConfig::{
+       , clientId = "<YOURID>"
+       , key = "<YOURKEY>"
+       , version = "176"
+       , downloadDir = "./download"
+       , cachePath = "./cache"
+       , cacheBackend = CacheBackend.CacheBackendFilesystem
+       , r2Config = None R2Config
+       }
    ```
+   The example defines the record's types and defaults, so the file only names what differs. `version`, `proxy` and `lruCacheSize` are not read. `cacheBackend` is one of:
+
+   * `CacheBackendFilesystem`: files under `cachePath` (a directory) as `xxxx/<file id>`, sent straight from disk. The least recently served files are evicted to stay under the disk limit set on the H@H settings page.
+   * `CacheBackendSQLite`: files stored in the database file at `cachePath`. Nothing is evicted, and every cached file is checked against its hash at start unless `--skip-startup-verify` is given.
+   * `CacheBackendR2`: `r2Config = Some { r2Endpoint = "https://<account id>.r2.cloudflarestorage.com", r2Bucket = "<bucket>" }`, with `R2_ACCESS_KEY` and `R2_SECRET_KEY` in the environment. A hit is answered with a redirect to a presigned link; nothing is evicted.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -115,6 +121,8 @@ Check version and build metadata:
 stack exec hs-hath -- --version
 ```
 
+The configuration is read from `./client-login`; `-c FILE` names another file. `stack exec hs-hath -- --help` lists the other options.
+
 Prometheus metrics are served at `/metrics`.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -123,6 +131,10 @@ Prometheus metrics are served at `/metrics`.
 
 * **Memory usage**: Not optimized yet — expect ~200 MiB RAM on average.
 * **S3 / Cloudflare R2**: The object store must return `ETag`, `Content-Length`, and `Last-Modified` headers; missing `ETag` will fail cache writes.
+* **Reverse proxy**: Run with `--trust-proxy-headers`, which takes the reader's address from `X-Forwarded-For`. Server commands (`/servercmd/`) are accepted only from the RPC servers' addresses, so without it every one of them is refused with 403. The connection limit sees only the peer's address and never refuses a local one, so it does not apply to a proxy on a local address.
+* **Start-up**: If the server refuses `client_start` because another client is connected or the client id is in use, hs-hath exits. After any other failure (for example `FAIL_CONNECT_TEST`) it stays up without announcing itself, as the official client does, so that the port can be tested; restart it once the cause is fixed. A certificate with less than 24 h left is refused at start.
+* **Galleries** are saved as `<downloadDir>/<title> [<gid>]`, or `[<gid>-<xres>x]` for a resized one, and `galleryinfo.txt` is written once all of a gallery's files are there.
+* **Open endpoints**: `/metrics` and `/admin/settings` answer any request that reaches the port; hs-hath does not check who asks.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -190,7 +202,5 @@ Project Link: [https://github.com/pe200012/hs-hath](https://github.com/pe200012/
 [SQLite-url]: https://www.sqlite.org/
 [Dhall-badge]: https://img.shields.io/badge/Dhall-222222?style=for-the-badge
 [Dhall-url]: https://dhall-lang.org/
-[OpenSSL-badge]: https://img.shields.io/badge/OpenSSL-721412?style=for-the-badge&logo=openssl&logoColor=white
-[OpenSSL-url]: https://www.openssl.org/
 [Prometheus-badge]: https://img.shields.io/badge/Prometheus-e6522c?style=for-the-badge&logo=prometheus&logoColor=white
 [Prometheus-url]: https://prometheus.io/
