@@ -21,13 +21,13 @@ import           Relude
 data Route
   = Favicon
   | Robots
-  | File !Text !Text
+  | File !ByteString !ByteString
     -- ^ @\/h\/\<file id>\/\<options>\/\<file name>@: a file for a reader. The
     -- file name is optional.
   | ServerCmd !Text !Text !Int !Text
     -- ^ @\/servercmd\/\<command>\/\<additional>\/\<time>\/\<key>@: a command
     -- from the RPC server
-  | Test !Int !Int64 !Text
+  | Test !Int !Int64 !ByteString
     -- ^ @\/t\/\<size>\/\<time>\/\<key>\/\<anything>@: a speed test, for the RPC
     -- server or another client. The last part is optional.
   | Metrics
@@ -40,7 +40,7 @@ data Route
 -- percent-decode the path, except @%3d@ (=): the keys of server commands and
 -- speed tests are computed over it as it is. Empty parts at its end do not count.
 route :: ByteString -> Route
-route path = case dropWhileEnd T.null (T.splitOn "/" (T.replace "%3d" "=" (decodeUtf8 path))) of
+route path = case dropWhileEnd BSC.null (BSC.split '/' (unescapeEquals path)) of
   [ "", "favicon.ico" ] -> Favicon
   [ "", "robots.txt" ] -> Robots
   [ "", "metrics" ] -> Metrics
@@ -49,13 +49,21 @@ route path = case dropWhileEnd T.null (T.splitOn "/" (T.replace "%3d" "=" (decod
   "" : "h" : _ -> Refuse status400
   "" : "servercmd" : command : additional : time : commandKey : _ -> maybe
     (Refuse status403)
-    (\t -> ServerCmd command additional t commandKey)
-    (number (encodeUtf8 time))
+    (\t -> ServerCmd (decodeUtf8 command) (decodeUtf8 additional) t (decodeUtf8 commandKey))
+    (number time)
   "" : "servercmd" : _ -> Refuse status403
   "" : "t" : size : time : testKey : _ -> fromMaybe (Refuse status400)
-    $ Test <$> number (encodeUtf8 size) <*> number (encodeUtf8 time) <*> pure testKey
+    $ Test <$> number size <*> number time <*> pure testKey
   "" : "t" : _ -> Refuse status400
   _ -> Refuse status404
+
+-- | The path with every @%3d@ in it made @=@. It is read as bytes, so the file
+-- ids and options of @\/h\/@ reach the handlers without a trip through Text.
+unescapeEquals :: ByteString -> ByteString
+unescapeEquals path = case BSC.breakSubstring "%3d" path of
+  ( before, after )
+    | BSC.null after -> before
+    | otherwise -> before <> "=" <> unescapeEquals (BSC.drop 3 after)
 
 -- | What the RPC server may tell us to do through @\/servercmd@, with what each needs.
 data ServerCommand

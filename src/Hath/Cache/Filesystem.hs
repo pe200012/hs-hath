@@ -10,7 +10,7 @@ import           Colog.Polysemy          ( Log )
 
 import           Control.Concurrent      ( threadDelay )
 
-import qualified Data.ByteString         as BS
+import qualified Data.ByteString.Char8   as BS
 import           Data.String.Interpolate ( i )
 
 import           Foreign.C.Types         ( CTime(..) )
@@ -18,7 +18,7 @@ import           Foreign.C.Types         ( CTime(..) )
 import           Hath.AtomicFile         ( writeFileAtomic )
 import           Hath.Cache              ( Cache(..), CacheHit(..) )
 import           Hath.Error              ( HathError(..) )
-import           Hath.FileURI            ( FileURI(..), renderFileURIText )
+import           Hath.FileURI            ( FileURI(..), renderFileURIBytes )
 import           Hath.Log                ( logError )
 
 import           Polysemy
@@ -46,8 +46,9 @@ newFsCache root = do
 fileURIToPath :: FilePath -> FileURI -> FilePath
 fileURIToPath root uri = root </> take 4 fileId </> fileId
   where
-    -- no directory traversal through a crafted file id
-    fileId = takeFileName (toString $ renderFileURIText uri)
+    -- no directory traversal through a crafted file id. A file id is ASCII
+    -- ('Hath.FileURI.parseFileURI' admits nothing else), so Char8 reads it exactly.
+    fileId = takeFileName (BS.unpack (renderFileURIBytes uri))
 
 addUsed :: FsCache -> Int64 -> IO ()
 addUsed fs n = atomicModifyIORef' (fsUsed fs) $ \used -> ( used + n, () )

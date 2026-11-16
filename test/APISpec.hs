@@ -21,10 +21,10 @@ routed :: ByteString -> Text
 routed path = case route path of
   Favicon -> "favicon"
   Robots -> "robots"
-  File fileId options -> "file " <> fileId <> " " <> options
+  File fileId options -> "file " <> decodeUtf8 fileId <> " " <> decodeUtf8 options
   ServerCmd command additional time commandKey
     -> unwords [ "servercmd", command, additional, show time, commandKey ]
-  Test size time testKey -> unwords [ "t", show size, show time, testKey ]
+  Test size time testKey -> unwords [ "t", show size, show time, decodeUtf8 testKey ]
   Metrics -> "metrics"
   AdminSettings -> "admin"
   Refuse status -> refused status

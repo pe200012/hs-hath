@@ -78,8 +78,7 @@ handle :: ServerEnv -> Wai.Request -> App Wai.Response
 handle env req = case route (Wai.rawPathInfo req) of
   Favicon -> pure $ redirect status301 "https://e-hentai.org/favicon.ico" []
   Robots -> pure $ bytes status200 "text/plain; charset=ISO-8859-1" "User-agent: *\nDisallow: /"
-  File fileId options
-    -> resource env (Wai.requestMethod req == methodHead) (encodeUtf8 fileId) (encodeUtf8 options)
+  File fileId options -> resource env (Wai.requestMethod req == methodHead) fileId options
   ServerCmd command additional time commandKey
     -> serverCommand env (Wai.remoteHost req) command additional time commandKey
   Test size time testKey -> speedTest size time testKey
@@ -167,12 +166,11 @@ runCommand env = \case
 
 -- | @\/t\/\<size>\/\<time>\/\<key>@: a speed test, for the RPC server or for
 -- another client it sent ('ThreadedProxyTest') (HTTPResponse.java:261-290).
-speedTest :: Int -> Int64 -> Text -> App Wai.Response
+speedTest :: Int -> Int64 -> ByteString -> App Wai.Response
 speedTest size time testKey = do
   now <- embed serverNow
   cfg <- ask @ClientConfig
-  unless (commandTimeValid now time && encodeUtf8 testKey == speedTestKey cfg size time)
-    $ throw status403
+  unless (commandTimeValid now time && testKey == speedTestKey cfg size time) $ throw status403
   addUpload size
   pure $ filler size
 
