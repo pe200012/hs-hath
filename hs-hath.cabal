@@ -37,6 +37,7 @@ library
       Hath.Cache.SQLite
       Hath.CLI
       Hath.Config
+      Hath.Download
       Hath.Error
       Hath.FileURI
       Hath.Gallery

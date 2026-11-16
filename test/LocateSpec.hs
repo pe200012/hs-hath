@@ -3,8 +3,9 @@ module LocateSpec ( locateSpecs ) where
 
 import           Control.Exception  ( throwIO )
 
+import           Hath.Download      ( receive )
 import           Hath.FileURI       ( FileURI(..) )
-import           Hath.Locate        ( receive, usableReply )
+import           Hath.Locate        ( usableReply )
 
 import           Network.HTTP.Types ( hContentLength )
 
@@ -51,7 +52,7 @@ locateSpecs = describe "Locate" $ do
       $ receiving 4 [ "abc", "def" ] `shouldReturn` ( False, [ ( 0, "abc" ) ] )
 
     it "fails when reading fails" $ do
-      outcome <- receive 6 (throwIO (userError "connection reset")) (\_ _ -> pass)
+      outcome <- receive 1000000 6 (throwIO (userError "connection reset")) (\_ _ -> pass)
       outcome `shouldSatisfy` isLeft
   where
     -- whether all of a body of these chunks came, and what was kept
@@ -61,6 +62,7 @@ locateSpecs = describe "Locate" $ do
       let body = atomicModifyIORef' rest $ \case
             []          -> ( [], "" )
             next : more -> ( more, next )
-      outcome <- receive size body (\offset chunk -> modifyIORef' kept (( offset, chunk ) :))
+      outcome
+        <- receive 1000000 size body (\offset chunk -> modifyIORef' kept (( offset, chunk ) :))
       chunksKept <- reverse <$> readIORef kept
       pure ( isRight outcome, chunksKept )

@@ -36,8 +36,8 @@ data MockRPC
     -- ^ how many RPC requests it answers with a 500 before it works
   , mockBlacklist     :: [ ByteString ]
     -- ^ the lines of its get_blacklist reply
-  , mockSeen          :: ByteString -> IO ()
-    -- ^ told the act of each RPC request as it arrives
+  , mockSeen          :: ( ByteString, ByteString ) -> IO ()
+    -- ^ told the act and add of each RPC or gallery downloader request as it arrives
   , mockRPCServerIP   :: ByteString
     -- ^ its address as its settings give it (@rpc_server_ip@); by default the
     -- one the tests send server commands from
@@ -45,6 +45,8 @@ data MockRPC
     -- ^ microseconds the image server waits halfway through a file
   , mockHangUpHalfway :: Bool
     -- ^ whether it hangs up there instead, having announced the whole file
+  , mockQueue         :: ByteString -> ByteString
+    -- ^ the reply to a fetchqueue, given its add (the gallery it marks done)
   }
 
 defaultMockRPC :: MockRPC
@@ -60,6 +62,7 @@ defaultMockRPC
   , mockRPCServerIP   = "127.0.0.1"
   , mockPauseHalfway  = 0
   , mockHangUpHalfway = False
+  , mockQueue         = const "NO_PENDING_DOWNLOADS"
   }
 
 -- | The settings it assigns at login.
@@ -84,13 +87,16 @@ withMockRPC mock action = do
 application :: MockRPC -> IORef Int -> Wai.Application
 application mock outagesLeft req respond = case ( Wai.rawPathInfo req, parameter "act" ) of
   ( "/16/rpc", Just act ) -> do
-    mockSeen mock act
+    mockSeen mock ( act, add )
     down <- atomicModifyIORef' outagesLeft $ \n -> ( n - 1, n > 0 )
     clock <- (+ mockClockAhead mock) . systemSeconds <$> getSystemTime
     respond
       $ if down
         then Wai.responseLBS HTTP.status500 [] ""
         else Wai.responseLBS HTTP.status200 [] $ fromStrict $ rpcReply clock act
+  ( "/16/dl", Just "fetchqueue" ) -> do
+    mockSeen mock ( "fetchqueue", add )
+    respond $ Wai.responseLBS HTTP.status200 [] $ fromStrict $ mockQueue mock add
   ( "/file", _ ) -> respond
     -- image servers always send the length
     $ Wai.responseStream HTTP.status200 [ ( "Content-Length", show (BS.length content) ) ]
@@ -109,8 +115,15 @@ application mock outagesLeft req respond = case ( Wai.rawPathInfo req, parameter
 
     parameter name = join (List.lookup name (Wai.queryString req))
 
+    -- as sent: Wai would end it at its first ';'
+    add
+      = maybe "" (HTTP.urlDecode True . BS.drop 4)
+      $ find ("add=" `BS.isPrefixOf`)
+      $ BS.split '&'
+      $ BS.drop 1 (Wai.rawQueryString req)
+
     -- we are the image server too, at whatever address the client reached us
-    ownAddress = fromMaybe "localhost" (Wai.requestHeaderHost req)
+    ownFile = "http://" <> fromMaybe "localhost" (Wai.requestHeaderHost req) <> "/file"
 
     signedAt clock
       = maybe
@@ -130,13 +143,14 @@ application mock outagesLeft req respond = case ( Wai.rawPathInfo req, parameter
       "client_login" -> signed (loginSettings mock)
       "client_settings"
         -> signed [ "host=127.0.0.1", "port=8080", "rpc_server_ip=" <> mockRPCServerIP mock ]
-      "srfetch" -> signed [ "http://" <> ownAddress <> "/file" ]
+      "srfetch" -> signed [ ownFile ]
+      "dlfetch" -> signed [ ownFile ]
       "get_blacklist" -> signed (mockBlacklist mock)
       act
         | act `elem` answeredOK -> signed []
         | otherwise -> "FAIL\nUnknown action: " <> act
 
-    answeredOK = [ "still_alive", "client_start", "client_stop", "overload", "dlfetch", "dlfails" ]
+    answeredOK = [ "still_alive", "client_start", "client_stop", "overload", "dlfails" ]
 
     -- the 1.6.6 server signs every OK reply with the client key
     signed payload

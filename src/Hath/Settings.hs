@@ -26,7 +26,9 @@ data HathSettings
   , maxConnectionsOverride :: !Int
     -- ^ @max_connections@: when above 0, 'maxConnections' is this.
   , maxAllowedFileSize :: !Int
-    -- ^ @max_allowed_filesize@: a cache miss larger than this is not fetched.
+    -- ^ @max_allowed_filesize@: a cache miss or download larger than this is not fetched.
+  , maxFilenameLength :: !Int
+    -- ^ @max_filename_length@: how long the name of a gallery's directory may get.
   }
   deriving ( Show )
 
@@ -40,8 +42,9 @@ defaultHathSettings
   , diskRemainingBytes = 0
   , rpcServerIPs = []
   , maxConnectionsOverride = 0
-    -- the official client's default (Settings.java:58)
+    -- the official client's defaults (Settings.java:58)
   , maxAllowedFileSize = 1073741824
+  , maxFilenameLength = 125
   }
 
 -- | Apply @name=value@ lines onto the settings we have. @client_settings@ only
@@ -59,6 +62,7 @@ parseSettings = foldl' apply
       ( "rpc_server_ip", _ ) -> settings { rpcServerIPs = BS.split ';' value }
       ( "max_connections", Just n ) -> settings { maxConnectionsOverride = fromIntegral n }
       ( "max_allowed_filesize", Just n ) -> settings { maxAllowedFileSize = fromIntegral n }
+      ( "max_filename_length", Just n ) -> settings { maxFilenameLength = fromIntegral n }
       _ -> settings
       where
         ( name, value ) = nameValue line

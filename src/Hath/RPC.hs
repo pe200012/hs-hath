@@ -28,9 +28,9 @@ module Hath.RPC
   , fileSources
     -- * Gallery downloader
   , nextGallery
-  , galleryFileSources
+  , galleryFileSource
   , reportDownloadFailures
-  , completeGallery
+  , failureReport
   ) where
 
 import           Colog                        ( Message, richMessageAction )
@@ -336,31 +336,46 @@ fileSources fileIndex xres fileId
   = payload =<< callRPC "srfetch" (decodeUtf8 $ BS.intercalate ";" [ fileIndex, xres, fileId ])
 
 -- | The next gallery queued for download, or why there is none
--- (@NO_PENDING_DOWNLOADS@, or a list that was refused).
-nextGallery :: Members '[ RPC, Reader ClientConfig ] r => Sem r (Either Text GalleryMetadata)
-nextGallery = do
+-- (@NO_PENDING_DOWNLOADS@, @INVALID_REQUEST@, or a list that was refused). The
+-- same request marks the gallery before it done and takes it off the queue
+-- (GalleryDownloader.java:163-170).
+nextGallery :: Members '[ RPC, Reader ClientConfig ] r
+            => Maybe GalleryMetadata
+            -> Sem r (Either Text GalleryMetadata)
+nextGallery done = do
   cfg <- ask @ClientConfig
-  parseMetadata (encodeUtf8 (key cfg)) <$> callDownloader "fetchqueue" ""
+  parseMetadata (encodeUtf8 (key cfg)) <$> callDownloader "fetchqueue" (maybe "" marked done)
+  where
+    marked gallery = [i|#{galleryID gallery};#{galleryMinXRes gallery}|]
 
--- | URLs a gallery file can be downloaded from (@dlfetch@); the last argument
--- counts the attempts already made.
-galleryFileSources :: Members '[ RPC, Error HathError ] r
-                   => GalleryMetadata
-                   -> GalleryFile
-                   -> Int
-                   -> Sem r [ ByteString ]
-galleryFileSources gallery file attempt
-  = payload
-  =<< callRPC
-    "dlfetch"
-    [i|#{galleryID gallery};#{galleryFilePage file};#{galleryFileIndex file};#{galleryFileXRes file};#{attempt}|]
+-- | Where to download a gallery file from (@dlfetch@), the first line of an OK
+-- reply, as the official client takes it (ServerHandler.java:341-359); the last
+-- argument numbers this attempt at the file, from 1.
+galleryFileSource :: Members '[ RPC, Error HathError ] r
+                  => GalleryMetadata
+                  -> GalleryFile
+                  -> Int
+                  -> Sem r (Maybe ByteString)
+galleryFileSource gallery file attempt
+  = listToMaybe
+  <$> (payload
+       =<< callRPC
+         "dlfetch"
+         [i|#{galleryID gallery};#{galleryFilePage file};#{galleryFileIndex file};#{galleryFileXRes file};#{attempt}|])
 
--- | Report sources that served a file with the wrong hash.
+-- | Report the sources a gallery's files failed to come from.
 reportDownloadFailures :: Member RPC r => [ Text ] -> Sem r ()
-reportDownloadFailures failures = void $ callRPC "dlfails" (T.intercalate ";" failures)
+reportDownloadFailures = traverse_ (void . callRPC "dlfails") . failureReport
 
--- | Tell the server every file of the gallery is on disk.
-completeGallery :: Members '[ RPC, Log Message ] r => GalleryMetadata -> Sem r ()
-completeGallery gallery = do
-  logInfo "Notifying server that a gallery task has been completed"
-  void $ callDownloader "fetchqueue" [i|#{galleryID gallery};#{galleryMinXRes gallery}|]
+-- | The @add@ of a dlfails report: the distinct failures, as
+-- @host-fileindex-xres@, if there are 1 to 50 of them. More than that probably
+-- means the trouble is ours, so the official client keeps quiet
+-- (ServerHandler.java:366-371).
+failureReport :: [ Text ] -> Maybe Text
+failureReport failures
+  | count >= 1 && count <= 50 = Just (T.intercalate ";" distinct)
+  | otherwise = Nothing
+  where
+    distinct = ordNub failures
+
+    count    = length distinct

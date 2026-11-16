@@ -9,7 +9,6 @@ import           Colog.Polysemy           ( Log, runLogAction )
 import           Hath.Cache               ( Cache, CacheRunner(..) )
 import           Hath.Config              ( ClientConfig )
 import           Hath.Error               ( HathError )
-import           Hath.Gallery.Downloader  ( GalleryTask )
 import           Hath.RPC                 ( RPC, runRPC )
 import           Hath.Server.FloodControl ( FloodControl )
 import           Hath.Settings            ( HathSettings )
@@ -38,7 +37,8 @@ data ServerEnv
   , envSettings :: !(TVar HathSettings)
     -- ^ as assigned by the RPC server, and refreshed on its command
   , envActions :: !(TChan ServerAction)
-  , envGalleryTasks :: !(TChan GalleryTask)
+  , envDownloadRequest :: !(MVar ())
+    -- ^ filled by @start_downloader@ for the gallery downloader
   , envStats :: !StatsEnv
   , envCache :: !CacheRunner
   , envFloodControl :: !(Maybe FloodControl)

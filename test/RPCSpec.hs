@@ -92,7 +92,7 @@ rpcSpecs = describe "RPC" $ after_ useOurClock $ do
   describe "overload" $ it "is sent as act=overload" $ do
     seen <- newIORef []
     sent <- withMockRPC
-      defaultMockRPC { mockSeen = atomicModifyIORef'_ seen . (:) }
+      defaultMockRPC { mockSeen = atomicModifyIORef'_ seen . (:) . fst }
       (runRPCIO config overload)
     sent `shouldBe` Right ()
     readIORef seen `shouldReturn` [ "overload" ]

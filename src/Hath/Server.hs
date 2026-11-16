@@ -86,7 +86,6 @@ import           Relude
 
 import           UnliftIO                             ( TChan
                                                       , mapConcurrently_
-                                                      , newTChanIO
                                                       , race
                                                       , readTChan
                                                       , tryAny
@@ -128,12 +127,12 @@ startServer :: ClientConfig
             -> IO ()
 startServer config options settings certs actions = do
   settingsVar <- newTVarIO settings
-  galleryTasks <- newTChanIO
+  downloadRequest <- newEmptyMVar
   stats <- newStatsEnv
   floodControl <- if disableRateLimit options
     then pure Nothing
     else Just <$> newFloodControl
-  runGalleryDownloader config stats galleryTasks
+  runGalleryDownloader config stats settingsVar downloadRequest
     `alongside` withCacheBackend
       config
       (diskLimitBytes <$> readTVarIO settingsVar)
@@ -141,7 +140,7 @@ startServer config options settings certs actions = do
          ServerEnv { envConfig = config
                    , envSettings = settingsVar
                    , envActions = actions
-                   , envGalleryTasks = galleryTasks
+                   , envDownloadRequest = downloadRequest
                    , envStats = stats
                    , envCache = cache
                    , envFloodControl = floodControl

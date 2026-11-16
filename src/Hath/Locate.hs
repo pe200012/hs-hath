@@ -1,7 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 
 -- | Finding a requested file: in the cache, or else upstream.
-module Hath.Locate ( Located(..), locateResource, usableReply, receive ) where
+module Hath.Locate ( Located(..), locateResource, usableReply ) where
 
 import           Colog                    ( Message )
 import           Colog.Polysemy           ( Log )
@@ -21,6 +21,7 @@ import           Foreign.Ptr              ( castPtr, plusPtr )
 
 import           Hath.Cache               ( Cache, CacheHit, lookupFile, storeFile )
 import           Hath.Config              ( ClientConfig )
+import           Hath.Download            ( receive )
 import           Hath.Error               ( HathError )
 import           Hath.FileURI             ( FileURI(..) )
 import           Hath.Log                 ( logInfo, logWarning )
@@ -47,7 +48,7 @@ import           Relude                   hiding ( Reader, ask )
 
 import           System.IO.Error          ( ioError, mkIOError, resourceVanishedErrorType )
 
-import           UnliftIO                 ( retrySTM, timeout, try, tryAny )
+import           UnliftIO                 ( retrySTM, timeout, try )
 
 data Located
   = Stored !CacheHit
@@ -180,7 +181,10 @@ download uri response finish = do
         copyInto buffer offset chunk
         atomically $ writeTVar progress (Receiving (offset + BS.length chunk))
   void $ forkIO $ do
-    received <- receive size (HC.responseBody response) keep `finally` HC.responseClose response
+    -- 30 s for every read and 300 s for the whole (ProxyFileDownloader.java:186-200)
+    received <- fromMaybe (Left "it took over 300 s")
+      <$> timeout (seconds 300) (receive (seconds 30) size (HC.responseBody response) keep)
+      `finally` HC.responseClose response
     atomically $ writeTVar progress (either (const Broken) (const Received) received)
     finish $ received >> verified (fromForeignPtr0 buffer size)
   pure (relay buffer progress)
@@ -213,30 +217,6 @@ data Progress
     -- ^ this many bytes so far
   | Received
   | Broken
-
--- | Read a body of @size@ bytes, handing each chunk to @keep@ with the offset it
--- starts at. Left says why it broke off: upstream failed or sent too little or
--- too much, a read waited 30 s, or the whole took 300 s
--- (ProxyFileDownloader.java:186-200).
-receive :: Int -> HC.BodyReader -> (Int -> ByteString -> IO ()) -> IO (Either Text ())
-receive size body keep
-  = maybe (Left "it took over 300 s") (either (Left . describe) id)
-  <$> timeout (seconds 300) (tryAny (go 0))
-  where
-    go received = timeout (seconds 30) (HC.brRead body) >>= \case
-      Nothing    -> pure $ Left [i|nothing came for 30 s after #{received} bytes|]
-      Just chunk
-        | BS.null chunk -> pure
-          $ if received == size
-            then Right ()
-            else Left [i|it ended after #{received} of #{size} bytes|]
-        -- the buffer holds no more; a chunked body can bring more than announced
-        | BS.length chunk > size - received -> pure $ Left [i|it sent more than #{size} bytes|]
-        | otherwise -> keep received chunk >> go (received + BS.length chunk)
-
-    describe e = case fromException e of
-      Just (HC.HttpExceptionRequest _ content) -> show content
-      _ -> show e
 
 copyInto :: ForeignPtr Word8 -> Int -> ByteString -> IO ()
 copyInto buffer offset chunk = unsafeUseAsCStringLen chunk $ \( source, len )

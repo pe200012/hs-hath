@@ -89,7 +89,7 @@ testConfig
 withAppUsing :: Bool -> CacheRunner -> MockRPC -> (Int -> IO a) -> IO a
 withAppUsing floodControlOn cache mock action = withMockRPC mock $ do
   actions <- newTChanIO
-  galleryTasks <- newTChanIO
+  downloadRequest <- newEmptyMVar
   settings <- newTVarIO (parseSettings defaultHathSettings (loginSettings mock))
   stats <- newStatsEnv
   floodControl <- if floodControlOn
@@ -100,7 +100,7 @@ withAppUsing floodControlOn cache mock action = withMockRPC mock $ do
           ServerEnv { envConfig = testConfig
                     , envSettings = settings
                     , envActions = actions
-                    , envGalleryTasks = galleryTasks
+                    , envDownloadRequest = downloadRequest
                     , envStats = stats
                     , envCache = cache
                     , envFloodControl = floodControl
@@ -326,7 +326,7 @@ integrationSpecs = do
 
     it "does not ask the RPC server about a file id the official client refuses" $ do
       seen <- newIORef []
-      withMock defaultMockRPC { mockSeen = atomicModifyIORef'_ seen . (:) } $ \port -> do
+      withMock defaultMockRPC { mockSeen = atomicModifyIORef'_ seen . (:) . fst } $ \port -> do
         time <- now
         response <- fetch port (filePath (fileIdFor "x" "txt") time fetchable)
         responseStatus response `shouldBe` status404
@@ -351,7 +351,7 @@ integrationSpecs = do
       withMock
         defaultMockRPC { mockFileContent  = content
                        , mockPauseHalfway = 500000
-                       , mockSeen         = atomicModifyIORef'_ seen . (:)
+                       , mockSeen         = atomicModifyIORef'_ seen . (:) . fst
                        }
         $ \port -> do
           time <- now
@@ -371,7 +371,7 @@ integrationSpecs = do
       withMock
         defaultMockRPC { mockFileContent   = content
                        , mockHangUpHalfway = True
-                       , mockSeen          = atomicModifyIORef'_ seen . (:)
+                       , mockSeen          = atomicModifyIORef'_ seen . (:) . fst
                        }
         $ \port -> do
           time <- now
@@ -541,7 +541,8 @@ integrationSpecs = do
 
     it "of a file it lacks fetches it, as the official client" $ do
       seen <- newIORef []
-      withMock defaultMockRPC { mockFileContent = "x", mockSeen = atomicModifyIORef'_ seen . (:) }
+      withMock
+        defaultMockRPC { mockFileContent = "x", mockSeen = atomicModifyIORef'_ seen . (:) . fst }
         $ \port -> do
           time <- now
           let path = filePath (fileIdFor "x" "jpg") time fetchable
@@ -612,13 +613,13 @@ integrationSpecs = do
 
     it "listens before it sends client_start" $ do
       listeningAtStart <- newEmptyMVar
-      let mock port = defaultMockRPC { mockSeen = \act -> when (act == "client_start")
+      let mock port = defaultMockRPC { mockSeen = \( act, _ ) -> when (act == "client_start")
                                          $ void . tryPutMVar listeningAtStart =<< accepts port }
       withServer mock $ \_ _ -> takeMVar listeningAtStart >>= (`shouldBe` True)
 
     it "on shutdown, sends client_stop once, serves 5 s more, then stops listening" $ do
       seen <- newIORef []
-      let mock _ = defaultMockRPC { mockSeen = atomicModifyIORef'_ seen . (:) }
+      let mock _ = defaultMockRPC { mockSeen = atomicModifyIORef'_ seen . (:) . fst }
       withServer mock $ \port actions -> do
         atomically $ writeTChan actions GracefulShutdown
         threadDelay 1000000

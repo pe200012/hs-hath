@@ -5,15 +5,14 @@ import           Control.Concurrent       ( forkIO, threadDelay )
 
 import           Data.ByteString.Builder  ( byteString )
 import qualified Data.ByteString.Char8    as BS
-import qualified Data.List                as List
 import qualified Data.Map.Strict          as Map
 import           Data.String.Interpolate  ( i )
 
 import           Hath.Cache               ( CacheHit(..) )
 import           Hath.Config              ( ClientConfig )
+import           Hath.Download            ( fetchFile )
 import           Hath.Error               ( HathError )
 import           Hath.FileURI             ( FileURI(fileSize), mimeType, parseFileURI )
-import           Hath.Gallery.Downloader  ( GalleryTask(..) )
 import           Hath.Locate              ( Located(..), locateResource )
 import           Hath.Log                 ( logInfo, logWarning )
 import           Hath.Protocol            ( commandTimeValid
@@ -24,7 +23,7 @@ import           Hath.Protocol            ( commandTimeValid
                                           , serverCommandKey
                                           , speedTestKey
                                           )
-import           Hath.RPC                 ( clientSettings, connectMicros, httpManager )
+import           Hath.RPC                 ( clientSettings )
 import           Hath.Server.API          ( ProxyTest(..)
                                           , Route(..)
                                           , ServerCommand(..)
@@ -64,7 +63,6 @@ import           Relude                   hiding ( ask )
 import           UnliftIO                 ( getMonotonicTime
                                           , replicateConcurrently
                                           , timeout
-                                          , tryAny
                                           , writeTChan
                                           )
 
@@ -143,7 +141,7 @@ serverCommand env peer command additional time commandKey = do
 runCommand :: ServerEnv -> ServerCommand -> App Wai.Response
 runCommand env = \case
   StillAlive -> pure $ text "I feel FANTASTIC and I'm still alive"
-  ThreadedProxyTest test -> text <$> runProxyTest test
+  ThreadedProxyTest test -> text <$> runProxyTest env test
   SpeedTest size -> do
     addDownload size
     pure $ filler size
@@ -154,7 +152,7 @@ runCommand env = \case
     pure $ text ""
   StartDownloader -> do
     logInfo "Starting gallery downloader"
-    embed @IO $ atomically $ writeTChan (envGalleryTasks env) GalleryTask
+    void $ embed @IO $ tryPutMVar (envDownloadRequest env) ()
     pure $ text ""
   RefreshCerts -> do
     logInfo "Refreshing certificates"
@@ -214,24 +212,18 @@ filler size
 
 -- | Run the downloads concurrently and report, in the official format,
 -- @OK:\<successful tests>-\<total milliseconds of the successful tests>@.
-runProxyTest :: ProxyTest -> App ByteString
-runProxyTest test = case HC.parseRequest (proxyTestURL test) of
+runProxyTest :: ServerEnv -> ProxyTest -> App ByteString
+runProxyTest env test = case HC.parseRequest (proxyTestURL test) of
   Nothing      -> pure "INVALID_COMMAND"
   Just request -> do
+    settings <- embed @IO (readTVarIO (envSettings env))
     results <- embed
       $ replicateConcurrently
         (proxyTestCount test)
-        (timedDownload
-           (proxyTestSize test)
-           -- as FileDownloader connects: 5 s to connect, then 10 s for every
-           -- read, the reply's headers included (FileDownloader.java:165-166)
-           request { HC.responseTimeout = HC.responseTimeoutMicro (connectMicros + readMicros) })
+        (timedDownload (maxAllowedFileSize settings) (proxyTestSize test) request)
     let succeeded = catMaybes results
     addUpload (proxyTestCount test * fromIntegral (proxyTestSize test))
     pure [i|OK:#{length succeeded}-#{sum succeeded}|]
-
-readMicros :: Int
-readMicros = 10 * 1000000
 
 -- | A cap on one test download, its attempts included. The official client
 -- hands FileDownloader 60 s (HTTPResponse.java:105), which it never enforces;
@@ -239,53 +231,18 @@ readMicros = 10 * 1000000
 testTimeoutMicros :: Int
 testTimeoutMicros = 60 * 1000000
 
--- | How one attempt at a test download ended.
-data Attempt
-  = Complete !Int64 !Double
-    -- ^ a body of the announced length, finished at that monotonic time
-  | Retry
-  | NotFound
--- ^ which the official client does not try again
-
 -- | The milliseconds a test download took, from its first byte to its end, as
--- FileDownloader times it (FileDownloader.java:130-315): up to three attempts,
--- and the first byte is the first any of them received. It counts if a body of
--- the announced length arrived, at least the test size (HTTPResponse.java:112).
-timedDownload :: Int64 -> HC.Request -> IO (Maybe Int64)
-timedDownload testSize request = do
+-- FileDownloader times it (FileDownloader.java:130-315): the first byte is the
+-- first any of its attempts received. It counts if a body of the announced
+-- length arrived, at least the test size (HTTPResponse.java:112).
+timedDownload :: Int -> Int64 -> HC.Request -> IO (Maybe Int64)
+timedDownload maxSize testSize request = do
   firstByte <- newIORef Nothing
-  let attempt = fmap (fromRight Retry) $ tryAny $ HC.withResponse request httpManager $ \response
-        -> case ( statusCode (HC.responseStatus response), announcedLength response ) of
-          ( 404, _ ) -> pure NotFound
-          ( status, Just announced )
-            | status < 400 -> do
-              received <- drain (HC.responseBody response) 0
-              end <- getMonotonicTime
-              pure
-                $ if received == Just announced
-                  then Complete announced end
-                  else Retry
-          -- an error status, or no length, which the official client demands
-          _ -> pure Retry
-
-      -- Nothing if a read timed out
-      drain body received = timeout readMicros (HC.brRead body) >>= \case
-        Nothing    -> pure Nothing
-        Just chunk
-          | BS.null chunk -> pure (Just received)
-          | otherwise -> do
-            whenNothingM_ (readIORef firstByte) (writeIORef firstByte . Just =<< getMonotonicTime)
-            drain body (received + fromIntegral (BS.length chunk))
-
-      go attemptsLeft = attempt >>= \case
-        Complete announced end
-          | announced >= testSize -> do
-            start <- readIORef firstByte
-            pure $ Just $ maybe 0 (\t -> truncate ((end - t) * 1000)) start
-        Retry
-          | attemptsLeft > 1 -> go (attemptsLeft - 1)
-        _ -> pure Nothing
-  join <$> timeout testTimeoutMicros (go (3 :: Int))
-  where
-    announcedLength response
-      = readMaybe . BS.unpack =<< List.lookup hContentLength (HC.responseHeaders response)
+  fetched <- timeout testTimeoutMicros $ fetchFile maxSize request $ \_ _
+    -> whenNothingM_ (readIORef firstByte) (writeIORef firstByte . Just =<< getMonotonicTime)
+  end <- getMonotonicTime
+  start <- readIORef firstByte
+  pure $ case fetched of
+    Just (Right size)
+      | fromIntegral size >= testSize -> Just $ maybe 0 (\t -> truncate ((end - t) * 1000)) start
+    _ -> Nothing
