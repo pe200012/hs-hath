@@ -33,7 +33,8 @@ import           Hath.Stats                ( newStatsEnv )
 
 import           MockRPC
 
-import           Network.HTTP.Client       ( Response
+import           Network.HTTP.Client       ( HttpException
+                                           , Response
                                            , defaultManagerSettings
                                            , httpLbs
                                            , method
@@ -50,6 +51,7 @@ import           Network.HTTP.Types        ( HeaderName
                                            , status400
                                            , status403
                                            , status404
+                                           , status502
                                            , statusCode
                                            )
 import           Network.Socket            ( tupleToHostAddress )
@@ -336,6 +338,51 @@ integrationSpecs = do
         time <- now
         response <- fetch port (filePath (fileIdFor "x" "jpg") time fetchable)
         responseStatus response `shouldBe` status404
+
+    it "answers 502 when the source does not send the file" $ withApp "NOT_THE_FILE" $ \port -> do
+      time <- now
+      response <- fetch port (filePath (fileIdFor "x" "jpg") time fetchable)
+      responseStatus response `shouldBe` status502
+      body response `shouldBe` "An error has occurred. (502)"
+
+    it "goes on fetching a file whose reader hung up, and caches it" $ do
+      let content = encodeUtf8 (T.replicate 200000 "z")
+      seen <- newIORef []
+      withMock
+        defaultMockRPC { mockFileContent  = content
+                       , mockPauseHalfway = 500000
+                       , mockSeen         = atomicModifyIORef'_ seen . (:)
+                       }
+        $ \port -> do
+          time <- now
+          let path = filePath (fileIdFor content "jpg") time fetchable
+          bracket (connectLocal port) Sock.close $ \sock -> do
+            sendAll sock $ "GET " <> encodeUtf8 path <> " HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            -- the start of the reply, then hang up
+            void $ recv sock 4096
+          -- the pause, and time to reach the cache
+          threadDelay 2000000
+          body <$> fetch port path `shouldReturn` content
+      readIORef seen `shouldReturn` [ "srfetch" ]
+
+    it "drops the reader's connection when upstream sends less than it announced" $ do
+      let content = encodeUtf8 (T.replicate 100000 "y")
+      seen <- newIORef []
+      withMock
+        defaultMockRPC { mockFileContent   = content
+                       , mockHangUpHalfway = True
+                       , mockSeen          = atomicModifyIORef'_ seen . (:)
+                       }
+        $ \port -> do
+          time <- now
+          let path = filePath (fileIdFor content "jpg") time fetchable
+          -- http-client fails a body that ends short when the connection
+          -- closes; left open, it would wait for the rest
+          cutShort <- timeout 10000000 $ try @HttpException (fetch port path)
+          cutShort `shouldSatisfy` maybe False isLeft
+          -- nothing was cached: the next request asks for the file again
+          void $ timeout 10000000 $ try @HttpException (fetch port path)
+      readIORef seen `shouldReturn` [ "srfetch", "srfetch" ]
 
     it "exempts local addresses from flood control" $ withMemoryCache $ \cache
       -> withAppUsing True cache defaultMockRPC { mockFileContent = "x" } $ \port -> do

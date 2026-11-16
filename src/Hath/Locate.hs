@@ -1,49 +1,65 @@
 {-# LANGUAGE DataKinds #-}
 
 -- | Finding a requested file: in the cache, or else upstream.
-module Hath.Locate ( Located(..), locateResource ) where
+module Hath.Locate ( Located(..), locateResource, usableReply, receive ) where
 
-import           Colog                   ( Message )
-import           Colog.Polysemy          ( Log )
+import           Colog                    ( Message )
+import           Colog.Polysemy           ( Log )
 
-import           Control.Concurrent      ( forkIO )
-import           Control.Exception       ( finally )
+import           Control.Concurrent       ( forkIO )
+import           Control.Exception        ( finally )
 
-import qualified Data.ByteString.Char8   as BS
-import qualified Data.List               as List
-import           Data.String.Interpolate ( i )
+import qualified Data.ByteString.Char8    as BS
+import           Data.ByteString.Internal ( fromForeignPtr, fromForeignPtr0, mallocByteString )
+import           Data.ByteString.Unsafe   ( unsafeUseAsCStringLen )
+import qualified Data.List                as List
+import           Data.String.Interpolate  ( i )
 
-import           Hath.Cache              ( Cache, CacheHit, lookupFile, storeFile )
-import           Hath.Config             ( ClientConfig )
-import           Hath.Error              ( HathError )
-import           Hath.FileURI            ( FileURI(..) )
-import           Hath.Log                ( logInfo, logWarning )
-import           Hath.Protocol           ( hathRequestToken, outgoingHeaders, sha1Hex )
-import           Hath.RPC                ( RPC, fileSources )
-import           Hath.Stats              ( StatsEnv, addDownload, incFetched )
+import           Foreign.ForeignPtr       ( ForeignPtr, withForeignPtr )
+import           Foreign.Marshal.Utils    ( copyBytes )
+import           Foreign.Ptr              ( castPtr, plusPtr )
 
-import qualified Network.HTTP.Client     as HC
-import           Network.HTTP.Client.TLS ( getGlobalManager )
-import           Network.HTTP.Types      ( hContentLength, statusCode )
+import           Hath.Cache               ( Cache, CacheHit, lookupFile, storeFile )
+import           Hath.Config              ( ClientConfig )
+import           Hath.Error               ( HathError )
+import           Hath.FileURI             ( FileURI(..) )
+import           Hath.Log                 ( logInfo, logWarning )
+import           Hath.Protocol            ( hathRequestToken, outgoingHeaders, sha1Hex )
+import           Hath.RPC                 ( RPC, connectMicros, fileSources, httpManager )
+import           Hath.Stats               ( StatsEnv, addDownload, incFetched )
+
+import qualified Network.HTTP.Client      as HC
+import           Network.HTTP.Types       ( Header
+                                          , Status
+                                          , hContentLength
+                                          , status404
+                                          , status500
+                                          , status502
+                                          , statusCode
+                                          )
 
 import           Polysemy
-import           Polysemy.Error          ( Error, catch )
-import           Polysemy.Final          ( withWeavingToFinal )
-import           Polysemy.Reader         ( Reader, ask )
+import           Polysemy.Error           ( Error, catch )
+import           Polysemy.Final           ( withWeavingToFinal )
+import           Polysemy.Reader          ( Reader, ask )
 
-import           Relude                  hiding ( Reader, ask )
+import           Relude                   hiding ( Reader, ask )
 
-import           UnliftIO                ( try )
+import           System.IO.Error          ( ioError, mkIOError, resourceVanishedErrorType )
+
+import           UnliftIO                 ( retrySTM, timeout, try, tryAny )
 
 data Located
   = Stored !CacheHit
-    -- | A cache miss being relayed from upstream: call it with a chunk writer.
-    -- It closes the upstream connection and caches the file once it is complete.
+    -- | A cache miss, coming in from upstream on a thread of its own, which
+    -- caches the file once it is complete. Call it with a chunk writer to
+    -- relay the file as it arrives; it throws if the download breaks off.
   | Streamed !((ByteString -> IO ()) -> IO ())
 
 -- | Look in the cache; on a miss, ask the RPC server where the file is, by the
 -- @fileindex@ and @xres@ of the request and the file id as the reader asked for
--- it, and start relaying it.
+-- it, and start fetching it. Left is the status the reader gets when that
+-- fails (see 'openUpstream').
 --
 -- Like the official client, we serve any file the server sends readers here
 -- for; static ranges only matter for pruning the cache.
@@ -59,78 +75,176 @@ locateResource
      , Final IO
      ]
     r
-  => ByteString
+  => Int
+  -> ByteString
   -> FileURI
   -> ( ByteString, ByteString )
-  -> Sem r (Maybe Located)
-locateResource fileId uri ( fileIndex, xres ) = lookupFile uri >>= \case
-  Just hit -> pure $ Just $ Stored hit
+  -> Sem r (Either Status Located)
+locateResource maxAllowedFileSize fileId uri ( fileIndex, xres ) = lookupFile uri >>= \case
+  Just hit -> pure $ Right $ Stored hit
   Nothing  -> do
     logInfo [i|Fetching resource: #{uri}|]
-    openUpstream fileId uri fileIndex xres >>= \case
-      Just response -> do
+    openUpstream maxAllowedFileSize fileId uri fileIndex xres >>= \case
+      Left status    -> do
+        logWarning [i|Could not fetch #{uri}: #{statusCode status}|]
+        pure (Left status)
+      Right response -> do
         incFetched
-        -- runs after the handler has returned, once the body has been relayed
-        cacheIt <- deferToIO $ \content -> do
-          addDownload (BS.length content)
-          -- a failed cache write only costs us the next hit
-          catch @HathError (storeFile uri content)
-            $ \e -> logWarning [i|Cache write failed for #{uri}: #{e}|]
-        pure $ Just $ Streamed $ streamUpstream uri response (void . forkIO . cacheIt)
-      Nothing       -> do
-        logWarning "Failed to fetch resource, sorry for you"
-        pure Nothing
+        -- runs on the download's thread, after the handler has returned
+        finish <- deferToIO $ \case
+          Left why      -> logWarning [i|Fetching #{uri} failed: #{why}|]
+          Right content -> do
+            addDownload (BS.length content)
+            -- a failed cache write only costs us the next hit
+            catch @HathError (storeFile uri content)
+              $ \e -> logWarning [i|Cache write failed for #{uri}: #{e}|]
+        Right . Streamed <$> embed (download uri response finish)
 
--- | Open the first source that answers 200 with the expected length, as the
--- official ProxyFileDownloader does. The caller reads the body and must close
--- the response.
+-- | Open the first source that answers with the file, as the official
+-- ProxyFileDownloader does; the caller reads the body and must close the
+-- response. Without sources the reader gets a 404. If no source will do, a 502
+-- once one of them has answered, or a 500 if none could be reached: the
+-- official client changes its status only for a source it connected to
+-- (ProxyFileDownloader.java:71-111).
 openUpstream :: Members '[ RPC, Reader ClientConfig, Log Message, Error HathError, Embed IO ] r
-             => ByteString
+             => Int
+             -> ByteString
              -> FileURI
              -> ByteString
              -> ByteString
-             -> Sem r (Maybe (HC.Response HC.BodyReader))
-openUpstream fileId uri fileIndex xres = do
-  -- without sources the reader gets a 404, as from the official client
-  urls <- fileSources fileIndex xres fileId `catch` \(e :: HathError)
+             -> Sem r (Either Status (HC.Response HC.BodyReader))
+openUpstream maxAllowedFileSize fileId uri fileIndex xres = do
+  urls <- filter (not . BS.null) <$> fileSources fileIndex xres fileId `catch` \(e :: HathError)
     -> [] <$ logWarning [i|srfetch failed for #{uri}: #{e}|]
   cfg <- ask @ClientConfig
-  let headers          = outgoingHeaders [ ( "Hath-Request", hathRequestToken cfg fileId ) ]
-      open manager url = case HC.parseRequest url of
-        Nothing  -> pure Nothing
-        Just req -> try
-          @IO
-          @HC.HttpException
-          (HC.responseOpen req { HC.requestHeaders = headers } manager)
-          >>= \case
-            Right response
-              | statusCode (HC.responseStatus response) == 200
-              , List.lookup hContentLength (HC.responseHeaders response)
-                == Just (show (fileSize uri)) -> pure (Just response)
-              | otherwise -> HC.responseClose response $> Nothing
-            -- connection error: try the next source
-            Left _         -> pure Nothing
-  embed $ do
-    manager <- getGlobalManager
-    runMaybeT (asum (MaybeT . open manager . BS.unpack <$> urls))
+  let request url = do
+        req <- HC.parseRequest (BS.unpack url)
+        pure
+          req { HC.requestHeaders
+                  = outgoingHeaders [ ( "Hath-Request", hathRequestToken cfg fileId ) ]
+                -- 5 s to connect, then 30 s for the headers (ProxyFileDownloader.java:86-87)
+              , HC.responseTimeout = HC.responseTimeoutMicro (connectMicros + seconds 30)
+              }
+      open url = case request url of
+        Nothing  -> pure Unreachable
+        Just req -> try @IO @HC.HttpException (HC.responseOpen req httpManager) >>= \case
+          Right response
+            | usableReply
+                maxAllowedFileSize
+                uri
+                (statusCode (HC.responseStatus response))
+                (HC.responseHeaders response) -> pure (Opened response)
+            | otherwise -> HC.responseClose response $> Answered
+          Left (HC.HttpExceptionRequest _ HC.ConnectionTimeout) -> pure Unreachable
+          Left (HC.HttpExceptionRequest _ (HC.ConnectionFailure _)) -> pure Unreachable
+          Left _ -> pure Answered
+      firstOpened failure = \case
+        []         -> pure (Left failure)
+        url : rest -> open url >>= \case
+          Opened response -> pure (Right response)
+          Answered        -> firstOpened status502 rest
+          Unreachable     -> firstOpened failure rest
+  if null urls
+    then pure (Left status404)
+    else embed (firstOpened status500 urls)
 
--- | Relay an upstream body chunk by chunk. If it arrives complete and its SHA-1
--- matches, hand the bytes to the continuation (the cache write). The upstream
--- connection is closed in every case, including the client going away.
-streamUpstream :: FileURI
-               -> HC.Response HC.BodyReader
-               -> (ByteString -> IO ())
-               -> (ByteString -> IO ())
-               -> IO ()
-streamUpstream uri response whenComplete write = go [] `finally` HC.responseClose response
+-- | How asking one source went.
+data Attempt
+  = Opened !(HC.Response HC.BodyReader)
+  | Answered
+    -- ^ it answered, but not with the file
+  | Unreachable
+
+-- | Whether an upstream reply, given its status and headers, is the file
+-- (ProxyFileDownloader.java:92-107): it must announce the file's length, and a
+-- file larger than @max_allowed_filesize@ is not taken.
+usableReply :: Int -> FileURI -> Int -> [ Header ] -> Bool
+usableReply maxAllowedFileSize uri status headers
+  = status == 200 && announced == Just (fileSize uri) && fileSize uri <= maxAllowedFileSize
   where
-    go chunks = HC.brRead (HC.responseBody response) >>= \chunk -> if BS.null chunk
-      then let
-          content = BS.concat (reverse chunks)
-        in 
-          when (BS.length content == fileSize uri && sha1Hex content == fileHash uri)
-          $ whenComplete content
-      else write chunk >> go (chunk : chunks)
+    announced = readMaybe . BS.unpack =<< List.lookup hContentLength headers
+
+-- | Fetch a body on a thread of its own, into a buffer of the file's size. The
+-- reader relays from the buffer, and the buffer, once verified, is what the
+-- cache keeps, so the file is in memory once. A reader that goes away leaves
+-- the download running, as the official ProxyFileDownloader's thread does.
+-- @finish@ gets the verified file, or why there is none.
+download :: FileURI
+         -> HC.Response HC.BodyReader
+         -> (Either Text ByteString -> IO ())
+         -> IO ((ByteString -> IO ()) -> IO ())
+download uri response finish = do
+  buffer <- mallocByteString size
+  progress <- newTVarIO (Receiving 0)
+  let keep offset chunk = do
+        copyInto buffer offset chunk
+        atomically $ writeTVar progress (Receiving (offset + BS.length chunk))
+  void $ forkIO $ do
+    received <- receive size (HC.responseBody response) keep `finally` HC.responseClose response
+    atomically $ writeTVar progress (either (const Broken) (const Received) received)
+    finish $ received >> verified (fromForeignPtr0 buffer size)
+  pure (relay buffer progress)
+  where
+    size = fileSize uri
+
+    verified content
+      | sha1Hex content == fileHash uri = Right content
+      | otherwise = Left "its SHA-1 does not match the file id"
+
+    relay buffer progress write = go 0
+      where
+        go sent = atomically (beyond sent) >>= \case
+          Receiving filled -> write (fromForeignPtr buffer sent (filled - sent)) >> go filled
+          Received         -> when (sent < size) $ write (fromForeignPtr buffer sent (size - sent))
+          -- the kind of error a peer that went away raises: Warp drops the
+          -- reader's connection, as it must for a body shorter than announced,
+          -- and does not print it (the download logs why)
+          Broken           -> ioError
+            (mkIOError resourceVanishedErrorType "upstream broke off" Nothing Nothing)
+
+        beyond sent = readTVar progress >>= \case
+          Receiving filled
+            | filled <= sent -> retrySTM
+          settled          -> pure settled
+
+-- | How far a download has come.
+data Progress
+  = Receiving !Int
+    -- ^ this many bytes so far
+  | Received
+  | Broken
+
+-- | Read a body of @size@ bytes, handing each chunk to @keep@ with the offset it
+-- starts at. Left says why it broke off: upstream failed or sent too little or
+-- too much, a read waited 30 s, or the whole took 300 s
+-- (ProxyFileDownloader.java:186-200).
+receive :: Int -> HC.BodyReader -> (Int -> ByteString -> IO ()) -> IO (Either Text ())
+receive size body keep
+  = maybe (Left "it took over 300 s") (either (Left . describe) id)
+  <$> timeout (seconds 300) (tryAny (go 0))
+  where
+    go received = timeout (seconds 30) (HC.brRead body) >>= \case
+      Nothing    -> pure $ Left [i|nothing came for 30 s after #{received} bytes|]
+      Just chunk
+        | BS.null chunk -> pure
+          $ if received == size
+            then Right ()
+            else Left [i|it ended after #{received} of #{size} bytes|]
+        -- the buffer holds no more; a chunked body can bring more than announced
+        | BS.length chunk > size - received -> pure $ Left [i|it sent more than #{size} bytes|]
+        | otherwise -> keep received chunk >> go (received + BS.length chunk)
+
+    describe e = case fromException e of
+      Just (HC.HttpExceptionRequest _ content) -> show content
+      _ -> show e
+
+copyInto :: ForeignPtr Word8 -> Int -> ByteString -> IO ()
+copyInto buffer offset chunk = unsafeUseAsCStringLen chunk $ \( source, len )
+  -> withForeignPtr buffer $ \start -> copyBytes (start `plusPtr` offset) (castPtr source) len
+
+-- | In microseconds.
+seconds :: Int -> Int
+seconds = (* 1000000)
 
 -- | Lower a Sem action into IO so it can run after the request handler has returned.
 deferToIO :: Member (Final IO) r => (x -> Sem r ()) -> Sem r (x -> IO ())

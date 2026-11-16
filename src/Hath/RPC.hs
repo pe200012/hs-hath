@@ -9,6 +9,8 @@ module Hath.RPC
   , runRPC
   , runRPCIO
   , worthRetrying
+  , httpManager
+  , connectMicros
     -- * Session
   , serverStat
   , clientLogin
@@ -18,6 +20,7 @@ module Hath.RPC
   , clientStop
   , stillAlive
   , toldToStop
+  , overload
   , clientSettings
   , getCertificate
   , getBlacklist
@@ -71,6 +74,7 @@ import           Hath.Settings                ( HathSettings
 
 import qualified Network.HTTP.Client          as HC
 import           Network.HTTP.Client.Internal ( throwHttp )
+import           Network.HTTP.Client.TLS      ( tlsManagerSettings )
 import           Network.HTTP.Types           ( statusCode, statusIsSuccessful )
 
 import           Polysemy
@@ -137,20 +141,30 @@ rpcServer = lookupEnv "HATH_RPC_HOST" <&> \case
 rpcTimeoutMicros :: Int
 rpcTimeoutMicros = 60 * 1000000
 
--- | Connections to the RPC server give up after 5 s, as the official client's do
--- (FileDownloader.java:165). http-client has no setting for that alone: its
--- response timeout counts the connection too.
-rpcManager :: HC.Manager
-rpcManager
+-- | The connections of every request we send: to the RPC server, for proxy
+-- tests, to image servers. Each gives up after 'connectMicros' if it cannot
+-- connect, as the official client's do (FileDownloader.java:165,
+-- ProxyFileDownloader.java:86). http-client has no setting for that alone (its
+-- response timeout counts the connection too), so every request sets its own
+-- response timeout.
+httpManager :: HC.Manager
+httpManager
   = unsafePerformIO
   $ HC.newManager
-    HC.defaultManagerSettings
-    { HC.managerRawConnection = within5s <$> HC.managerRawConnection HC.defaultManagerSettings }
+    tlsManagerSettings
+    { HC.managerRawConnection = within5s <$> HC.managerRawConnection tlsManagerSettings
+    , HC.managerTlsConnection = within5s <$> HC.managerTlsConnection tlsManagerSettings
+    }
   where
     within5s connect address host port
-      = timeout 5000000 (connect address host port) >>= maybe (throwHttp HC.ConnectionTimeout) pure
+      = timeout connectMicros (connect address host port)
+      >>= maybe (throwHttp HC.ConnectionTimeout) pure
 
-{-# NOINLINE rpcManager #-}
+{-# NOINLINE httpManager #-}
+
+-- | How long a connection of 'httpManager' may take to open: 5 s.
+connectMicros :: Int
+connectMicros = 5 * 1000000
 
 -- | One GET to the RPC server, signed with the client key and the server's time.
 request :: Members '[ Embed IO, Error HathError, Reader ClientConfig ] r
@@ -186,7 +200,7 @@ exchange req = go (3 :: Int)
       outcome -> pure $ first (TransportError . snd) outcome
 
     -- the reply's body, or else the status it came with (none if the exchange broke off) and why
-    attempt          = try @HC.HttpException (HC.httpLbs req rpcManager) <&> \case
+    attempt          = try @HC.HttpException (HC.httpLbs req httpManager) <&> \case
       Left (HC.HttpExceptionRequest _ content) -> Left ( Nothing, show content )
       Left e -> Left ( Nothing, show e )
       Right response
@@ -277,6 +291,11 @@ toldToStop :: HathError -> Bool
 toldToStop = \case
   RequestFailure status -> "TERM_BAD_NETWORK" `T.isPrefixOf` status
   _ -> False
+
+-- | Tell the server we are close to our connection limit; it then sends us
+-- fewer readers for a while (official ServerHandler.notifyOverload).
+overload :: Members '[ RPC, Error HathError ] r => Sem r ()
+overload = void $ payload =<< callRPC "overload" ""
 
 -- | The settings as the server has them now, applied onto the ones we hold.
 clientSettings

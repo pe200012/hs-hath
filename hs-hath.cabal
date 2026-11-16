@@ -48,6 +48,7 @@ library
       Hath.Server
       Hath.Server.API
       Hath.Server.App
+      Hath.Server.ConnectionLimit
       Hath.Server.FloodControl
       Hath.Server.Handlers
       Hath.Server.LegacyCiphers
@@ -499,11 +500,13 @@ test-suite hs-hath-test
   main-is: Spec.hs
   other-modules:
       APISpec
+      ConnectionLimitSpec
       FilesystemSpec
       FileURISpec
       FloodControlSpec
       GallerySpec
       Integration
+      LocateSpec
       MockRPC
       ProtocolSpec
       R2Spec

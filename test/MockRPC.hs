@@ -2,6 +2,9 @@
 -- files are fetched from.
 module MockRPC ( MockRPC(..), defaultMockRPC, withMockRPC, loginSettings ) where
 
+import           Control.Concurrent       ( threadDelay )
+
+import           Data.ByteString.Builder  ( byteString )
 import qualified Data.ByteString.Char8    as BS
 import qualified Data.List                as List
 import           Data.Time.Clock.System   ( SystemTime(systemSeconds), getSystemTime )
@@ -15,41 +18,49 @@ import qualified Network.Wai.Handler.Warp as Warp
 import           Relude
 
 import           System.Environment       ( setEnv )
+import           System.IO.Error          ( ioError, mkIOError, resourceVanishedErrorType )
 
 data MockRPC
   = MockRPC
-  { mockFileContent :: ByteString
+  { mockFileContent   :: ByteString
     -- ^ what the image server sends, whichever file is asked for
-  , mockCertificate :: ByteString
+  , mockCertificate   :: ByteString
     -- ^ the reply to get_cert
-  , mockClientKey   :: ByteString
+  , mockClientKey     :: ByteString
     -- ^ the key OK replies are signed with
-  , mockClockAhead  :: Int64
+  , mockClockAhead    :: Int64
     -- ^ how far its clock is ahead of ours. A request signed more than a
     -- minute off it is answered KEY_EXPIRED, except server_stat, which
     -- tells the time.
-  , mockOutages     :: Int
+  , mockOutages       :: Int
     -- ^ how many RPC requests it answers with a 500 before it works
-  , mockBlacklist   :: [ ByteString ]
+  , mockBlacklist     :: [ ByteString ]
     -- ^ the lines of its get_blacklist reply
-  , mockSeen        :: ByteString -> IO ()
+  , mockSeen          :: ByteString -> IO ()
     -- ^ told the act of each RPC request as it arrives
-  , mockRPCServerIP :: ByteString
+  , mockRPCServerIP   :: ByteString
     -- ^ its address as its settings give it (@rpc_server_ip@); by default the
     -- one the tests send server commands from
+  , mockPauseHalfway  :: Int
+    -- ^ microseconds the image server waits halfway through a file
+  , mockHangUpHalfway :: Bool
+    -- ^ whether it hangs up there instead, having announced the whole file
   }
 
 defaultMockRPC :: MockRPC
 defaultMockRPC
-  = MockRPC { mockFileContent = "TEST_FILE_CONTENT"
-            , mockCertificate = "FAIL\nNo test certificate available"
-            , mockClientKey   = "test-secret-key-12345"
-            , mockClockAhead  = 0
-            , mockOutages     = 0
-            , mockBlacklist   = []
-            , mockSeen        = const pass
-            , mockRPCServerIP = "127.0.0.1"
-            }
+  = MockRPC
+  { mockFileContent   = "TEST_FILE_CONTENT"
+  , mockCertificate   = "FAIL\nNo test certificate available"
+  , mockClientKey     = "test-secret-key-12345"
+  , mockClockAhead    = 0
+  , mockOutages       = 0
+  , mockBlacklist     = []
+  , mockSeen          = const pass
+  , mockRPCServerIP   = "127.0.0.1"
+  , mockPauseHalfway  = 0
+  , mockHangUpHalfway = False
+  }
 
 -- | The settings it assigns at login.
 loginSettings :: MockRPC -> [ ByteString ]
@@ -81,17 +92,25 @@ application mock outagesLeft req respond = case ( Wai.rawPathInfo req, parameter
         then Wai.responseLBS HTTP.status500 [] ""
         else Wai.responseLBS HTTP.status200 [] $ fromStrict $ rpcReply clock act
   ( "/file", _ ) -> respond
-    $ Wai.responseLBS
-      HTTP.status200
-      -- image servers always send the length
-      [ ( "Content-Length", show (BS.length (mockFileContent mock)) ) ]
-      (fromStrict (mockFileContent mock))
+    -- image servers always send the length
+    $ Wai.responseStream HTTP.status200 [ ( "Content-Length", show (BS.length content) ) ]
+    $ \write flush -> do
+      write (byteString firstHalf) >> flush
+      threadDelay (mockPauseHalfway mock)
+      -- Warp drops a connection whose body throws, and does not report this kind of error
+      if mockHangUpHalfway mock
+        then ioError (mkIOError resourceVanishedErrorType "hanging up halfway" Nothing Nothing)
+        else write (byteString secondHalf)
   _ -> respond $ Wai.responseLBS HTTP.status404 [ ( "Content-Type", "text/plain" ) ] "Not Found"
   where
+    content = mockFileContent mock
+
+    ( firstHalf, secondHalf ) = BS.splitAt (BS.length content `div` 2) content
+
     parameter name = join (List.lookup name (Wai.queryString req))
 
     -- we are the image server too, at whatever address the client reached us
-    ownAddress     = fromMaybe "localhost" (Wai.requestHeaderHost req)
+    ownAddress = fromMaybe "localhost" (Wai.requestHeaderHost req)
 
     signedAt clock
       = maybe
@@ -105,7 +124,7 @@ application mock outagesLeft req respond = case ( Wai.rawPathInfo req, parameter
         | not (signedAt clock) -> "KEY_EXPIRED"
         | otherwise -> reply act
 
-    reply          = \case
+    reply = \case
       -- the PKCS#12 file itself, never signed
       "get_cert" -> mockCertificate mock
       "client_login" -> signed (loginSettings mock)
@@ -117,7 +136,7 @@ application mock outagesLeft req respond = case ( Wai.rawPathInfo req, parameter
         | act `elem` answeredOK -> signed []
         | otherwise -> "FAIL\nUnknown action: " <> act
 
-    answeredOK     = [ "still_alive", "client_start", "client_stop", "dlfetch", "dlfails" ]
+    answeredOK = [ "still_alive", "client_start", "client_stop", "overload", "dlfetch", "dlfails" ]
 
     -- the 1.6.6 server signs every OK reply with the client key
     signed payload

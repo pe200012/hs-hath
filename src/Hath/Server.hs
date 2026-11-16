@@ -38,12 +38,14 @@ import           Hath.RPC                             ( StartFailure(..)
                                                       , clientStop
                                                       , getBlacklist
                                                       , getCertificate
+                                                      , overload
                                                       , runRPCIO
                                                       , startFailure
                                                       , stillAlive
                                                       , toldToStop
                                                       )
 import           Hath.Server.App                      ( ServerAction(..), ServerEnv(..) )
+import           Hath.Server.ConnectionLimit          ( connectionLimit )
 import           Hath.Server.FloodControl             ( isRPCServer, newFloodControl )
 import           Hath.Server.Handlers                 ( application )
 import           Hath.Server.LegacyCiphers
@@ -64,7 +66,9 @@ import           Network.Wai.Handler.Warp             ( defaultOnException
                                                       , setBeforeMainLoop
                                                       , setGracefulShutdownTimeout
                                                       , setInstallShutdownHandler
+                                                      , setOnClose
                                                       , setOnException
+                                                      , setOnOpen
                                                       , setPort
                                                       )
 import           Network.Wai.Handler.WarpTLS          ( OnInsecure(AllowInsecure)
@@ -179,9 +183,12 @@ serverLoop env certs = do
   port <- clientPort <$> readTVarIO (envSettings env)
   listening <- newEmptyMVar
   closeListener <- newEmptyMVar
+  ( admit, release ) <- connectionLimit (envSettings env) (notifyOverload config)
   let warpSettings
         = setBeforeMainLoop (putMVar listening ())
         $ setInstallShutdownHandler (putMVar closeListener)
+        $ setOnOpen admit
+        $ setOnClose release
         $ setGracefulShutdownTimeout (Just 25)
         $ setOnException quietHandshakes
         $ setPort port defaultSettings
@@ -224,6 +231,12 @@ quietHandshakes req e
   | Just (HandshakeFailed _) <- fromException e = pass
   | Just ClientClosedConnectionPrematurely <- fromException e = pass
   | otherwise = defaultOnException req e
+
+-- | Tell the RPC server we are near our connection limit.
+notifyOverload :: ClientConfig -> IO ()
+notifyOverload config = runRPCIO config overload >>= \case
+  Left failure -> putStrLn [i|Overload notification failed: #{failure}|]
+  Right ()     -> pass
 
 -- | Send client_start, once. True if the server took us; if it refuses us for
 -- good, exit.

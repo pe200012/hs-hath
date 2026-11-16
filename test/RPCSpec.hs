@@ -10,6 +10,7 @@ import           Hath.FileURI           ( parseFileURI )
 import           Hath.RPC               ( StartFailure(..)
                                         , clientStart
                                         , getBlacklist
+                                        , overload
                                         , runRPCIO
                                         , startFailure
                                         , toldToStop
@@ -87,6 +88,14 @@ rpcSpecs = describe "RPC" $ after_ useOurClock $ do
     it "waits for the next one otherwise"
       $ map toldToStop [ RequestFailure "FAIL", TransportError "HTTP 500", EmptyResponse ]
       `shouldBe` [ False, False, False ]
+
+  describe "overload" $ it "is sent as act=overload" $ do
+    seen <- newIORef []
+    sent <- withMockRPC
+      defaultMockRPC { mockSeen = atomicModifyIORef'_ seen . (:) }
+      (runRPCIO config overload)
+    sent `shouldBe` Right ()
+    readIORef seen `shouldReturn` [ "overload" ]
 
   describe "get_blacklist" $ it "gives the file ids, skipping lines that are not one" $ do
     let fileId = "0123456789abcdef0123456789abcdef01234567-1000-800-600-jpg"

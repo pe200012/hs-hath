@@ -1,58 +1,63 @@
-import           APISpec          ( apiSpecs )
+import           APISpec             ( apiSpecs )
 
-import           Data.X509        ( CertificateChain(..) )
-import           Data.X509.File   ( readSignedObject )
+import           ConnectionLimitSpec ( connectionLimitSpecs )
 
-import           Dhall            ( embed, inject )
-import qualified Dhall.Core       as Dhall
+import           Data.X509           ( CertificateChain(..) )
+import           Data.X509.File      ( readSignedObject )
 
-import           FileURISpec      ( fileURISpecs )
+import           Dhall               ( embed, inject )
+import qualified Dhall.Core          as Dhall
 
-import           FilesystemSpec   ( filesystemSpecs )
+import           FileURISpec         ( fileURISpecs )
 
-import           FloodControlSpec ( floodControlSpecs )
+import           FilesystemSpec      ( filesystemSpecs )
 
-import           GallerySpec      ( gallerySpecs )
+import           FloodControlSpec    ( floodControlSpecs )
 
-import           Hath.Config      ( CacheBackend(..)
-                                  , ClientConfig(..)
-                                  , R2Config(..)
-                                  , defaultClientConfig
-                                  , readClientConfig
-                                  )
-import           Hath.Server      ( needsRenewal )
-import           Hath.Settings    ( HathSettings(..)
-                                  , defaultHathSettings
-                                  , parseSettings
-                                  , settingNumber
-                                  )
-import           Hath.Stats       ( addDlBytes
-                                  , addDownload
-                                  , addUpload
-                                  , incDlFile
-                                  , incDlTask
-                                  , incFetched
-                                  , incServed
-                                  , newStatsEnv
-                                  , observeDuration
-                                  , renderMetrics
-                                  , trackConnection
-                                  )
+import           GallerySpec         ( gallerySpecs )
 
-import           Integration      ( integrationSpecs )
+import           Hath.Config         ( CacheBackend(..)
+                                     , ClientConfig(..)
+                                     , R2Config(..)
+                                     , defaultClientConfig
+                                     , readClientConfig
+                                     )
+import           Hath.Server         ( needsRenewal )
+import           Hath.Settings       ( HathSettings(..)
+                                     , defaultHathSettings
+                                     , maxConnections
+                                     , parseSettings
+                                     , settingNumber
+                                     )
+import           Hath.Stats          ( addDlBytes
+                                     , addDownload
+                                     , addUpload
+                                     , incDlFile
+                                     , incDlTask
+                                     , incFetched
+                                     , incServed
+                                     , newStatsEnv
+                                     , observeDuration
+                                     , renderMetrics
+                                     , trackConnection
+                                     )
 
-import           Polysemy         ( runM )
-import           Polysemy.Reader  ( runReader )
+import           Integration         ( integrationSpecs )
 
-import           ProtocolSpec     ( protocolSpecs )
+import           LocateSpec          ( locateSpecs )
 
-import           R2Spec           ( r2Specs )
+import           Polysemy            ( runM )
+import           Polysemy.Reader     ( runReader )
 
-import           RPCSpec          ( rpcSpecs )
+import           ProtocolSpec        ( protocolSpecs )
 
-import           Relude           hiding ( runReader )
+import           R2Spec              ( r2Specs )
 
-import           SQLiteSpec       ( sqliteSpecs )
+import           RPCSpec             ( rpcSpecs )
+
+import           Relude              hiding ( runReader )
+
+import           SQLiteSpec          ( sqliteSpecs )
 
 import           Test.Hspec
 
@@ -62,6 +67,8 @@ main = hspec $ do
   protocolSpecs
   apiSpecs
   floodControlSpecs
+  connectionLimitSpecs
+  locateSpecs
   gallerySpecs
   settingsSpecs
   rpcSpecs
@@ -84,6 +91,23 @@ settingsSpecs = do
     clientPort refreshed `shouldBe` 443
     diskLimitBytes refreshed `shouldBe` 2000
     rpcServerIPs refreshed `shouldBe` [ "192.0.2.1", "192.0.2.2" ]
+
+  describe "max_allowed_filesize" $ it "is a GiB unless the server says otherwise" $ do
+    maxAllowedFileSize defaultHathSettings `shouldBe` 1073741824
+    maxAllowedFileSize (parseSettings defaultHathSettings [ "max_allowed_filesize=1000" ])
+      `shouldBe` 1000
+
+  describe "maxConnections" $ do
+    let withSettings = maxConnections . parseSettings defaultHathSettings
+
+    it "is 20, and one more for every 10,000 bytes/s of the throttle, up to 500" $ do
+      withSettings [ "throttle_bytes=0" ] `shouldBe` 20
+      withSettings [ "throttle_bytes=1009999" ] `shouldBe` 120
+      withSettings [ "throttle_bytes=100000000" ] `shouldBe` 500
+
+    it "is what max_connections says, unless that is 0" $ do
+      withSettings [ "throttle_bytes=1000000", "max_connections=900" ] `shouldBe` 900
+      withSettings [ "throttle_bytes=1000000", "max_connections=0" ] `shouldBe` 120
 
   describe "settingNumber" $ do
     let stat = [ "min_client_build=176", "cur_client_build=181", "server_time=1763300000" ]
