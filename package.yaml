@@ -178,6 +178,8 @@ library:
     - hs-hath-cryptostore
     - hs-hath-warp-tls
     - hs-hath-minio
+    # crypton-x509 gives certificate dates as hourglass's DateTime
+    - hourglass >= 0.2 && < 0.3
   default-extensions: *extensions
 
 executables:

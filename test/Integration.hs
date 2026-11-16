@@ -241,7 +241,8 @@ integrationSpecs = do
       let content      = "WRITE_FAILS_CONTENT"
           brokenWrites = CacheRunner { runCacheWith = interpret $ \case
                                          LookupFile _  -> pure Nothing
-                                         StoreFile _ _ -> throw (StorageError "write refused") }
+                                         StoreFile _ _ -> throw (StorageError "write refused")
+                                         DeleteFile _  -> pass }
       withAppUsing False brokenWrites content $ \port -> do
         time <- now
         response <- fetch port (filePath (fileIdFor content "txt") time fetchable)
@@ -365,7 +366,7 @@ integrationSpecs = do
   describe "The TLS server" $ do
     it "starts, and serves a file" $ do
       let content = "INIT_TEST_CONTENT"
-      withServer defaultMockRPC { mockFileContent = content } $ \port _ -> do
+      withServer (const defaultMockRPC { mockFileContent = content }) $ \port _ -> do
         time <- now
         -- plain HTTP is allowed on the TLS port
         response <- fetch port (filePath (fileIdFor content "txt") time fetchable)
@@ -376,7 +377,8 @@ integrationSpecs = do
       $ withSystemTempDirectory "hath-cert"
       $ \dir -> do
         let openssl = void . flip (readProcess "openssl") ""
-        -- the certificate the mock RPC server hands out on refresh
+        -- the certificate the mock RPC server hands out on refresh; with one day
+        -- left it would be refused
         openssl
           [ "req"
           , "-x509"
@@ -384,7 +386,7 @@ integrationSpecs = do
           , "rsa:2048"
           , "-nodes"
           , "-days"
-          , "1"
+          , "2"
           , "-subj"
           , "/CN=rotated"
           , "-keyout"
@@ -406,7 +408,7 @@ integrationSpecs = do
           ]
         p12 <- readFileBS (dir </> "cert.p12")
         rotated <- CertificateChain <$> readSignedObject (dir </> "cert.pem")
-        withServer defaultMockRPC { mockCertificate = p12 } $ \port actions -> do
+        withServer (const defaultMockRPC { mockCertificate = p12 }) $ \port actions -> do
           servedCertificate port >>= (`shouldNotBe` Just rotated)
           bracket (connectLocal port) Sock.close $ \sock -> do
             -- a request still being sent while the certificate changes
@@ -420,29 +422,52 @@ integrationSpecs = do
             reply <- recv sock 4096
             reply `shouldSatisfy` ("HTTP/1.1 200" `BS.isPrefixOf`)
 
+    it "listens before it sends client_start" $ do
+      listeningAtStart <- newEmptyMVar
+      let mock port = defaultMockRPC { mockSeen = \act -> when (act == "client_start")
+                                         $ void . tryPutMVar listeningAtStart =<< accepts port }
+      withServer mock $ \_ _ -> takeMVar listeningAtStart >>= (`shouldBe` True)
+
+    it "on shutdown, sends client_stop once, serves 5 s more, then stops listening" $ do
+      seen <- newIORef []
+      let mock _ = defaultMockRPC { mockSeen = atomicModifyIORef'_ seen . (:) }
+      withServer mock $ \port actions -> do
+        atomically $ writeTChan actions GracefulShutdown
+        threadDelay 1000000
+        readIORef seen >>= (`shouldBe` [ "client_stop" ]) . filter (== "client_stop")
+        response <- fetch port "/robots.txt"
+        responseStatus response `shouldBe` status200
+        threadDelay 6000000
+        accepts port >>= (`shouldBe` False)
+
 -- * The real server
 
 -- | Run 'startServer' on a free port with an SQLite cache in a temporary
--- directory, and shut it down afterwards.
-withServer :: MockRPC -> (Int -> TChan ServerAction -> IO a) -> IO a
-withServer mock action = withSystemTempDirectory "hath-server" $ \dir -> withMockRPC mock $ do
-  -- warp-tls' own test pair: its age does not matter here
-  certs <- CertificateChain <$> readSignedObject "vendor/warp-tls-3.4.13/certificate.pem"
-  privateKey <- readKeyFile "vendor/warp-tls-3.4.13/key.pem"
-    >>= maybe (fail "no private key in the test key file") pure . listToMaybe
+-- directory, and shut it down afterwards. The mock RPC server is told the port.
+withServer :: (Int -> MockRPC) -> (Int -> TChan ServerAction -> IO a) -> IO a
+withServer mock action = withSystemTempDirectory "hath-server" $ \dir -> do
   port <- bracket Warp.openFreePort (Sock.close . snd) (pure . fst)
-  actions <- newTChanIO
-  let config   = testConfig { cachePath = toText (dir </> "cache.db") }
-      settings = defaultHathSettings { clientPort = port }
-      options  = ServerOptions { disableRateLimit = True, trustProxyHeaders = False }
-  bracket (forkIO $ startServer config options settings ( certs, privateKey ) actions) killThread
-    $ \_ -> do
-      waitUntilListening port
-      result <- action port actions
-      atomically $ writeTChan actions GracefulShutdown
-      -- time to tell the RPC server before the mock goes away
-      threadDelay 500000
-      pure result
+  withMockRPC (mock port) $ do
+    -- warp-tls' own test pair: its age does not matter here
+    certs <- CertificateChain <$> readSignedObject "vendor/warp-tls-3.4.13/certificate.pem"
+    privateKey <- readKeyFile "vendor/warp-tls-3.4.13/key.pem"
+      >>= maybe (fail "no private key in the test key file") pure . listToMaybe
+    actions <- newTChanIO
+    let config   = testConfig { cachePath = toText (dir </> "cache.db") }
+        settings = defaultHathSettings { clientPort = port }
+        options  = ServerOptions { disableRateLimit = True, trustProxyHeaders = False }
+    bracket (forkIO $ startServer config options settings ( certs, privateKey ) actions) killThread
+      $ \_ -> do
+        waitUntilListening port
+        result <- action port actions
+        atomically $ writeTChan actions GracefulShutdown
+        -- time to tell the RPC server before the mock goes away
+        threadDelay 500000
+        pure result
+
+-- | Whether something accepts connections on the port.
+accepts :: Int -> IO Bool
+accepts port = isRight <$> try @IOException (bracket (connectLocal port) Sock.close (const pass))
 
 -- | Wait, up to ten seconds, until something accepts connections on the port.
 waitUntilListening :: Int -> IO ()

@@ -30,7 +30,7 @@ data ServerAction
   = Cert
     -- ^ fetch a new certificate and serve it from now on
   | GracefulShutdown
--- ^ tell the RPC server we are leaving, then exit
+-- ^ tell the RPC server we are leaving, let open transfers finish, then return
 
 data ServerEnv
   = ServerEnv

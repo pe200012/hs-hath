@@ -52,6 +52,9 @@ runCacheSQLite conn = interpret $ \case
       "INSERT OR REPLACE INTO files (lru_counter, s4, file_id, file_name, bytes) VALUES (?, ?, ?, ?, ?)"
       ( 1 :: Int64, T.take 4 fileId, fileId, Nothing :: Maybe Text, bytes )
 
+  DeleteFile uri      -> embed
+    $ execute conn "DELETE FROM files WHERE file_id = ?" (Only (renderFileURIText uri))
+
 data VerificationStats
   = VerificationStats { verifiedCount    :: !Int
                       , corruptedCount   :: !Int

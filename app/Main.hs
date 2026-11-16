@@ -8,8 +8,10 @@ import           Hath.Config            ( CacheBackend(..), ClientConfig(..), re
 import           Hath.RPC               ( clientLogin, getCertificate, runRPCIO, serverStat )
 import           Hath.Server            ( ServerAction(GracefulShutdown)
                                         , ServerOptions(..)
+                                        , needsRenewal
                                         , startServer
                                         )
+import           Hath.ServerTime        ( serverNow )
 
 import           Relude
 
@@ -36,6 +38,10 @@ main = do
   settings <- runRPCIO config clientLogin >>= either (`giveUp` "Unable to login, exiting...") pure
   certs <- runRPCIO config getCertificate
     >>= either (`giveUp` "Unable to fetch certs, exiting...") pure
+  now <- serverNow
+  when (needsRenewal now (fst certs)) $ do
+    putStrLn "The certificate from the server expires within a day; try again later."
+    exitFailure
   startServer
     config
     ServerOptions { disableRateLimit  = optDisableRateLimit options

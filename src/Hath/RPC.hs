@@ -13,8 +13,11 @@ module Hath.RPC
   , serverStat
   , clientLogin
   , clientStart
+  , StartFailure(..)
+  , startFailure
   , clientStop
   , stillAlive
+  , toldToStop
   , clientSettings
   , getCertificate
   , getBlacklist
@@ -46,7 +49,7 @@ import           Data.X509                    ( CertificateChain, PrivKey )
 
 import           Hath.Config                  ( ClientConfig(..) )
 import           Hath.Error                   ( HathError(..) )
-import           Hath.FileURI                 ( FileURI, renderFileURIBytes )
+import           Hath.FileURI                 ( FileURI, parseFileURI, renderFileURIBytes )
 import           Hath.Gallery                 ( GalleryFile(..)
                                               , GalleryMetadata(..)
                                               , parseMetadata
@@ -233,17 +236,47 @@ clientLogin = do
   logInfo "Logging in"
   parseSettings defaultHathSettings <$> settingsPayload "client_login"
 
--- | Tell the server we are listening. False unless it answers OK.
-clientStart :: Member RPC r => Sem r Bool
-clientStart = isRight . rpcPayload <$> callRPC "client_start" ""
+-- | Tell the server we are listening. It tests our port before it answers.
+clientStart :: Members '[ RPC, Error HathError ] r => Sem r ()
+clientStart = void $ payload =<< callRPC "client_start" ""
+
+-- | What a failed client_start leaves us to do (official ServerHandler.notifyStart).
+data StartFailure
+  = Refused !Text
+    -- ^ the server will not have us: exit, saying why
+  | Unannounced !Text
+    -- ^ say what went wrong and stay up without the network, as the official
+    -- client does, so that the owner can test the port
+  deriving ( Eq, Show )
+
+-- | Read a failed client_start for a client listening on this port.
+startFailure :: Int -> HathError -> StartFailure
+startFailure port = \case
+  RequestFailure status
+    | "FAIL_OTHER_CLIENT_CONNECTED" `T.isPrefixOf` status -> Refused
+      "The server detected that another client was already connected from this computer or local network. You can only have one client running per public IPv4 address."
+    | "FAIL_CID_IN_USE" `T.isPrefixOf` status -> Refused
+      "The server detected that another client is already using this client ID. If the client was not shut down properly and your IP changed, you may have to wait up to 24 hours for the old session to time out."
+    | "FAIL_CONNECT_TEST" `T.isPrefixOf` status -> Unannounced
+      [i|The client has failed the external connectivity test: the server could not connect to it. Check that port #{port} is open and forwarded to this computer, and that your incoming and outgoing IP address are the same. The client keeps running so that you can test the port; restart it once that is fixed.|]
+  failure -> Unannounced
+    [i|Startup notification failed (#{failure}). The client keeps running, but the network will not send it anything; restart it.|]
 
 -- | Tell the server we are going away.
-clientStop :: Member RPC r => Sem r ()
-clientStop = void $ callRPC "client_stop" ""
+clientStop :: Members '[ RPC, Error HathError ] r => Sem r ()
+clientStop = void $ payload =<< callRPC "client_stop" ""
 
--- | The heartbeat.
-stillAlive :: Member RPC r => Sem r ()
-stillAlive = void $ callRPC "still_alive" ""
+-- | The heartbeat. Fails with the server's status unless it answers OK.
+stillAlive :: Members '[ RPC, Error HathError ] r => Sem r ()
+stillAlive = void $ payload =<< callRPC "still_alive" ""
+
+-- | Whether a failed still_alive means we must shut down: the server answers
+-- @TERM_BAD_NETWORK@ to a client it cannot reach (official CakeSphere.run). Any
+-- other failure waits for the next heartbeat.
+toldToStop :: HathError -> Bool
+toldToStop = \case
+  RequestFailure status -> "TERM_BAD_NETWORK" `T.isPrefixOf` status
+  _ -> False
 
 -- | The settings as the server has them now, applied onto the ones we hold.
 clientSettings
@@ -266,9 +299,11 @@ getCertificate = do
     Right Nothing -> throw $ CertificateFailure "no credential"
     Right (Just credential) -> pure credential
 
--- | Files added to the blacklist in the last so many seconds.
-getBlacklist :: Members '[ RPC, Error HathError ] r => Int -> Sem r [ Text ]
-getBlacklist seconds = fmap decodeUtf8 <$> (payload =<< callRPC "get_blacklist" (show seconds))
+-- | Files added to the blacklist in the last so many seconds. A line that is
+-- not a file id is skipped, as the official client does.
+getBlacklist :: Members '[ RPC, Error HathError ] r => Int -> Sem r [ FileURI ]
+getBlacklist seconds
+  = mapMaybe parseFileURI <$> (payload =<< callRPC "get_blacklist" (show seconds))
 
 -- | URLs a file of our static ranges can be fetched from (@srfetch@), given
 -- the @fileindex@ and @xres@ of the request that asked for it.

@@ -81,6 +81,7 @@ library
     , dhall ==1.42.*
     , directory ==1.3.*
     , filepath >=1.4 && <1.6
+    , hourglass ==0.2.*
     , hs-hath-cryptostore
     , hs-hath-minio
     , hs-hath-warp-tls
@@ -527,6 +528,7 @@ test-suite hs-hath-test
       ProtocolSpec
       R2Spec
       RPCSpec
+      SQLiteSpec
       Paths_hs_hath
   autogen-modules:
       Paths_hs_hath

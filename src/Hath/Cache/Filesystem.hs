@@ -67,8 +67,7 @@ runCacheFilesystem fs = interpret $ \case
           pure $ Just $ LocalFile path
         | Posix.isRegularFile st -> do
           -- truncated (written in place by an older version): drop it so it gets refetched
-          removed <- tryAny (removeFile path)
-          whenRight_ removed $ \() -> addUsed fs (negate $ fromIntegral $ Posix.fileSize st)
+          void $ removeCached fs path st
           pure Nothing
       _        -> pure Nothing
 
@@ -79,6 +78,21 @@ runCacheFilesystem fs = interpret $ \case
         logError [i|Filesystem write failed for #{path}: #{err}|]
         throw $ StorageError (show err)
       Right () -> embed $ addUsed fs (fromIntegral $ BS.length bytes)
+
+  DeleteFile uri      -> do
+    let path = fileURIToPath (fsRoot fs) uri
+    embed (tryAny (Posix.getSymbolicLinkStatus path)) >>= \case
+      Left _   -> pass
+      Right st -> embed (removeCached fs path st) >>= \case
+        Left err -> throw $ StorageError [i|Could not delete #{path}: #{err}|]
+        Right () -> pass
+
+-- | Delete one of our files, whose status we have, and stop counting its bytes.
+removeCached :: FsCache -> FilePath -> Posix.FileStatus -> IO (Either SomeException ())
+removeCached fs path st = do
+  removed <- tryAny (removeFile path)
+  whenRight_ removed $ \() -> addUsed fs (negate $ fromIntegral $ Posix.fileSize st)
+  pure removed
 
 -- | Evict this far below the limit, so eviction does not run on every write:
 -- 100 MiB like the official client, less for tiny limits.

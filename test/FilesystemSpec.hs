@@ -8,7 +8,7 @@ import           Colog.Polysemy        ( Log, runLogAction )
 import qualified Data.ByteString       as BS
 import           Data.Time.Clock.POSIX ( posixSecondsToUTCTime )
 
-import           Hath.Cache            ( Cache, CacheHit(..), lookupFile, storeFile )
+import           Hath.Cache            ( Cache, CacheHit(..), deleteFile, lookupFile, storeFile )
 import           Hath.Cache.Filesystem ( FsCache, newFsCache, runCacheFilesystem, sweep )
 import           Hath.Error            ( HathError )
 import           Hath.FileURI          ( FileURI(..) )
@@ -80,6 +80,14 @@ filesystemSpecs = describe "Filesystem cache" $ do
     writeFileBS path (BS.take 5 content)
     served fs content >>= (`shouldBe` Nothing)
     doesFileExist path >>= (`shouldBe` False)
+
+  it "deletes a file; deleting one it does not have is no error" $ withCache $ \_ fs -> do
+    store fs content
+    Just path <- served fs content
+    runFs fs $ deleteFile (uriFor content)
+    doesFileExist path >>= (`shouldBe` False)
+    served fs content >>= (`shouldBe` Nothing)
+    runFs fs $ deleteFile (uriFor content)
 
   it "evicts the least recently served files, and only its own" $ withCache $ \root fs -> do
     let ( a, b, c ) = ( BS.replicate 1000 97, BS.replicate 1000 98, BS.replicate 1000 99 )

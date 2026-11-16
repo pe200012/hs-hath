@@ -1,3 +1,6 @@
+import           Data.X509        ( CertificateChain(..) )
+import           Data.X509.File   ( readSignedObject )
+
 import           Dhall            ( embed, inject )
 import qualified Dhall.Core       as Dhall
 
@@ -15,6 +18,7 @@ import           Hath.Config      ( CacheBackend(..)
                                   , defaultClientConfig
                                   , readClientConfig
                                   )
+import           Hath.Server      ( needsRenewal )
 import           Hath.Settings    ( HathSettings(..)
                                   , defaultHathSettings
                                   , parseSettings
@@ -46,6 +50,8 @@ import           RPCSpec          ( rpcSpecs )
 
 import           Relude           hiding ( runReader )
 
+import           SQLiteSpec       ( sqliteSpecs )
+
 import           Test.Hspec
 
 main :: IO ()
@@ -61,6 +67,8 @@ main = hspec $ do
   integrationSpecs
   r2Specs
   filesystemSpecs
+  sqliteSpecs
+  certificateSpecs
 
 settingsSpecs :: Spec
 settingsSpecs = do
@@ -83,6 +91,20 @@ settingsSpecs = do
     it "is Nothing for a line that is missing or not a number" $ do
       settingNumber "server_time" [ "min_client_build=176" ] `shouldBe` Nothing
       settingNumber "server_time" [ "server_time=soon" ] `shouldBe` Nothing
+
+certificateSpecs :: Spec
+certificateSpecs = describe "needsRenewal" $ do
+  -- warp-tls' test certificate expired at 2011-11-21 19:42:57 UTC
+  let expiry      = 1321904577
+      certificate = CertificateChain <$> readSignedObject "vendor/warp-tls-3.4.13/certificate.pem"
+
+  it "keeps a certificate with a day or more left"
+    $ certificate >>= (`shouldBe` False) . needsRenewal (expiry - 86400)
+
+  it "replaces one with less" $ certificate >>= (`shouldBe` True) . needsRenewal (expiry - 86399)
+
+  it "has nothing to serve without a certificate"
+    $ needsRenewal 0 (CertificateChain []) `shouldBe` True
 
 -- | hath-bench writes its config this way.
 configSpecs :: Spec

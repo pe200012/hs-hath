@@ -30,6 +30,10 @@ data MockRPC
     -- tells the time.
   , mockOutages     :: Int
     -- ^ how many RPC requests it answers with a 500 before it works
+  , mockBlacklist   :: [ ByteString ]
+    -- ^ the lines of its get_blacklist reply
+  , mockSeen        :: ByteString -> IO ()
+    -- ^ told the act of each RPC request as it arrives
   }
 
 defaultMockRPC :: MockRPC
@@ -39,6 +43,8 @@ defaultMockRPC
             , mockClientKey   = "test-secret-key-12345"
             , mockClockAhead  = 0
             , mockOutages     = 0
+            , mockBlacklist   = []
+            , mockSeen        = const pass
             }
 
 -- | Run an action while @HATH_RPC_HOST@ names a mock server on a free port.
@@ -52,6 +58,7 @@ withMockRPC mock action = do
 application :: MockRPC -> IORef Int -> Wai.Application
 application mock outagesLeft req respond = case ( Wai.rawPathInfo req, parameter "act" ) of
   ( "/16/rpc", Just act ) -> do
+    mockSeen mock act
     down <- atomicModifyIORef' outagesLeft $ \n -> ( n - 1, n > 0 )
     clock <- (+ mockClockAhead mock) . systemSeconds <$> getSystemTime
     respond
@@ -95,12 +102,12 @@ application mock outagesLeft req respond = case ( Wai.rawPathInfo req, parameter
         ]
       "client_settings" -> signed [ "host=127.0.0.1", "port=8080" ]
       "srfetch" -> signed [ "http://" <> ownAddress <> "/file" ]
+      "get_blacklist" -> signed (mockBlacklist mock)
       act
         | act `elem` answeredOK -> signed []
         | otherwise -> "FAIL\nUnknown action: " <> act
 
-    answeredOK
-      = [ "still_alive", "client_start", "client_stop", "get_blacklist", "dlfetch", "dlfails" ]
+    answeredOK     = [ "still_alive", "client_start", "client_stop", "dlfetch", "dlfails" ]
 
     -- the 1.6.6 server signs every OK reply with the client key
     signed payload

@@ -139,6 +139,11 @@ runCacheR2 conn = interpret $ \case
       throw $ StorageError err
     -- it is there now, as after a HEAD: the next hit (often seconds away) needs none
     Right () -> embed $ getMonotonicTime >>= void . rememberLink uri
+
+  DeleteFile uri      -> embed (minio $ Minio.removeObject bucket (fileURIToKey uri)) >>= \case
+    Left err -> throw $ StorageError ("R2 delete failed for " <> fileURIToKey uri <> ": " <> err)
+    -- forget its link, or hits would be sent to the deleted object for up to 10 min
+    Right () -> embed $ void $ LRU.delete uri (r2UrlCache conn)
   where
     bucket = r2ConnBucket conn
 
