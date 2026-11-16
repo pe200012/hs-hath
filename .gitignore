@@ -8,3 +8,15 @@ node_modules
 .vscode
 dist-newstyle
 bench-work/
+
+# build outputs, profiles and logs
+/.artifacts/
+/bin/
+/dist/
+/service/hs-hath
+/hath-logs.txt
+*.hp
+*.prof
+/hs-hath-test.aux
+/hs-hath-test.pdf
+/hs-hath-test.ps
