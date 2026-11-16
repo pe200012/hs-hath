@@ -1,7 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
 
 module FilesystemSpec ( filesystemSpecs ) where
 
@@ -11,13 +8,16 @@ import           Colog.Polysemy        ( Log, runLogAction )
 import qualified Data.ByteString       as BS
 import           Data.Time.Clock.POSIX ( posixSecondsToUTCTime )
 
+import           Hath.Cache            ( Cache, CacheHit(..), lookupFile, storeFile )
+import           Hath.Cache.Filesystem ( FsCache, newFsCache, runCacheFilesystem, sweep )
+import           Hath.Error            ( HathError )
+import           Hath.FileURI          ( FileURI(..) )
+import           Hath.Protocol         ( sha1Hex )
+
 import           Polysemy
 import           Polysemy.Error        ( Error, runError )
-import           Polysemy.KVStore      ( KVStore, lookupKV, updateKV )
 
 import           Relude
-
-import           Hath.Cache.Filesystem    ( FsCache, newFsCache, runCacheFilesystem, sweep )
 
 import           System.Directory      ( createDirectoryIfMissing, doesFileExist, setModificationTime )
 import           System.FilePath       ( (</>) )
@@ -25,31 +25,31 @@ import           System.IO.Temp        ( withSystemTempDirectory )
 
 import           Test.Hspec
 
-import           Hath.Types                 ( FileURI, RPCError, StorageResult(..), parseFileURI, reconstructRecord )
-
-import           Hath.Utils                 ( hash )
-
 -- | A URI whose hash and size match the content, as the server hands them out.
 uriFor :: ByteString -> FileURI
-uriFor content = parseFileURI $ hash content <> "-" <> show (BS.length content) <> "-800-600-jpg"
+uriFor content
+  = FileURI { fileHash = sha1Hex content
+            , fileSize = BS.length content
+            , fileXRes = 800
+            , fileYRes = 600
+            , fileExt  = "jpg"
+            }
 
-runFs :: FsCache
-      -> Sem '[ KVStore FileURI StorageResult, Log Message, Error RPCError, Embed IO ] a
-      -> IO a
+runFs :: FsCache -> Sem '[ Cache, Log Message, Error HathError, Embed IO ] a -> IO a
 runFs fs program = do
   result <- runM
-    . runError @RPCError
+    . runError @HathError
     . runLogAction @IO @Message (LogAction $ \_ -> pure ())
     . runCacheFilesystem fs
     $ program
   either (\e -> fail $ "unexpected error: " <> show e) pure result
 
 store :: FsCache -> ByteString -> IO ()
-store fs content = runFs fs $ updateKV (uriFor content) (Just $ Record $ reconstructRecord (uriFor content) content)
+store fs content = runFs fs $ storeFile (uriFor content) content
 
 -- | The path a hit is served from.
 served :: FsCache -> ByteString -> IO (Maybe FilePath)
-served fs content = runFs fs (lookupKV (uriFor content)) <&> \case
+served fs content = runFs fs (lookupFile (uriFor content)) <&> \case
   Just (LocalFile path) -> Just path
   _ -> Nothing
 
@@ -69,13 +69,6 @@ filesystemSpecs = describe "Filesystem cache" $ do
       Just path -> readFileBS path >>= (`shouldBe` content)
 
   it "misses a file it never stored" $ withCache $ \_ fs -> served fs content >>= (`shouldBe` Nothing)
-
-  it "deletes a file" $ withCache $ \_ fs -> do
-    store fs content
-    Just path <- served fs content
-    runFs fs $ updateKV (uriFor content) (Nothing :: Maybe StorageResult)
-    doesFileExist path >>= (`shouldBe` False)
-    served fs content >>= (`shouldBe` Nothing)
 
   it "drops a truncated file instead of serving it" $ withCache $ \_ fs -> do
     store fs content

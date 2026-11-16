@@ -1,41 +1,30 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
-
+-- | The Prometheus text exposition format.
 module Hath.Metrics.Prometheus ( render ) where
 
-import qualified Data.Map.Strict as Map
-import qualified Data.Text       as Text
-
-import           Numeric         ( showFFloat )
-
-import           Mason.Builder   ( BuilderFor
-                                 , StrictByteStringBackend
-                                 , byteString
-                                 , int64Dec
-                                 , intersperse
-                                 , textUtf8
-                                 , toStrictByteString
-                                 )
+import           Data.ByteString.Builder ( Builder, byteString, int64Dec, toLazyByteString )
+import qualified Data.ByteString.Lazy    as LBS
+import qualified Data.Map.Strict         as Map
+import qualified Data.Text               as Text
+import           Data.Text.Encoding      ( encodeUtf8Builder )
 
 import           Hath.Metrics.Types
 
-import           Relude          hiding ( intersperse )
+import           Numeric                 ( showFFloat )
 
-type MBuilder = BuilderFor StrictByteStringBackend
+import           Relude
 
--- | Render a list of metric snapshots to Prometheus text format
+-- | Render metric snapshots, each with its HELP and TYPE lines.
 render :: [ MetricSnapshot ] -> ByteString
-render = toStrictByteString . mconcat . map renderMetric
+render = LBS.toStrict . toLazyByteString . foldMap renderMetric
 
--- | Render a single metric snapshot
-renderMetric :: MetricSnapshot -> MBuilder
+renderMetric :: MetricSnapshot -> Builder
 renderMetric = \case
   CounterSnapshot metricId help val -> renderMetricLines "counter" metricId help val
   GaugeSnapshot metricId help val   -> renderMetricLines "gauge" metricId help val
   HistogramSnapshot (MetricId name labels) help buckets total -> mconcat
-    $ [ "# HELP ", textUtf8 name, " ", textUtf8 help, "\n" ]
-    <> [ "# TYPE ", textUtf8 name, " histogram\n" ]
-    <> [ textUtf8 name
+    $ [ "# HELP ", text name, " ", text help, "\n" ]
+    <> [ "# TYPE ", text name, " histogram\n" ]
+    <> [ text name
          <> "_bucket"
          <> renderLabels (Map.insert "le" (maybe "+Inf" double le) labels)
          <> " "
@@ -43,8 +32,8 @@ renderMetric = \case
          <> "\n"
        | ( le, n ) <- buckets
        ]
-    <> [ textUtf8 name, "_sum", renderLabels labels, " ", textUtf8 (double total), "\n" ]
-    <> [ textUtf8 name
+    <> [ text name, "_sum", renderLabels labels, " ", text (double total), "\n" ]
+    <> [ text name
        , "_count"
        , renderLabels labels
        , " "
@@ -54,54 +43,40 @@ renderMetric = \case
   where
     double x = toText (showFFloat Nothing x "")
 
--- | Render the complete metric output (HELP, TYPE, and value lines)
-renderMetricLines :: ByteString -> MetricId -> Text -> Int64 -> MBuilder
+-- | HELP, TYPE and value lines of a counter or gauge.
+renderMetricLines :: ByteString -> MetricId -> Text -> Int64 -> Builder
 renderMetricLines typ (MetricId name labels) help val
   = mconcat
     [ "# HELP "
-    , textUtf8 name
+    , text name
     , " "
-    , textUtf8 help
+    , text help
     , "\n"
     , "# TYPE "
-    , textUtf8 name
+    , text name
     , " "
     , byteString typ
     , "\n"
-    , textUtf8 name
-    , if Map.null labels
-        then mempty
-        else renderLabels labels
+    , text name
+    , renderLabels labels
     , " "
     , int64Dec val
     , "\n"
     ]
 
--- | Render label set: {label1="value1",label2="value2"}
-renderLabels :: Labels -> MBuilder
+-- | @{label1="value1",label2="value2"}@, or nothing when there are no labels.
+renderLabels :: Labels -> Builder
 renderLabels labels
   | Map.null labels = mempty
-  | otherwise = mconcat [ "{", intersperse "," $ map renderLabel $ Map.toList labels, "}" ]
+  | otherwise = "{" <> mconcat (intersperse "," (map renderLabel (Map.toList labels))) <> "}"
 
--- | Render a single label: key="value"
-renderLabel :: ( Text, Text ) -> MBuilder
-renderLabel ( k, v ) = textUtf8 k <> "=\"" <> textUtf8 (escapeValue v) <> "\""
+renderLabel :: ( Text, Text ) -> Builder
+renderLabel ( k, v ) = text k <> "=\"" <> text (escapeValue v) <> "\""
 
--- | Escape special characters in label values according to Prometheus spec
--- See: https://prometheus.io/docs/instrumenting/exposition_formats/
+-- | Escape a label value as the format requires:
+-- <https://prometheus.io/docs/instrumenting/exposition_formats/>
 escapeValue :: Text -> Text
 escapeValue = Text.replace "\\" "\\\\" . Text.replace "\"" "\\\"" . Text.replace "\n" "\\n"
 
--- Example output:
---
--- # HELP hath_cache_sent_bytes_total Total bytes sent from cache
--- # TYPE hath_cache_sent_bytes_total counter
--- hath_cache_sent_bytes_total 1234567
---
--- # HELP hath_errors_total Total errors by type
--- # TYPE hath_errors_total counter
--- hath_errors_total{type="network"} 42
--- hath_errors_total{type="timeout"} 13
---
--- Note: Labels with the same metric name but different label values
--- are currently registered as separate Counter instances.
+text :: Text -> Builder
+text = encodeUtf8Builder

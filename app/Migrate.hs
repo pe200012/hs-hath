@@ -1,50 +1,27 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeApplications #-}
-
+-- | migrate-to-r2: upload an SQLite or Filesystem cache to an R2 bucket.
 module Migrate ( main ) where
-
-import           Colog                  ( LogAction(..), Message, Severity(..), richMessageAction )
-import           Colog.Polysemy         ( Log, runLogAction )
 
 import qualified Conduit                as C
 
-import           Control.Exception      ( SomeException, try )
-import           Control.Monad          ( when )
-
 import qualified Data.ByteString        as BS
-import qualified Data.Text              as T
-import qualified Data.Text.IO           as TIO
 
-import           Database.SQLite.Simple ( Connection, Only(..), Query, fold_, open, query_ )
+import           Database.SQLite.Simple ( Only(..), fold_, query_, withConnection )
 
-import           Network.Minio          ( AccessKey(..)
-                                        , CredentialValue(..)
-                                        , SecretKey(..)
-                                        , defaultPutObjectOptions
-                                        , runMinio
-                                        , setCreds
-                                        , setRegion
-                                        )
+import           Hath.Cache.R2          ( R2Connection(..), fileURIToKey, mkR2Connection, runR2 )
+import           Hath.Cache.SQLite      ( FileRecord(..) )
+import           Hath.Config            ( R2Config(..) )
+import           Hath.FileURI           ( parseFileURI )
+
+import           Network.Minio          ( defaultPutObjectOptions )
 import qualified Network.Minio          as Minio
 
 import           Options.Applicative
 
-import           Polysemy
-import           Polysemy.Error         ( Error, runError )
-import           Polysemy.KVStore       ( updateKV )
-
-import           Relude                 hiding ( Reader )
-
-import           Hath.Cache.SQLite       ( FileRecord(..), initializeDB )
-import           Hath.Cache.R2             ( R2Connection(..), fileURIToKey, mkR2Connection, runCacheR2 )
+import           Relude
 
 import           System.Directory       ( doesDirectoryExist, doesFileExist, listDirectory )
-import           System.FilePath        ( (</>), takeFileName )
+import           System.FilePath        ( (</>) )
 
-import           Hath.Types                  ( FileURI, R2Config(..), RPCError(..), parseFileURI, renderFileURIText )
-
--- | Command line options
 data MigrateOptions
   = MigrateOptions
   { optSourceType :: !SourceType
@@ -55,12 +32,9 @@ data MigrateOptions
   , optBatchSize  :: !Int
   , optVerbose    :: !Bool
   }
-  deriving ( Show )
 
 data SourceType = SQLiteSource | FilesystemSource
-  deriving ( Show, Eq )
 
--- | Parse command line options
 parseOptions :: Parser MigrateOptions
 parseOptions
   = MigrateOptions
@@ -107,165 +81,73 @@ optsInfo
 main :: IO ()
 main = do
   opts <- execParser optsInfo
-
-  -- Check environment variables
-  accessKeyMay <- lookupEnv "R2_ACCESS_KEY"
-  secretKeyMay <- lookupEnv "R2_SECRET_KEY"
-
-  when (isNothing accessKeyMay) $ do
-    TIO.putStrLn "Error: R2_ACCESS_KEY environment variable not set"
-    exitFailure
-
-  when (isNothing secretKeyMay) $ do
-    TIO.putStrLn "Error: R2_SECRET_KEY environment variable not set"
-    exitFailure
-
-  -- Create R2 connection
-  let r2Cfg = R2Config { r2Endpoint = optR2Endpoint opts, r2Bucket = optR2Bucket opts }
-
-  r2Result <- mkR2Connection r2Cfg
-  case r2Result of
-    Left err     -> do
-      TIO.putStrLn $ "Error creating R2 connection: " <> err
+  -- the credentials come from R2_ACCESS_KEY and R2_SECRET_KEY
+  mkR2Connection R2Config { r2Endpoint = optR2Endpoint opts, r2Bucket = optR2Bucket opts } >>= \case
+    Left err -> do
+      putTextLn $ "Error creating R2 connection: " <> err
       exitFailure
-    Right r2Conn -> do
-      TIO.putStrLn $ "Connected to R2: " <> optR2Endpoint opts <> "/" <> optR2Bucket opts
+    Right r2 -> do
+      putTextLn $ "Connected to R2: " <> optR2Endpoint opts <> "/" <> optR2Bucket opts
+      tally <- case optSourceType opts of
+        SQLiteSource     -> migrateSQLite opts r2
+        FilesystemSource -> migrateFilesystem opts r2
+      putTextLn "\nMigration complete:"
+      putTextLn $ "  Migrated: " <> show (migrated tally)
+      putTextLn $ "  Errors: " <> show (failed tally)
 
-      case optSourceType opts of
-        SQLiteSource     -> migrateSQLite opts r2Conn
-        FilesystemSource -> migrateFilesystem opts r2Conn
+data Tally = Tally { migrated :: !Int, failed :: !Int }
 
--- | Migrate from SQLite database
-migrateSQLite :: MigrateOptions -> R2Connection -> IO ()
-migrateSQLite opts r2Conn = do
-  TIO.putStrLn $ "Migrating from SQLite: " <> T.pack (optSourcePath opts)
-
-  conn <- open (optSourcePath opts)
-
-  -- Count total files
-  [ Only totalCount ] <- query_ conn "SELECT COUNT(*) FROM files" :: IO [ Only Int ]
-  TIO.putStrLn $ "Total files to migrate: " <> show totalCount
-
-  when (optDryRun opts) $ do
-    TIO.putStrLn "[DRY RUN] Would upload the following files:"
-
-  -- Stream files from SQLite and upload to R2
-  migratedCount <- newIORef (0 :: Int)
-  errorCount <- newIORef (0 :: Int)
-
-  void $ fold_ conn selectAllQuery ( (), 0 :: Int ) $ \( (), _idx ) record -> do
-    let fileId = fileRecordFileId record
-        uri    = parseFileURI (encodeUtf8 fileId)
-
-    if optDryRun opts
-      then do
-        when (optVerbose opts) $ TIO.putStrLn $ "  Would upload: " <> fileId
-      else do
-        result <- uploadToR2 r2Conn uri record
-        case result of
-          Left err -> do
-            atomicModifyIORef' errorCount (\c -> ( c + 1, () ))
-            when (optVerbose opts)
-              $ TIO.putStrLn
-              $ "  Error uploading " <> fileId <> ": " <> show err
-          Right () -> do
-            atomicModifyIORef' migratedCount (\c -> ( c + 1, () ))
-            when (optVerbose opts) $ TIO.putStrLn $ "  Uploaded: " <> fileId
-
-    -- Progress update every batch
-    let idx' = _idx + 1
-    when (idx' `mod` optBatchSize opts == 0)
-      $ TIO.putStrLn
-      $ "  Progress: " <> show idx' <> "/" <> show totalCount
-
-    pure ( (), idx' )
-
-  finalMigrated <- readIORef migratedCount
-  finalErrors <- readIORef errorCount
-
-  TIO.putStrLn $ "\nMigration complete:"
-  TIO.putStrLn $ "  Migrated: " <> show finalMigrated
-  TIO.putStrLn $ "  Errors: " <> show finalErrors
+-- | Upload one file under its bucket key (in a dry run, only say so) and count
+-- how it went.
+migrateOne :: MigrateOptions -> Text -> (Text -> IO (Either Text ())) -> Tally -> IO Tally
+migrateOne opts fileId upload tally
+  | optDryRun opts = tally <$ say ("  Would upload: " <> fileId)
+  | otherwise = maybe (pure $ Left "not a file id") upload objectKey >>= \case
+    Left err -> tally { failed = failed tally + 1 } <$ say ("  Error uploading " <> fileId <> ": " <> err)
+    Right () -> tally { migrated = migrated tally + 1 } <$ say ("  Uploaded: " <> fileId)
   where
-    selectAllQuery :: Query
-    selectAllQuery = "SELECT lru_counter, s4, file_id, file_name, bytes FROM files"
+    objectKey = fileURIToKey <$> parseFileURI (encodeUtf8 fileId)
 
--- | Migrate from filesystem cache
-migrateFilesystem :: MigrateOptions -> R2Connection -> IO ()
-migrateFilesystem opts r2Conn = do
-  TIO.putStrLn $ "Migrating from filesystem: " <> T.pack (optSourcePath opts)
+    say = when (optVerbose opts) . putTextLn
 
-  exists <- doesDirectoryExist (optSourcePath opts)
-  unless exists $ do
-    TIO.putStrLn $ "Error: Directory does not exist: " <> T.pack (optSourcePath opts)
+-- | Rows are streamed, so the database is never in memory as a whole.
+migrateSQLite :: MigrateOptions -> R2Connection -> IO Tally
+migrateSQLite opts r2 = withConnection (optSourcePath opts) $ \conn -> do
+  putTextLn $ "Migrating from SQLite: " <> toText (optSourcePath opts)
+  total <- maybe (0 :: Int) fromOnly . listToMaybe <$> query_ conn "SELECT COUNT(*) FROM files"
+  putTextLn $ "Total files to migrate: " <> show total
+  when (optDryRun opts) $ putTextLn "[DRY RUN] Would upload the following files:"
+  fmap fst
+    $ fold_ conn "SELECT lru_counter, s4, file_id, file_name, bytes FROM files" ( Tally 0 0, 0 :: Int )
+    $ \( tally, done ) record -> do
+      let bytes = fileRecordBytes record
+          size  = fromIntegral (BS.length bytes) :: Int64
+          upload objectKey
+            = runR2 r2
+            $ Minio.putObject (r2ConnBucket r2) objectKey (C.yield bytes) (Just size) defaultPutObjectOptions
+      tally' <- migrateOne opts (fileRecordFileId record) upload tally
+      when ((done + 1) `mod` optBatchSize opts == 0)
+        $ putTextLn
+        $ "  Progress: " <> show (done + 1) <> "/" <> show total
+      pure ( tally', done + 1 )
+
+-- | The cache is @root\/xxxx\/\<file id>@, xxxx being the first four characters of the id.
+migrateFilesystem :: MigrateOptions -> R2Connection -> IO Tally
+migrateFilesystem opts r2 = do
+  putTextLn $ "Migrating from filesystem: " <> toText root
+  unlessM (doesDirectoryExist root) $ do
+    putTextLn $ "Error: Directory does not exist: " <> toText root
     exitFailure
+  when (optDryRun opts) $ putTextLn "[DRY RUN] Would upload the following files:"
+  dirs <- filterM (doesDirectoryExist . (root </>)) =<< listDirectory root
+  foldlM migrateDirectory (Tally 0 0) dirs
+  where
+    root = optSourcePath opts
 
-  -- Filesystem cache structure: optSourcePath/s4/file_id
-  -- Where s4 is first 4 chars of hash
-  s4Dirs <- listDirectory (optSourcePath opts)
+    migrateDirectory tally dir = foldlM (migrateFile dir) tally =<< listDirectory (root </> dir)
 
-  when (optDryRun opts) $ TIO.putStrLn "[DRY RUN] Would upload the following files:"
-
-  migratedCount <- newIORef (0 :: Int)
-  errorCount <- newIORef (0 :: Int)
-
-  forM_ s4Dirs $ \s4Dir -> do
-    let s4Path = optSourcePath opts </> s4Dir
-    isDir <- doesDirectoryExist s4Path
-    when isDir $ do
-      files <- listDirectory s4Path
-      forM_ files $ \fileName -> do
-        let filePath = s4Path </> fileName
-            fileId   = T.pack fileName
-            uri      = parseFileURI (encodeUtf8 fileId)
-
-        isFile <- doesFileExist filePath
-        when isFile $ do
-          if optDryRun opts
-            then do
-              when (optVerbose opts) $ TIO.putStrLn $ "  Would upload: " <> fileId
-            else do
-              let bucket = r2ConnBucket r2Conn
-                  key    = fileURIToKey uri
-              result <- try @SomeException
-                $ Minio.runMinioWith (r2MinioConn r2Conn)
-                $ Minio.fPutObject bucket key filePath defaultPutObjectOptions
-              case result of
-                Left err          -> do
-                  atomicModifyIORef' errorCount (\c -> ( c + 1, () ))
-                  when (optVerbose opts)
-                    $ TIO.putStrLn
-                    $ "  Error uploading " <> fileId <> ": " <> show err
-                Right (Left mErr) -> do
-                  atomicModifyIORef' errorCount (\c -> ( c + 1, () ))
-                  when (optVerbose opts)
-                    $ TIO.putStrLn
-                    $ "  Error uploading " <> fileId <> ": " <> show mErr
-                Right (Right ())  -> do
-                  atomicModifyIORef' migratedCount (\c -> ( c + 1, () ))
-                  when (optVerbose opts) $ TIO.putStrLn $ "  Uploaded: " <> fileId
-
-  finalMigrated <- readIORef migratedCount
-  finalErrors <- readIORef errorCount
-
-  TIO.putStrLn $ "\nMigration complete:"
-  TIO.putStrLn $ "  Migrated: " <> show finalMigrated
-  TIO.putStrLn $ "  Errors: " <> show finalErrors
-
--- | Upload a file record to R2
-uploadToR2 :: R2Connection -> FileURI -> FileRecord -> IO (Either Text ())
-uploadToR2 conn uri record = do
-  let key     = fileURIToKey uri
-      bucket  = r2ConnBucket conn
-      content = fileRecordBytes record
-      size    = fromIntegral (BS.length content) :: Int64
-      src     = C.yield content
-
-  result <- try @SomeException
-    $ Minio.runMinioWith (r2MinioConn conn)
-    $ Minio.putObject bucket key src (Just size) defaultPutObjectOptions
-
-  case result of
-    Left err          -> pure $ Left $ T.pack $ show err
-    Right (Left mErr) -> pure $ Left $ T.pack $ show mErr
-    Right (Right _)   -> pure $ Right ()
+    migrateFile dir tally name = do
+      let path = root </> dir </> name
+          upload objectKey
+            = runR2 r2 $ Minio.fPutObject (r2ConnBucket r2) objectKey path defaultPutObjectOptions
+      ifM (doesFileExist path) (migrateOne opts (toText name) upload tally) (pure tally)

@@ -1,115 +1,117 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TemplateHaskell #-}
 
-module Hath.Locate
-  ( LocateURI(..)
-  , Locate(..)
-  , Located(..)
-  , locateResource
-  , runLocate
-  , streamUpstream
-  ) where
+-- | Finding a requested file: in the cache, or else upstream.
+module Hath.Locate ( Located(..), locateResource, streamUpstream ) where
 
-import           Colog                   ( Message, Severity(Info, Warning) )
+import           Colog                   ( Message )
 import           Colog.Polysemy          ( Log )
 
 import           Control.Concurrent      ( forkIO )
 import           Control.Exception       ( finally )
+import           Control.Monad.Extra     ( firstJustM )
 
-import qualified Data.ByteString         as BS
-import qualified Data.ByteString.Short   as SBS
-import qualified Data.Map                as Map
+import qualified Data.ByteString.Char8   as BS
+import qualified Data.List               as List
+import qualified Data.Map.Strict         as Map
 import           Data.String.Interpolate ( i )
 
-import           Hath.API           ( EHentaiAPI, openResource )
+import           Hath.Cache              ( Cache, CacheHit, lookupFile, storeFile )
+import           Hath.Config             ( ClientConfig )
+import           Hath.Error              ( HathError )
+import           Hath.FileURI            ( FileURI(..) )
+import           Hath.Log                ( logInfo, logWarning )
+import           Hath.Protocol           ( hathHeaders, hathRequestToken, sha1Hex )
+import           Hath.RPC                ( RPC, fileSources )
+import           Hath.Stats              ( Stats, addDownload, incFetched )
 
 import qualified Network.HTTP.Client     as HC
+import           Network.HTTP.Client.TLS ( getGlobalManager )
+import           Network.HTTP.Types      ( hContentLength, statusCode )
 
 import           Polysemy
 import           Polysemy.Error          ( Error, catch )
 import           Polysemy.Final          ( withWeavingToFinal )
-import           Polysemy.KVStore        ( KVStore, lookupKV, updateKV )
-import           Polysemy.Operators
-import           Polysemy.Reader         ( Reader )
+import           Polysemy.Reader         ( Reader, ask )
 
 import           Relude                  hiding ( Reader, ask )
 
-import           Hath.Stats                   ( Stats, addDownload, incFetched )
-
-import           Hath.Types
-
-import           Hath.Utils                   ( hash, log )
-
-data LocateURI
-  = LocateURI { locateURIFilename :: !ByteString
-              , locateURI         :: !FileURI
-              , locateURIOptions  :: !(Map ByteString ByteString)
-              }
+import           UnliftIO                ( try )
 
 data Located
-  = Stored !StorageResult
-    -- | Cache miss being relayed from upstream: call it with a chunk writer.
+  = Stored !CacheHit
+    -- | A cache miss being relayed from upstream: call it with a chunk writer.
     -- It closes the upstream connection and caches the file once it is complete.
   | Streamed !((ByteString -> IO ()) -> IO ())
 
-data Locate m a where
-  -- | Fetch a specific resource from the server
-  LocateResource :: LocateURI -> Locate m (Maybe Located)
-
-makeSem ''Locate
-
-runLocate
+-- | Look in the cache; on a miss, ask the RPC server where the file is and
+-- start relaying it. A miss can only be fetched when the request's options name
+-- the @fileindex@ and @xres@ it came from.
+--
+-- Like the official client, we serve any file the server sends readers here
+-- for; static ranges only matter for pruning the cache.
+locateResource
   :: Members
-    '[ KVStore FileURI StorageResult
-     , Error RPCError
-     , Reader ClientConfig
-     , EHentaiAPI
-     , Embed IO
-     , Final IO
+    '[ Cache
+     , RPC
      , Stats
      , Log Message
+     , Reader ClientConfig
+     , Error HathError
+     , Embed IO
+     , Final IO
      ]
     r
-  => Locate : r @> a
-  -> r @> a
-runLocate = interpret $ \case
-  LocateResource uri -> do
-    let fileURI = locateURI uri
-        s4      = SBS.toShort $ BS.take 4 $ renderFileURIBytes fileURI
-        record content
-          = Record
-            FileRecord
-            { fileRecordLRUCounter = 1
-            , fileRecordS4         = decodeUtf8 s4
-            , fileRecordFileId     = renderFileURIText fileURI
-            , fileRecordFileName   = Just $ decodeUtf8 $ locateURIFilename uri
-            , fileRecordBytes      = content
-            }
-    -- like the official client, serve any file the server sends us here; static ranges
-    -- only matter for pruning the cache
-    lookupKV fileURI >>= \case
-      Just x -> return $ Just $ Stored x
-      Nothing -> case ( Map.lookup "fileindex" (locateURIOptions uri)
-                      , Map.lookup "xres" (locateURIOptions uri)
-                      ) of
-        ( Just fileIndex, Just xres ) -> log Info [i|Fetching resource: #{fileURI}|]
-          >> openResource fileURI ( fileIndex, xres )
-          >>= \case
-            Just resp -> do
-              incFetched
-              -- runs after the handler has returned, once the body has been relayed
-              cacheIt <- deferToIO $ \content -> do
-                addDownload (BS.length content)
-                -- a failed cache write only costs us the next hit
-                catch @RPCError (updateKV fileURI $ Just $ record content)
-                  $ \e -> log Warning [i|Cache write failed for #{fileURI}: #{e}|]
-              pure $ Just $ Streamed $ streamUpstream fileURI resp (void . forkIO . cacheIt)
-            Nothing   -> do
-              log Warning [i|Failed to fetch resource, sorry for you|]
-              pure Nothing
-        _ -> do
-          log Info [i|Not enough information to fetch resource: #{fileURI}|]
+  => FileURI
+  -> Map ByteString ByteString
+  -> Sem r (Maybe Located)
+locateResource uri options = lookupFile uri >>= \case
+  Just hit -> pure $ Just $ Stored hit
+  Nothing  -> case ( Map.lookup "fileindex" options, Map.lookup "xres" options ) of
+    ( Just fileIndex, Just xres ) -> do
+      logInfo [i|Fetching resource: #{uri}|]
+      openUpstream uri fileIndex xres >>= \case
+        Just response -> do
+          incFetched
+          -- runs after the handler has returned, once the body has been relayed
+          cacheIt <- deferToIO $ \content -> do
+            addDownload (BS.length content)
+            -- a failed cache write only costs us the next hit
+            catch @HathError (storeFile uri content)
+              $ \e -> logWarning [i|Cache write failed for #{uri}: #{e}|]
+          pure $ Just $ Streamed $ streamUpstream uri response (void . forkIO . cacheIt)
+        Nothing       -> do
+          logWarning "Failed to fetch resource, sorry for you"
           pure Nothing
+    _ -> do
+      logInfo [i|Not enough information to fetch resource: #{uri}|]
+      pure Nothing
+
+-- | Open the first source that answers 200 with the expected length, as the
+-- official ProxyFileDownloader does. The caller reads the body and must close
+-- the response.
+openUpstream :: Members '[ RPC, Reader ClientConfig, Error HathError, Embed IO ] r
+             => FileURI
+             -> ByteString
+             -> ByteString
+             -> Sem r (Maybe (HC.Response HC.BodyReader))
+openUpstream uri fileIndex xres = do
+  urls <- fileSources uri fileIndex xres
+  cfg <- ask @ClientConfig
+  let headers = ( "Hath-Request", hathRequestToken cfg uri ) : hathHeaders
+      open manager url = case HC.parseRequest url of
+        Nothing  -> pure Nothing
+        Just req -> try @IO @HC.HttpException (HC.responseOpen req { HC.requestHeaders = headers } manager)
+          >>= \case
+            Right response
+              | statusCode (HC.responseStatus response) == 200
+              , List.lookup hContentLength (HC.responseHeaders response) == Just (show (fileSize uri))
+                -> pure (Just response)
+              | otherwise -> HC.responseClose response $> Nothing
+            -- connection error: firstJustM tries the next source
+            Left _ -> pure Nothing
+  embed $ do
+    manager <- getGlobalManager
+    firstJustM (open manager . BS.unpack) urls
 
 -- | Relay an upstream body chunk by chunk. If it arrives complete and its SHA-1
 -- matches, hand the bytes to the continuation (the cache write). The upstream
@@ -119,15 +121,15 @@ streamUpstream :: FileURI
                -> (ByteString -> IO ())
                -> (ByteString -> IO ())
                -> IO ()
-streamUpstream fileURI resp whenComplete write = go [] `finally` HC.responseClose resp
+streamUpstream uri response whenComplete write = go [] `finally` HC.responseClose response
   where
-    go acc = HC.brRead (HC.responseBody resp) >>= \chunk -> if BS.null chunk
+    go chunks = HC.brRead (HC.responseBody response) >>= \chunk -> if BS.null chunk
       then let
-          content = BS.concat (reverse acc)
+          content = BS.concat (reverse chunks)
         in
-          when (BS.length content == fileSize fileURI && hash content == fileHash fileURI)
+          when (BS.length content == fileSize uri && sha1Hex content == fileHash uri)
             $ whenComplete content
-      else write chunk >> go (chunk : acc)
+      else write chunk >> go (chunk : chunks)
 
 -- | Lower a Sem action into IO so it can run after the request handler has returned.
 deferToIO :: Member (Final IO) r => (x -> Sem r ()) -> Sem r (x -> IO ())

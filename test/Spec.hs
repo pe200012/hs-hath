@@ -1,46 +1,34 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeOperators #-}
+import           FileURISpec           ( fileURISpecs )
 
-import qualified Data.Map.Strict  as Map
-import           Data.Text        ( Text )
+import           FilesystemSpec        ( filesystemSpecs )
 
-import           Hath.Cache.SQLite ( FileRecord(..), runCachePure )
+import           FloodControlSpec      ( floodControlSpecs )
 
-import           FileURIRenderSpec           ( fileURIRenderSpecs )
-import           FilesystemSpec              ( filesystemSpecs )
-import           Integration                 ( integrationSpecs )
-import           InterfaceAPIOptimizationSpec ( interfaceAPIOptimizationSpecs )
+import qualified Hath.Metrics.Histogram as Histogram
+import           Hath.Metrics.Registry ( newRegistry, registerHistogram )
+import           Hath.Metrics.Snapshot ( generateSnapshot )
+import           Hath.Settings         ( HathSettings(..), defaultHathSettings, parseSettings )
 
-import           R2Spec                      ( r2Specs )
+import           Integration           ( integrationSpecs )
 
-import           Polysemy
-import           Polysemy.KVStore ( KVStore, lookupKV, updateKV )
+import           ProtocolSpec          ( protocolSpecs )
 
-import           Relude           hiding ( Reader )
+import           R2Spec                ( r2Specs )
+
+import           Relude
 
 import           Test.Hspec
 
-import           Hath.Types            ( FileURI
-                                  , HathSettings(..)
-                                  , defaultHathSettings
-                                  , parseFileURI
-                                  , parseSettings
-                                  )
-import qualified Hath.Metrics.Histogram as Histogram
-import           Hath.Metrics.Registry  ( newRegistry, registerHistogram )
-import           Hath.Metrics.Snapshot  ( generateSnapshot )
-
 main :: IO ()
 main = hspec $ do
-  cacheSpecs
-  interfaceAPIOptimizationSpecs
-  fileURIRenderSpecs
+  fileURISpecs
+  protocolSpecs
+  floodControlSpecs
+  settingsSpecs
+  metricsSpecs
   integrationSpecs
   r2Specs
   filesystemSpecs
-  settingsSpecs
-  metricsSpecs
 
 settingsSpecs :: Spec
 settingsSpecs = describe "parseSettings" $
@@ -67,48 +55,3 @@ metricsSpecs = describe "histogram metrics" $
       , "t_seconds_sum 4.75\n"
       , "t_seconds_count 3\n"
       ])
-
--- | Helper to store a file record
-storeFile :: Member (KVStore FileURI FileRecord) r => FileRecord -> Sem r ()
-storeFile record = updateKV (parseFileURI $ encodeUtf8 $ fileRecordFileId record) (Just record)
-
--- | Helper to lookup a file by id
-lookupFile :: Member (KVStore FileURI FileRecord) r => Text -> Sem r (Maybe FileRecord)
-lookupFile fid = lookupKV (parseFileURI $ encodeUtf8 fid)
-
-cacheSpecs :: Spec
-cacheSpecs = describe "Cache effect" $ do
-  let sampleRecord
-        = FileRecord { fileRecordLRUCounter = 1
-                     , fileRecordS4         = "s4-value"
-                     , fileRecordFileId     = "test-id"
-                     , fileRecordFileName   = Just "test.txt"
-                     , fileRecordBytes      = "test content"
-                     }
-
-  describe "runCachePure" $ do
-    it "should store and retrieve a file record" $ do
-      let program = do
-            storeFile sampleRecord
-            lookupFile "test-id"
-          result  = run $ runCachePure Map.empty program
-
-      result `shouldBe` Just sampleRecord
-
-    it "should return Nothing for non-existent file" $ do
-      let program = lookupFile "non-existent"
-          result  = run $ runCachePure Map.empty program
-
-      result `shouldBe` Nothing
-
-    it "should update existing record" $ do
-      let updatedRecord = sampleRecord { fileRecordBytes = "new content" }
-          program       = do
-            storeFile sampleRecord
-            storeFile updatedRecord
-            lookupFile "test-id"
-          result        = run $ runCachePure Map.empty program
-
-      result `shouldBe` Just updatedRecord
-
-

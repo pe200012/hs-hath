@@ -57,7 +57,6 @@ dependencies:
   - monad-control >= 1.0 && < 1.1
   - monad-loops >= 0.4 && < 0.5
   - network >= 3.1 && < 3.3
-  - mason >= 0.2.6 && < 0.3
   - mtl >= 2.3 && < 2.4
   - memory >= 0.18 && < 0.19
   - optparse-applicative >= 0.18 && < 0.19
@@ -65,13 +64,11 @@ dependencies:
   - process >= 1.6 && < 1.7
   - template-haskell >= 2.19 && < 2.24
   - filepath >= 1.4 && < 1.6
-  - suspend >= 0.2 && < 0.3
   - text >= 2.0 && < 2.2
   - time >= 1.12 && < 1.15
   - transformers >= 0.6 && < 0.7
   - tls >= 2.0 && < 2.4
   - tls-session-manager >= 0.0.5 && < 0.1
-  - timers >= 0.2 && < 0.3
   - relude >= 1.2 && < 1.3
   - stm >= 2.5 && < 2.6
   - unix >= 2.8 && < 2.9
@@ -191,43 +188,6 @@ internal-libraries:
         mixin:
           - hiding (Data.ByteString.Base64)
 
-  hs-hath-polysemy-zoo:
-    source-dirs: vendor/polysemy-zoo-0.8.2.0/src
-    default-extensions:
-      - DataKinds
-      - DeriveFunctor
-      - FlexibleContexts
-      - GADTs
-      - LambdaCase
-      - PolyKinds
-      - RankNTypes
-      - ScopedTypeVariables
-      - StandaloneDeriving
-      - TypeApplications
-      - TypeOperators
-      - TypeFamilies
-      - UnicodeSyntax
-    ghc-options:
-      - -Wall
-    dependencies:
-      - base >= 4.18 && < 4.22
-      - ghc-prim >= 0.10 && < 0.14
-      - containers >= 0.7 && < 0.8
-      - random >= 1.3 && < 1.4
-      - mtl >= 2.3 && < 2.4
-      - transformers >= 0.6 && < 0.7
-      - exceptions >= 0.10 && < 0.11
-      - text >= 2.1 && < 2.2
-      - optparse-applicative >= 0.18.1 && < 0.19
-      - directory >= 1.3 && < 1.4
-      - contravariant >= 1.5 && < 1.6
-      - async >= 2.2 && < 2.3
-      - constraints >= 0.14 && < 0.16
-      - polysemy >= 1.9 && < 1.10
-      - ghc-compact >= 0.1 && < 0.2
-      - reflection >= 2.1 && < 2.2
-      - streaming >= 0.2 && < 0.3
-
 library:
   source-dirs: src
   dependencies:
@@ -235,7 +195,6 @@ library:
     - hs-hath-placeholder
     - hs-hath-warp-tls
     - hs-hath-minio
-    - hs-hath-polysemy-zoo
   default-extensions:
     - NoImplicitPrelude
     - TypeApplications
@@ -283,7 +242,6 @@ executables:
     dependencies:
       - hs-hath
       - hs-hath-minio
-      - hs-hath-polysemy-zoo
       - optparse-applicative
       - directory
     default-extensions:
@@ -331,8 +289,8 @@ tests:
       - -with-rtsopts=-N
     dependencies:
       - hs-hath
-      - hs-hath-polysemy-zoo
       - hspec >= 2.11 && < 2.12
+      - QuickCheck >= 2.14 && < 2.17
       - warp >= 3.4 && < 3.5
       - http-types >= 0.12 && < 0.13
       - wai >= 3.2 && < 3.3

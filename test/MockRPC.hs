@@ -31,7 +31,7 @@ import qualified Network.Wai.Handler.Warp as Warp
 
 import           Relude                   hiding ( newEmptyMVar, putMVar, takeMVar )
 
-import           Hath.Utils                    ( hash )
+import           Hath.Protocol            ( sha1Hex )
 
 -- | Configuration for mock RPC server behavior
 data MockRPCConfig
@@ -107,7 +107,7 @@ handleRPCAction config action respond = respond $ okResponse $ case action of
     -- the 1.6.6 server signs every OK reply with the client key
     sign body = case BS.lines body of
       "OK" : rest -> BS.unlines
-        (("OK-1-" <> hash ("1-" <> mockClientKey config <> foldMap ("\n" <>) rest)) : rest)
+        (("OK-1-" <> sha1Hex ("1-" <> mockClientKey config <> foldMap ("\n" <>) rest)) : rest)
       _ -> body
 
 -- | Handle download endpoint

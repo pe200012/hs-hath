@@ -1,11 +1,10 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeOperators #-}
 
-module Hath.Cache.R2 ( R2Connection(..), mkR2Connection, runCacheR2, fileURIToKey ) where
+-- | The R2 backend (any S3-compatible store): hits are answered with a redirect
+-- to a presigned link, so the reader fetches the file from the bucket itself.
+module Hath.Cache.R2 ( R2Connection(..), mkR2Connection, runCacheR2, runR2, fileURIToKey ) where
 
-import           Colog                   ( Message, Severity(Error, Warning) )
+import           Colog                   ( Message )
 import           Colog.Polysemy          ( Log )
 
 import qualified Conduit                 as C
@@ -14,11 +13,17 @@ import           Control.Exception       ( try )
 
 import qualified Data.ByteArray          as BA
 import qualified Data.ByteString         as BS
-import           Data.Cache.LRU.IO
+import           Data.Cache.LRU.IO       ( AtomicLRU, newAtomicLRU )
 import qualified Data.Cache.LRU.IO       as LRU
 import qualified Data.Text               as T
 
 import           GHC.Clock               ( getMonotonicTime )
+
+import           Hath.Cache              ( Cache(..), CacheHit(..) )
+import           Hath.Config             ( R2Config(..) )
+import           Hath.Error              ( HathError(..) )
+import           Hath.FileURI            ( FileURI, renderFileURIText )
+import           Hath.Log                ( logError, logWarning )
 
 import           Network.HTTP.Client     ( newManager )
 import           Network.HTTP.Client.TLS ( tlsManagerSettings )
@@ -27,7 +32,6 @@ import           Network.Minio           ( AccessKey(..)
                                          , SecretKey(..)
                                          , defaultPutObjectOptions
                                          , presignedGetObjectUrl
-                                         , removeObject
                                          , setCreds
                                          , setRegion
                                          )
@@ -36,34 +40,21 @@ import           Network.Minio.S3API     ( headObject )
 
 import           Polysemy
 import           Polysemy.Error          ( Error, throw )
-import           Polysemy.KVStore        ( KVStore(..) )
-import           Polysemy.Operators
 
-import           Relude                  hiding ( Reader, ask, asks )
+import           Relude
 
-import           Hath.Cache.SQLite        ( FileRecord(..) )
-
-import           Hath.Types                   ( FileURI(..)
-                                         , RPCError(..)
-                                         , StorageResult(..)
-                                         , renderFileURIText
-                                         )
-import qualified Hath.Types                   as Ty
-
-import           Hath.Utils                   ( log )
-
--- | R2 connection configuration built at runtime
 data R2Connection
   = R2Connection
   { r2MinioConn  :: !Minio.MinioConn
   , r2ConnBucket :: !Text
   , r2UrlCache   :: !(AtomicLRU FileURI ( Double, ByteString ))
-    -- ^ Presigned links. Lives here because runCacheR2 runs once per request.
+    -- ^ Presigned links and when we stop handing them out (monotonic seconds).
+    -- It lives here because the interpreter runs once per request.
   }
 
--- | Build R2 connection from config + environment variables
--- Reads R2_ACCESS_KEY and R2_SECRET_KEY from environment
-mkR2Connection :: Ty.R2Config -> IO (Either Text R2Connection)
+-- | Connect with the endpoint and bucket from the config and the credentials
+-- from @R2_ACCESS_KEY@ and @R2_SECRET_KEY@.
+mkR2Connection :: R2Config -> IO (Either Text R2Connection)
 mkR2Connection cfg = do
   accessKeyMay <- lookupEnv "R2_ACCESS_KEY"
   secretKeyMay <- lookupEnv "R2_SECRET_KEY"
@@ -77,109 +68,76 @@ mkR2Connection cfg = do
             , cvSecretKey    = SecretKey $ BA.convert (encodeUtf8 @String @ByteString secretKey)
             , cvSessionToken = Nothing
             }
-          -- Use IsString instance to parse endpoint URL
-          baseConnInfo = fromString $ T.unpack $ Ty.r2Endpoint cfg
-      -- Set credentials and region
-      minioConn <- liftIO $ do
-        manager <- newManager tlsManagerSettings
-        Minio.mkMinioConn (setCreds creds $ setRegion "auto" baseConnInfo) manager
+          -- the IsString instance parses the endpoint URL
+          baseConnInfo = fromString $ T.unpack $ r2Endpoint cfg
+      manager <- newManager tlsManagerSettings
+      minioConn <- Minio.mkMinioConn (setCreds creds $ setRegion "auto" baseConnInfo) manager
       -- ponytail: fixed capacity; links expire after 10 min, so it only has to hold ~10 min of distinct hits
       urlCache <- newAtomicLRU (Just 100000)
       pure
         $ Right
           R2Connection
-          { r2MinioConn = minioConn, r2ConnBucket = Ty.r2Bucket cfg, r2UrlCache = urlCache }
+          { r2MinioConn = minioConn, r2ConnBucket = r2Bucket cfg, r2UrlCache = urlCache }
 
--- | R2 object key for a file: abcd/<file id>, abcd being the first 4 hex digits
+-- | R2 object key for a file: @abcd\/\<file id>@, abcd being the first 4 hex digits
 -- of the hash. Every client sharing the bucket must use this layout (the Java
 -- fork's S3CacheBackend.objectKey does).
 fileURIToKey :: FileURI -> Text
-fileURIToKey uri = s4 <> "/" <> fileId
+fileURIToKey uri = T.take 4 fileId <> "/" <> fileId
   where
     fileId = renderFileURIText uri
 
-    s4     = T.take 4 fileId
+-- | Run a bucket operation. Exceptions and Minio's own errors alike come back as text.
+runR2 :: R2Connection -> Minio.Minio a -> IO (Either Text a)
+runR2 conn action = try @SomeException (Minio.runMinioWith (r2MinioConn conn) action) <&> \case
+  Left err -> Left (show err)
+  Right (Left err) -> Left (show err)
+  Right (Right a) -> Right a
 
--- | Run the cache with Cloudflare R2
--- Read operations silently degrade to Nothing on failure (with warning log)
--- Write/delete operations propagate errors
-runCacheR2 :: Members '[ Embed IO, Log Message, Error RPCError ] r
-           => R2Connection
-           -> KVStore FileURI StorageResult : r @> a
-           -> r @> a
-runCacheR2 conn = interpret (phi (r2UrlCache conn))
+-- | A lookup that fails for any reason is a miss (with a warning); a failed
+-- write is an error.
+runCacheR2
+  :: Members '[ Embed IO, Log Message, Error HathError ] r => R2Connection -> Sem (Cache : r) a -> Sem r a
+runCacheR2 conn = interpret $ \case
+  LookupFile uri -> do
+    let objectKey = fileURIToKey uri
+    now <- embed getMonotonicTime
+    embed (LRU.lookup uri (r2UrlCache conn)) >>= \case
+      Just ( expiry, link )
+        | now < expiry -> pure $ Just $ Redirect link
+      _ -> do
+        -- ask the bucket whether it has the object before sending anyone there
+        found <- embed $ minio $ headObject bucket objectKey []
+        case found of
+          Right _ -> fmap Redirect <$> embed (rememberLink uri now)
+          Left _  -> do
+            logWarning ("Object not found in R2 storage: " <> objectKey)
+            pure Nothing
+
+  StoreFile uri bytes -> do
+    let objectKey = fileURIToKey uri
+        size      = fromIntegral (BS.length bytes) :: Int64
+    stored <- embed
+      $ minio
+      $ Minio.putObject bucket objectKey (C.yield bytes) (Just size) defaultPutObjectOptions
+    case stored of
+      Left err -> do
+        logError ("R2 write failed for " <> objectKey <> ": " <> err)
+        throw $ StorageError err
+      -- it is there now, as after a HEAD: the next hit (often seconds away) needs none
+      Right () -> embed $ getMonotonicTime >>= void . rememberLink uri
   where
     bucket = r2ConnBucket conn
 
-    phi :: forall r r1 x. Members '[ Embed IO, Log Message, Error RPCError ] r1
-        => AtomicLRU FileURI ( Double, ByteString )
-        -> KVStore FileURI StorageResult (Sem r) x
-        -> Sem r1 x
-    phi cache (LookupKV uri@(fileURIToKey -> key))         = do
-      now <- embed getMonotonicTime
-      embed (LRU.lookup uri cache) >>= \case
-        Just ( expireTime, link )
-          | now < expireTime -> pure $ Just $ Redirect link
-        _ -> do
-          -- First, check if object exists using HEAD request
-          headResult <- embed
-            $ try @SomeException
-            $ Minio.runMinioWith (r2MinioConn conn)
-            $ headObject bucket key []
-          case headResult of
-            Right (Right _info) -> fmap Redirect <$> embed (remember cache uri key now)
-            _ -> do
-              -- Object does not exist in R2 storage
-              log Warning ("Object not found in R2 storage: " <> key)
-              pure Nothing
+    minio :: Minio.Minio a -> IO (Either Text a)
+    minio = runR2 conn
 
-    phi _cache (UpdateKV _uri (Just (Redirect _url)))
-      = error "impossible: cannot store Redirect in R2 backend"
-
-    phi _cache (UpdateKV _uri (Just (LocalFile _path)))
-      = error "impossible: cannot store LocalFile in R2 backend"
-
-    phi cache (UpdateKV uri (Just (Record record)))        = do
-      let key     = fileURIToKey uri
-          content = fileRecordBytes record
-          siz     = fromIntegral (BS.length content) :: Int64
-          src     = C.yield content
-      result <- embed
-        $ try @SomeException
-        $ Minio.runMinioWith (r2MinioConn conn)
-        $ Minio.putObject bucket key src (Just siz) defaultPutObjectOptions
-      case result of
-        Left err -> do
-          log Error ("R2 write failed for " <> key <> ": " <> T.pack (show err))
-          throw $ Ty.StorageError (T.pack $ show err)
-        Right (Left minioErr) -> do
-          log Error ("R2 write failed for " <> key <> ": " <> T.pack (show minioErr))
-          throw $ Ty.StorageError (T.pack $ show minioErr)
-        -- it is there now, as after a HEAD: the next hit (often seconds away) needs none
-        Right (Right _) -> embed $ getMonotonicTime >>= void . remember cache uri key
-
-    phi cache (UpdateKV uri@(fileURIToKey -> key) Nothing) = do
-      result <- embed
-        $ try @SomeException
-        $ Minio.runMinioWith (r2MinioConn conn)
-        $ removeObject bucket key
-      case result of
-        Left err -> do
-          log Error ("R2 delete failed for " <> key <> ": " <> T.pack (show err))
-          throw $ Ty.StorageError (T.pack $ show err)
-        Right (Left minioErr) -> do
-          log Error ("R2 delete failed for " <> key <> ": " <> T.pack (show minioErr))
-          throw $ Ty.StorageError (T.pack $ show minioErr)
-        Right (Right _) -> embed $ void $ LRU.delete uri cache
-
-    -- | Sign a link (local, no request) and reuse it for 10 min.
-    remember :: AtomicLRU FileURI ( Double, ByteString ) -> FileURI -> Text -> Double -> IO (Maybe ByteString)
-    remember cache uri key now = Minio.runMinioWith
-      (r2MinioConn conn)
+    -- Sign a link (local, no request) and reuse it for 10 min.
+    rememberLink :: FileURI -> Double -> IO (Maybe ByteString)
+    rememberLink uri now
       -- valid 20 min, handed out for 10, so every link given lasts at least 10 min
-      (presignedGetObjectUrl bucket key 1200 [] [])
-      >>= \case
-        Left _minioErr -> pure Nothing
-        Right link     -> do
-          LRU.insert uri ( now + 600, link ) cache
+      = minio (presignedGetObjectUrl bucket (fileURIToKey uri) 1200 [] []) >>= \case
+        Left _     -> pure Nothing
+        Right link -> do
+          LRU.insert uri ( now + 600, link ) (r2UrlCache conn)
           pure (Just link)

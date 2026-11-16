@@ -1,87 +1,72 @@
 module Main ( main ) where
 
-import           Hath.CLI                    ( Options(..), applyOptionsToConfig, parseOptions )
-
-import qualified Data.Text              as T
-
 import           Database.SQLite.Simple ( withConnection )
 
-import           Hath.FileVerification       ( VerificationStats(..), verifyAllFiles )
+import           Hath.CLI               ( Options(..), applyOptionsToConfig, parseOptions )
+import           Hath.Cache.SQLite      ( VerificationStats(..), initializeDB, verifyAllFiles )
+import           Hath.Config            ( CacheBackend(..), ClientConfig(..), readClientConfig )
+import           Hath.RPC               ( clientLogin, getCertificate, runRPCIO, serverStat )
+import           Hath.Server            ( ServerAction(GracefulShutdown), ServerOptions(..), startServer )
+import           Hath.Version           ( versionInfo )
 
-import           Hath.Network.Genesis    ( fetchCertificate, runGenesisIO )
-import           Hath.Network.RPC
-
-import           Relude                 hiding ( runReader )
-
-import           Hath.Server                 ( ServerAction(GracefulShutdown), startServer )
-
-import           Hath.Cache.SQLite       ( initializeDB )
+import           Relude
 
 import           System.Posix           ( Handler(Catch), installHandler, sigINT, sigTERM )
 
-import           Hath.Types
-
 import           UnliftIO               ( newTChanIO, writeTChan )
-
-import           Hath.Version                ( versionInfo )
 
 main :: IO ()
 main = do
   options <- parseOptions
-
-  -- Handle --version flag
   when (optShowVersion options) $ do
-    putStrLn $ T.unpack versionInfo
+    putTextLn versionInfo
     exitSuccess
 
-  baseConfig <- readClientConfig (toText $ optConfigPath options)
-  let config = applyOptionsToConfig options baseConfig
-
+  config <- applyOptionsToConfig options <$> readClientConfig (toText $ optConfigPath options)
   when (optValidateConfig options) $ do
     putStrLn "Configuration is valid."
     exitSuccess
 
-  -- Initialize database and run startup verification unless skipped
-  -- (cachePath is a directory, or unused, for the other backends)
-  when (cacheBackend config == CacheBackendSQLite) $ withConnection (T.unpack $ cachePath config) $ \conn -> do
-    initializeDB conn
+  -- for the other backends cachePath is a directory, or not used at all
+  when (cacheBackend config == CacheBackendSQLite) $ prepareSQLiteCache options config
 
-    -- Run full cache verification by default (skip with --skip-startup-verify)
-    unless (optSkipStartupVerify options) $ do
-      putStrLn "Verifying cache integrity (this may take a while)..."
-      stats <- verifyAllFiles conn
-      putStrLn $ "Verification complete:"
-      putStrLn $ "  Files verified: " <> show (verifiedCount stats)
-      putStrLn $ "  Corrupted files removed: " <> show (corruptedCount stats)
-      putStrLn $ "  Time elapsed: " <> show (verificationTime stats)
-      when (corruptedCount stats > 0)
-        $ putStrLn
-        $ "WARNING: " <> show (corruptedCount stats) <> " corrupted files were found and removed."
-
-  chan <- newTChanIO
-  void $ installHandler sigINT (Catch $ atomically $ writeTChan chan GracefulShutdown) Nothing
-  void $ installHandler sigTERM (Catch $ atomically $ writeTChan chan GracefulShutdown) Nothing
+  actions <- newTChanIO
+  forM_ [ sigINT, sigTERM ] $ \signal
+    -> installHandler signal (Catch $ atomically $ writeTChan actions GracefulShutdown) Nothing
 
   runRPCIO config serverStat >>= \case
-    Right (Right True) -> runRPCIO config clientLogin >>= \case
-      Right (Right settings) -> runGenesisIO config fetchCertificate >>= \case
-        Right (Right certs) -> startServer
-          config
-          settings
-          certs
-          chan
-          (optDisableRateLimit options)
-          (optTrustProxyHeaders options)
-        e -> do
-          print e
-          putStrLn "Unable to fetch certs, exiting..."
-          exitFailure
-      e -> do
-        print e
-        putStrLn "Unable to login, exiting..."
-        exitFailure
-    e -> do
-      print e
-      putStrLn "RPC is not available, exiting..."
-      exitFailure
+    Right True -> pass
+    failure    -> giveUp failure "RPC is not available, exiting..."
+  settings <- runRPCIO config clientLogin >>= either (`giveUp` "Unable to login, exiting...") pure
+  certs <- runRPCIO config getCertificate
+    >>= either (`giveUp` "Unable to fetch certs, exiting...") pure
+  startServer
+    config
+    ServerOptions { disableRateLimit  = optDisableRateLimit options
+                  , trustProxyHeaders = optTrustProxyHeaders options
+                  }
+    settings
+    certs
+    actions
 
+-- | Create the table if the database is new and, unless told to skip it, check
+-- every cached file against its hash.
+prepareSQLiteCache :: Options -> ClientConfig -> IO ()
+prepareSQLiteCache options config = withConnection (toString $ cachePath config) $ \conn -> do
+  initializeDB conn
+  unless (optSkipStartupVerify options) $ do
+    putStrLn "Verifying cache integrity (this may take a while)..."
+    stats <- verifyAllFiles conn
+    putStrLn "Verification complete:"
+    putStrLn $ "  Files verified: " <> show (verifiedCount stats)
+    putStrLn $ "  Corrupted files removed: " <> show (corruptedCount stats)
+    putStrLn $ "  Time elapsed: " <> show (verificationTime stats)
+    when (corruptedCount stats > 0)
+      $ putStrLn
+      $ "WARNING: " <> show (corruptedCount stats) <> " corrupted files were found and removed."
+
+giveUp :: Show failure => failure -> String -> IO a
+giveUp failure message = do
+  print failure
+  putStrLn message
+  exitFailure

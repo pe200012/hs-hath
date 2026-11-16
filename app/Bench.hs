@@ -48,7 +48,7 @@ import           Control.Exception        ( try )
 
 import           UnliftIO                 ( pooledMapConcurrentlyN, timeout )
 
-import           Hath.Utils                    ( hash )
+import           Hath.Protocol            ( sha1HexText )
 
 data Opts
   = Opts
@@ -202,7 +202,7 @@ mkGallery nonce n size
     | k <- [ 1 .. n ]
     , let prefix = encodeUtf8 ([i|hath-bench #{nonce} #{k} |] :: Text)
           body   = prefix <> BS.replicate (size - BS.length prefix) 46
-          fileId = [i|#{hash @Text body}-#{size}-1280-1707-jpg|] ]
+          fileId = [i|#{sha1HexText body}-#{size}-1280-1707-jpg|] ]
 
 -- | RPC endpoint, fake image server (/up) and speed-test target (/t) on one port.
 app :: Bench -> Wai.Application
@@ -235,7 +235,7 @@ app b req respond = case Wai.pathInfo req of
     -- 1.6.6 signs replies: OK-<t>-<sha1("<t>-<key>" ++ concatMap ("\n" ++) lines)>
     okWith signed ls = do
       now <- systemSeconds <$> getSystemTime
-      let sig = hash @Text (encodeUtf8 (T.concat ([i|#{now}-#{oClientKey o}|] : map ("\n" <>) ls)))
+      let sig = sha1HexText (encodeUtf8 (T.concat ([i|#{now}-#{oClientKey o}|] : map ("\n" <>) ls)))
           status = if signed then [i|OK-#{now}-#{sig}|] else "OK"
       rpcResponse (encodeUtf8 (T.unlines (status : ls)))
 
@@ -340,7 +340,7 @@ runPhases b mgr files = do
   now <- systemSeconds <$> getSystemTime
   let o = bOpts b
       base = [i|https://#{oClientHost o}:#{oClientPort o}|] :: String
-      sha1 = hash @Text . encodeUtf8 @Text
+      sha1 = sha1HexText . encodeUtf8 @Text
 
       servercmd :: Text -> Text -> String
       servercmd cmd add

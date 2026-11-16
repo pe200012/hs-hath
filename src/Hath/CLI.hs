@@ -6,7 +6,7 @@ import           Options.Applicative
 
 import           Relude
 
-import           Hath.Types               ( ClientConfig(..) )
+import           Hath.Config              ( ClientConfig(..) )
 
 -- | Command line options
 data Options

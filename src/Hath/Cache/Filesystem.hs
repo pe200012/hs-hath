@@ -1,44 +1,44 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE TypeOperators #-}
 
--- | Files on disk as root/xxxx/fileid. Hits are served straight from the file
--- ('LocalFile'); the file's mtime is the LRU clock, and 'runEvictor' keeps the
--- cache under the disk limit the server assigns.
+-- | The Filesystem backend: files on disk as @root\/xxxx\/fileid@. Hits are served
+-- straight from the file ('LocalFile'); the file's mtime is the LRU clock, and
+-- 'runEvictor' keeps the cache under the disk limit the server assigns.
 module Hath.Cache.Filesystem ( FsCache, newFsCache, runCacheFilesystem, runEvictor, sweep ) where
 
-import           Colog                 ( Message, Severity(Error) )
-import           Colog.Polysemy        ( Log )
+import           Colog                   ( Message )
+import           Colog.Polysemy          ( Log )
 
-import           Control.Concurrent    ( threadDelay )
+import           Control.Concurrent      ( threadDelay )
 
-import qualified Data.ByteString       as BS
-import qualified Data.ByteString.Short as SBS
+import qualified Data.ByteString         as BS
+import qualified Data.ByteString.Short   as SBS
 import           Data.String.Interpolate ( i )
 
-import           Foreign.C.Types       ( CTime(..) )
+import           Foreign.C.Types         ( CTime(..) )
+
+import           Hath.AtomicFile         ( writeFileAtomic )
+import           Hath.Cache              ( Cache(..), CacheHit(..) )
+import           Hath.Error              ( HathError(..) )
+import           Hath.FileURI            ( FileURI(..), renderFileURIText )
+import           Hath.Log                ( logError )
 
 import           Polysemy
-import           Polysemy.Error        ( Error, throw )
-import           Polysemy.KVStore      ( KVStore(..) )
-import           Polysemy.Operators
+import           Polysemy.Error          ( Error, throw )
 
 import           Relude
 
-import           Hath.Cache.SQLite      ( FileRecord(..) )
+import           System.Directory        ( createDirectoryIfMissing, listDirectory, removeFile )
+import           System.FilePath         ( (</>), takeFileName )
+import qualified System.Posix.Files      as Posix
 
-import           System.Directory      ( createDirectoryIfMissing, listDirectory, removeFile )
-import           System.FilePath       ( (</>), takeFileName )
-import qualified System.Posix.Files    as Posix
+import           UnliftIO.Exception      ( tryAny )
 
-import           Hath.Types                 ( FileURI(..), RPCError(..), StorageResult(..), renderFileURIText )
-
-import           UnliftIO.Exception    ( tryAny )
-
-import           Hath.Utils                 ( log, writeFileAtomic )
-
-data FsCache = FsCache { fsRoot :: !FilePath, fsUsed :: !(IORef Int64) }
-  -- ^ bytes on disk as of the last sweep, plus writes and deletes since
+data FsCache
+  = FsCache
+  { fsRoot :: !FilePath
+  , fsUsed :: !(IORef Int64)
+    -- ^ bytes on disk as of the last sweep, plus writes and deletes since
+  }
 
 newFsCache :: FilePath -> IO FsCache
 newFsCache root = do
@@ -54,12 +54,10 @@ fileURIToPath root uri = root </> take 4 fileId </> fileId
 addUsed :: FsCache -> Int64 -> IO ()
 addUsed fs n = atomicModifyIORef' (fsUsed fs) $ \used -> ( used + n, () )
 
-runCacheFilesystem :: Members '[ Embed IO, Log Message, Error RPCError ] r
-                   => FsCache
-                   -> KVStore FileURI StorageResult : r @> a
-                   -> r @> a
+runCacheFilesystem
+  :: Members '[ Embed IO, Log Message, Error HathError ] r => FsCache -> Sem (Cache : r) a -> Sem r a
 runCacheFilesystem fs = interpret $ \case
-  LookupKV uri -> embed $ do
+  LookupFile uri -> embed $ do
     let path = fileURIToPath (fsRoot fs) uri
     tryAny (Posix.getSymbolicLinkStatus path) >>= \case
       Right st
@@ -74,26 +72,13 @@ runCacheFilesystem fs = interpret $ \case
           pure Nothing
       _ -> pure Nothing
 
-  UpdateKV uri (Just (Record record)) -> do
-    let path  = fileURIToPath (fsRoot fs) uri
-        bytes = fileRecordBytes record
+  StoreFile uri bytes -> do
+    let path = fileURIToPath (fsRoot fs) uri
     embed (tryAny (writeFileAtomic path bytes)) >>= \case
       Left err -> do
-        log Error [i|Filesystem write failed for #{path}: #{err}|]
+        logError [i|Filesystem write failed for #{path}: #{err}|]
         throw $ StorageError (show err)
       Right () -> embed $ addUsed fs (fromIntegral $ BS.length bytes)
-
-  UpdateKV _ (Just _) -> error "impossible: the Filesystem backend only stores records"
-
-  UpdateKV uri Nothing -> do
-    let path = fileURIToPath (fsRoot fs) uri
-    embed (tryAny (Posix.getSymbolicLinkStatus path)) >>= \case
-      Left _   -> pure () -- not cached
-      Right st -> embed (tryAny (removeFile path)) >>= \case
-        Left err -> do
-          log Error [i|Filesystem delete failed for #{path}: #{err}|]
-          throw $ StorageError (show err)
-        Right () -> embed $ addUsed fs (negate $ fromIntegral $ Posix.fileSize st)
 
 -- | Evict this far below the limit, so eviction does not run on every write:
 -- 100 MiB like the official client, less for tiny limits.
