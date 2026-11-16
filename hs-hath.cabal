@@ -70,36 +70,26 @@ library
       src
   default-extensions:
       NoImplicitPrelude
-      TypeApplications
       OverloadedStrings
-      ScopedTypeVariables
       QuasiQuotes
       LambdaCase
       ViewPatterns
-      MultiParamTypeClasses
       GADTs
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
   build-depends:
-      aeson >=2.1 && <2.3
-    , async ==2.2.*
-    , base >=4.7 && <4.22
-    , base64 ==1.0.*
+      base >=4.7 && <4.22
     , bytestring >=0.11 && <0.13
     , co-log >=0.6 && <0.8
-    , co-log-core ==0.3.*
     , co-log-polysemy >=0.0.1.5 && <0.0.2
     , conduit ==1.3.*
     , containers >=0.6 && <0.8
     , crypton ==1.0.*
     , crypton-connection ==0.4.*
     , crypton-x509 ==1.7.*
-    , crypton-x509-store ==1.6.*
     , dhall ==1.42.*
     , directory ==1.3.*
-    , exceptions ==0.10.*
     , extra >=1.7 && <1.9
     , filepath >=1.4 && <1.6
-    , hex-text ==0.1.*
     , hs-hath-cryptostore
     , hs-hath-minio
     , hs-hath-placeholder
@@ -111,29 +101,22 @@ library
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
-    , monad-control ==1.0.*
-    , monad-loops ==0.4.*
-    , mtl ==2.3.*
     , network >=3.1 && <3.3
     , optparse-applicative ==0.18.*
     , polysemy ==1.9.*
     , process ==1.6.*
     , relude ==1.2.*
-    , resourcet ==1.3.*
-    , safe-exceptions ==0.1.*
     , servant >=0.20.2 && <0.21
     , servant-client >=0.20.2 && <0.21
     , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
-    , stm ==2.5.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
     , text >=2.0 && <2.2
     , time >=1.12 && <1.15
     , tls >=2.0 && <2.4
     , tls-session-manager >=0.0.5 && <0.1
-    , transformers ==0.6.*
     , unix ==2.8.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
@@ -182,30 +165,23 @@ library hs-hath-cryptostore
       vendor/cryptostore-0.3.0.1/src
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -w
   build-depends:
-      aeson >=2.1 && <2.3
-    , asn1-encoding ==0.9.*
+      asn1-encoding ==0.9.*
     , asn1-types >=0.3.1 && <0.4
-    , async ==2.2.*
     , base >=4.7 && <4.22
-    , base64 ==1.0.*
     , basement >=0.0.16 && <0.1
     , bytestring >=0.11 && <0.13
     , co-log >=0.6 && <0.8
-    , co-log-core ==0.3.*
     , co-log-polysemy >=0.0.1.5 && <0.0.2
     , conduit ==1.3.*
     , containers >=0.6 && <0.8
     , crypton ==1.0.*
     , crypton-connection ==0.4.*
     , crypton-x509 ==1.7.*
-    , crypton-x509-store ==1.6.*
     , crypton-x509-validation ==1.6.*
     , dhall ==1.42.*
     , directory ==1.3.*
-    , exceptions ==0.10.*
     , extra >=1.7 && <1.9
     , filepath >=1.4 && <1.6
-    , hex-text ==0.1.*
     , hourglass ==0.2.*
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
@@ -214,30 +190,23 @@ library hs-hath-cryptostore
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
-    , monad-control ==1.0.*
-    , monad-loops ==0.4.*
-    , mtl ==2.3.*
     , network >=3.1 && <3.3
     , optparse-applicative ==0.18.*
     , pem >=0.1 && <0.3
     , polysemy ==1.9.*
     , process ==1.6.*
     , relude ==1.2.*
-    , resourcet ==1.3.*
-    , safe-exceptions ==0.1.*
     , servant >=0.20.2 && <0.21
     , servant-client >=0.20.2 && <0.21
     , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
-    , stm ==2.5.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
     , text >=2.0 && <2.2
     , time >=1.12 && <1.15
     , tls >=2.0 && <2.4
     , tls-session-manager >=0.0.5 && <0.1
-    , transformers ==0.6.*
     , unix ==2.8.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
@@ -294,7 +263,6 @@ library hs-hath-minio
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
   build-depends:
       aeson >=1 && <3
-    , async ==2.2.*
     , base >=4.7 && <5
     , base64 >=0 && <2
     , base64-bytestring ==1.*
@@ -302,7 +270,6 @@ library hs-hath-minio
     , bytestring >=0.11 && <0.13
     , case-insensitive ==1.*
     , co-log >=0.6 && <0.8
-    , co-log-core ==0.3.*
     , co-log-polysemy >=0.0.1.5 && <0.0.2
     , conduit ==1.*
     , conduit-extra ==1.*
@@ -310,15 +277,12 @@ library hs-hath-minio
     , crypton >=0 && <2
     , crypton-connection ==0.*
     , crypton-x509 ==1.7.*
-    , crypton-x509-store ==1.6.*
     , data-default-class ==0.*
     , dhall ==1.42.*
     , digest ==0.*
     , directory ==1.*
-    , exceptions ==0.10.*
     , extra >=1.7 && <1.9
     , filepath >=1.4 && <1.6
-    , hex-text ==0.1.*
     , http-client ==0.*
     , http-client-tls ==0.*
     , http-conduit ==2.*
@@ -327,9 +291,6 @@ library hs-hath-minio
     , ini ==0.*
     , lrucache ==1.2.*
     , memory ==0.*
-    , monad-control ==1.0.*
-    , monad-loops ==0.4.*
-    , mtl ==2.3.*
     , network >=3.1 && <3.3
     , network-uri ==2.*
     , optparse-applicative ==0.18.*
@@ -338,13 +299,11 @@ library hs-hath-minio
     , relude ==1.*
     , resourcet ==1.*
     , retry ==0.*
-    , safe-exceptions ==0.1.*
     , servant >=0.20.2 && <0.21
     , servant-client >=0.20.2 && <0.21
     , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
-    , stm ==2.5.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
     , text >=1 && <3
@@ -379,27 +338,20 @@ library hs-hath-placeholder
       vendor/placeholder-0/src
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
   build-depends:
-      aeson >=2.1 && <2.3
-    , async ==2.2.*
-    , base >=4.7 && <4.22
-    , base64 ==1.0.*
+      base >=4.7 && <4.22
     , bytestring >=0.11 && <0.13
     , co-log >=0.6 && <0.8
-    , co-log-core ==0.3.*
     , co-log-polysemy >=0.0.1.5 && <0.0.2
     , conduit ==1.3.*
     , containers >=0.6 && <0.8
     , crypton ==1.0.*
     , crypton-connection ==0.4.*
     , crypton-x509 ==1.7.*
-    , crypton-x509-store ==1.6.*
     , dhall ==1.42.*
     , directory ==1.3.*
-    , exceptions ==0.10.*
     , extra >=1.7 && <1.9
     , filepath >=1.4 && <1.6
     , ghc-prim >=0 && <10
-    , hex-text ==0.1.*
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-conduit ==2.3.*
@@ -407,29 +359,22 @@ library hs-hath-placeholder
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
-    , monad-control ==1.0.*
-    , monad-loops ==0.4.*
-    , mtl ==2.3.*
     , network >=3.1 && <3.3
     , optparse-applicative ==0.18.*
     , polysemy ==1.9.*
     , process ==1.6.*
     , relude ==1.2.*
-    , resourcet ==1.3.*
-    , safe-exceptions ==0.1.*
     , servant >=0.20.2 && <0.21
     , servant-client >=0.20.2 && <0.21
     , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
-    , stm ==2.5.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
     , text >=2.0 && <2.2
     , time >=1.12 && <1.15
     , tls >=2.0 && <2.4
     , tls-session-manager >=0.0.5 && <0.1
-    , transformers ==0.6.*
     , unix ==2.8.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
@@ -453,26 +398,19 @@ library hs-hath-warp-tls
       StrictData
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
   build-depends:
-      aeson >=2.1 && <2.3
-    , async ==2.2.*
-    , base >=4.7 && <4.22
-    , base64 ==1.0.*
+      base >=4.7 && <4.22
     , bytestring ==0.*
     , co-log >=0.6 && <0.8
-    , co-log-core ==0.3.*
     , co-log-polysemy >=0.0.1.5 && <0.0.2
     , conduit ==1.3.*
     , containers >=0.6 && <0.8
     , crypton ==1.0.*
     , crypton-connection ==0.4.*
     , crypton-x509 ==1.7.*
-    , crypton-x509-store ==1.6.*
     , dhall ==1.42.*
     , directory ==1.3.*
-    , exceptions ==0.10.*
     , extra >=1.7 && <1.9
     , filepath >=1.4 && <1.6
-    , hex-text ==0.1.*
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-conduit ==2.3.*
@@ -480,23 +418,17 @@ library hs-hath-warp-tls
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
-    , monad-control ==1.0.*
-    , monad-loops ==0.4.*
-    , mtl ==2.3.*
     , network ==3.*
     , optparse-applicative ==0.18.*
     , polysemy ==1.9.*
     , process ==1.6.*
     , recv ==0.*
     , relude ==1.2.*
-    , resourcet ==1.3.*
-    , safe-exceptions ==0.1.*
     , servant >=0.20.2 && <0.21
     , servant-client >=0.20.2 && <0.21
     , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
-    , stm ==2.5.*
     , streaming-commons ==0.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
@@ -504,7 +436,6 @@ library hs-hath-warp-tls
     , time >=1.12 && <1.15
     , tls >=2.1.3 && <2.5
     , tls-session-manager ==0.*
-    , transformers ==0.6.*
     , unix ==2.8.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
@@ -519,36 +450,26 @@ executable hath-bench
       app
   default-extensions:
       NoImplicitPrelude
-      TypeApplications
       OverloadedStrings
-      ScopedTypeVariables
       QuasiQuotes
       LambdaCase
       ViewPatterns
-      MultiParamTypeClasses
       GADTs
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N -main-is Bench
   build-depends:
-      aeson >=2.1 && <2.3
-    , async ==2.2.*
-    , base >=4.7 && <4.22
-    , base64 ==1.0.*
+      base >=4.7 && <4.22
     , bytestring >=0.11 && <0.13
     , co-log >=0.6 && <0.8
-    , co-log-core ==0.3.*
     , co-log-polysemy >=0.0.1.5 && <0.0.2
     , conduit ==1.3.*
     , containers >=0.6 && <0.8
     , crypton ==1.0.*
     , crypton-connection ==0.4.*
     , crypton-x509 ==1.7.*
-    , crypton-x509-store ==1.6.*
     , dhall ==1.42.*
     , directory ==1.3.*
-    , exceptions ==0.10.*
     , extra >=1.7 && <1.9
     , filepath >=1.4 && <1.6
-    , hex-text ==0.1.*
     , hs-hath
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
@@ -557,29 +478,22 @@ executable hath-bench
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
-    , monad-control ==1.0.*
-    , monad-loops ==0.4.*
-    , mtl ==2.3.*
     , network >=3.1 && <3.3
     , optparse-applicative ==0.18.*
     , polysemy ==1.9.*
     , process ==1.6.*
     , relude ==1.2.*
-    , resourcet ==1.3.*
-    , safe-exceptions ==0.1.*
     , servant >=0.20.2 && <0.21
     , servant-client >=0.20.2 && <0.21
     , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
-    , stm ==2.5.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
     , text >=2.0 && <2.2
     , time >=1.12 && <1.15
     , tls >=2.0 && <2.4
     , tls-session-manager >=0.0.5 && <0.1
-    , transformers ==0.6.*
     , unix ==2.8.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
@@ -594,36 +508,26 @@ executable hs-hath
       app
   default-extensions:
       NoImplicitPrelude
-      TypeApplications
       OverloadedStrings
-      ScopedTypeVariables
       QuasiQuotes
       LambdaCase
       ViewPatterns
-      MultiParamTypeClasses
       GADTs
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N -fpedantic-bottoms
   build-depends:
-      aeson >=2.1 && <2.3
-    , async ==2.2.*
-    , base >=4.7 && <4.22
-    , base64 ==1.0.*
+      base >=4.7 && <4.22
     , bytestring >=0.11 && <0.13
     , co-log >=0.6 && <0.8
-    , co-log-core ==0.3.*
     , co-log-polysemy >=0.0.1.5 && <0.0.2
     , conduit ==1.3.*
     , containers >=0.6 && <0.8
     , crypton ==1.0.*
     , crypton-connection ==0.4.*
     , crypton-x509 ==1.7.*
-    , crypton-x509-store ==1.6.*
     , dhall ==1.42.*
     , directory ==1.3.*
-    , exceptions ==0.10.*
     , extra >=1.7 && <1.9
     , filepath >=1.4 && <1.6
-    , hex-text ==0.1.*
     , hs-hath
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
@@ -632,29 +536,22 @@ executable hs-hath
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
-    , monad-control ==1.0.*
-    , monad-loops ==0.4.*
-    , mtl ==2.3.*
     , network >=3.1 && <3.3
     , optparse-applicative ==0.18.*
     , polysemy ==1.9.*
     , process ==1.6.*
     , relude ==1.2.*
-    , resourcet ==1.3.*
-    , safe-exceptions ==0.1.*
     , servant >=0.20.2 && <0.21
     , servant-client >=0.20.2 && <0.21
     , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
-    , stm ==2.5.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
     , text >=2.0 && <2.2
     , time >=1.12 && <1.15
     , tls >=2.0 && <2.4
     , tls-session-manager >=0.0.5 && <0.1
-    , transformers ==0.6.*
     , unix ==2.8.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
@@ -669,36 +566,26 @@ executable migrate-to-r2
       app
   default-extensions:
       NoImplicitPrelude
-      TypeApplications
       OverloadedStrings
-      ScopedTypeVariables
       QuasiQuotes
       LambdaCase
       ViewPatterns
-      MultiParamTypeClasses
       GADTs
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N -main-is Migrate
   build-depends:
-      aeson >=2.1 && <2.3
-    , async ==2.2.*
-    , base >=4.7 && <4.22
-    , base64 ==1.0.*
+      base >=4.7 && <4.22
     , bytestring >=0.11 && <0.13
     , co-log >=0.6 && <0.8
-    , co-log-core ==0.3.*
     , co-log-polysemy >=0.0.1.5 && <0.0.2
     , conduit ==1.3.*
     , containers >=0.6 && <0.8
     , crypton ==1.0.*
     , crypton-connection ==0.4.*
     , crypton-x509 ==1.7.*
-    , crypton-x509-store ==1.6.*
     , dhall ==1.42.*
-    , directory
-    , exceptions ==0.10.*
+    , directory ==1.3.*
     , extra >=1.7 && <1.9
     , filepath >=1.4 && <1.6
-    , hex-text ==0.1.*
     , hs-hath
     , hs-hath-minio
     , http-client ==0.7.*
@@ -708,29 +595,22 @@ executable migrate-to-r2
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
-    , monad-control ==1.0.*
-    , monad-loops ==0.4.*
-    , mtl ==2.3.*
     , network >=3.1 && <3.3
-    , optparse-applicative
+    , optparse-applicative ==0.18.*
     , polysemy ==1.9.*
     , process ==1.6.*
     , relude ==1.2.*
-    , resourcet ==1.3.*
-    , safe-exceptions ==0.1.*
     , servant >=0.20.2 && <0.21
     , servant-client >=0.20.2 && <0.21
     , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
-    , stm ==2.5.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
     , text >=2.0 && <2.2
     , time >=1.12 && <1.15
     , tls >=2.0 && <2.4
     , tls-session-manager >=0.0.5 && <0.1
-    , transformers ==0.6.*
     , unix ==2.8.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
@@ -758,24 +638,17 @@ test-suite hs-hath-test
       test
   default-extensions:
       NoImplicitPrelude
-      TypeApplications
       OverloadedStrings
-      ScopedTypeVariables
       QuasiQuotes
       LambdaCase
       ViewPatterns
-      MultiParamTypeClasses
       GADTs
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       QuickCheck >=2.14 && <2.17
-    , aeson >=2.1 && <2.3
-    , async ==2.2.*
     , base >=4.7 && <4.22
-    , base64 ==1.0.*
     , bytestring >=0.11 && <0.13
     , co-log >=0.6 && <0.8
-    , co-log-core ==0.3.*
     , co-log-polysemy >=0.0.1.5 && <0.0.2
     , conduit ==1.3.*
     , containers >=0.6 && <0.8
@@ -784,11 +657,9 @@ test-suite hs-hath-test
     , crypton-x509 ==1.7.*
     , crypton-x509-store ==1.6.*
     , dhall ==1.42.*
-    , directory
-    , exceptions ==0.10.*
+    , directory ==1.3.*
     , extra >=1.7 && <1.9
-    , filepath
-    , hex-text ==0.1.*
+    , filepath >=1.4 && <1.6
     , hs-hath
     , hspec ==2.11.*
     , http-client ==0.7.*
@@ -798,30 +669,23 @@ test-suite hs-hath-test
     , http-types ==0.12.*
     , lrucache ==1.2.*
     , memory ==0.18.*
-    , monad-control ==1.0.*
-    , monad-loops ==0.4.*
-    , mtl ==2.3.*
     , network >=3.1 && <3.3
     , optparse-applicative ==0.18.*
     , polysemy ==1.9.*
     , process ==1.6.*
     , relude ==1.2.*
-    , resourcet ==1.3.*
-    , safe-exceptions ==0.1.*
     , servant >=0.20.2 && <0.21
     , servant-client >=0.20.2 && <0.21
     , servant-client-core >=0.20.2 && <0.21
     , servant-server >=0.20.2 && <0.21
     , sqlite-simple ==0.4.*
-    , stm ==2.5.*
     , string-interpolate ==0.3.*
     , template-haskell >=2.19 && <2.24
-    , temporary
+    , temporary ==1.3.*
     , text >=2.0 && <2.2
     , time >=1.12 && <1.15
     , tls >=2.0 && <2.4
     , tls-session-manager >=0.0.5 && <0.1
-    , transformers ==0.6.*
     , unix ==2.8.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*

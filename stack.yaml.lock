@@ -5,20 +5,6 @@
 
 packages:
 - completed:
-    hackage: suspend-0.2.0.0@sha256:0d98526558b773c3ff792664bc45d7a083a32eedb6206d4101a7570869c75a28,1115
-    pantry-tree:
-      sha256: 70600cf9fc141612dcfb21573c4ccbec59922fb218b384ed380458cf6b0c67e6
-      size: 424
-  original:
-    hackage: suspend-0.2.0.0
-- completed:
-    hackage: timers-0.2.0.4@sha256:081e81f1f7384795acc4f887cf3c07cc6e7a9c1bf6e65f0f94507f3d2e0585c2,1175
-    pantry-tree:
-      sha256: 823d891414384524ff8f735d8ab912deff9fc64f97f4560ace392028cbf27bd0
-      size: 424
-  original:
-    hackage: timers-0.2.0.4
-- completed:
     hackage: time-units-1.0.0@sha256:27cf54091c4a0ca73d504fc11d5c31ab4041d17404fe3499945e2055697746c1,928
     pantry-tree:
       sha256: 9b516d4195fcea22cd1f4335cfe210e88deca397ba7dacc494d5a2feb69e1af8
@@ -39,20 +25,6 @@ packages:
       size: 1807
   original:
     hackage: digest-0.0.2.1
-- completed:
-    hackage: mason-0.2.6@sha256:87e6233cf21222c2bb3392e453ad9ee4257a850c75bfb2537461f60574ce87e9,1274
-    pantry-tree:
-      sha256: 1aa88dd022085f58cb5f5f32ea0f576522e507d3a5dbe962316b8a01487e88b2
-      size: 575
-  original:
-    hackage: mason-0.2.6
-- completed:
-    hackage: random-1.3.1@sha256:0b4f649c3e78713b2ccad1535251ee34b148237fb2229d7058c2b1d9ccc324b8,6004
-    pantry-tree:
-      sha256: 9e92209c00b0c00b7d1c503e15a27b67b74ac2e3b48269a9255893b06de6836c
-      size: 1667
-  original:
-    hackage: random-1.3.1
 snapshots:
 - completed:
     sha256: c320c36b8a392602c9076bdd0c656e12dcab30f294105a50c3f8ef963c4c3a0d
