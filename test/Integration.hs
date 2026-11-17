@@ -640,8 +640,8 @@ withServer mock action = withSystemTempDirectory "hath-server" $ \dir -> do
   port <- bracket Warp.openFreePort (Sock.close . snd) (pure . fst)
   withMockRPC (mock port) $ do
     -- warp-tls' own test pair: its age does not matter here
-    certs <- CertificateChain <$> readSignedObject "vendor/warp-tls-3.4.13/certificate.pem"
-    privateKey <- readKeyFile "vendor/warp-tls-3.4.13/key.pem"
+    certs <- CertificateChain <$> readSignedObject "vendor/warp-tls-3.4.18/certificate.pem"
+    privateKey <- readKeyFile "vendor/warp-tls-3.4.18/key.pem"
       >>= maybe (fail "no private key in the test key file") pure . listToMaybe
     actions <- newTChanIO
     let config   = testConfig { cachePath = toText (dir </> "cache.db") }

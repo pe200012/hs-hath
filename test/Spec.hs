@@ -123,7 +123,7 @@ certificateSpecs :: Spec
 certificateSpecs = describe "needsRenewal" $ do
   -- warp-tls' test certificate expired at 2011-11-21 19:42:57 UTC
   let expiry      = 1321904577
-      certificate = CertificateChain <$> readSignedObject "vendor/warp-tls-3.4.13/certificate.pem"
+      certificate = CertificateChain <$> readSignedObject "vendor/warp-tls-3.4.18/certificate.pem"
 
   it "keeps a certificate with a day or more left"
     $ certificate >>= (`shouldBe` False) . needsRenewal (expiry - 86400)

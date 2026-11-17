@@ -86,21 +86,25 @@ internal-libraries:
       - crypton-x509 >= 1.7 && < 1.8
       - crypton-x509-validation >= 1.6 && < 1.7
 
+  # warp-tls-3.4.18 with one line added: TLS 1.2 clients without the Extended
+  # Main Secret extension may connect, which tls 2 refuses unless told
+  # otherwise. Upstream has no setting for it.
   hs-hath-warp-tls:
-    source-dirs: vendor/warp-tls-3.4.13
+    source-dirs: vendor/warp-tls-3.4.18
     default-extensions:
       - Strict
       - StrictData
     dependencies:
-      # bounds of upstream warp-tls-3.4.13 (latest Hackage revision); warp 3.4.13 changed Connection
+      # bounds of upstream warp-tls-3.4.18
       - wai >= 3.2 && < 3.3
-      - warp >= 3.3.29 && < 3.4.13
-      - tls >= 2.1.3 && < 2.5
-      - network >= 3 && < 4
+      - warp >= 3.3.29 && < 3.6
+      - tls >= 2.1.3 && < 2.6
+      - network >= 3.2.12 && < 4
       - streaming-commons >= 0 && < 1
-      - tls-session-manager >= 0 && < 1
-      - recv >= 0 && < 1
-      - bytestring >= 0 && < 1
+      - stm >= 2.3 && < 3
+      - tls-session-manager >= 0.0.4 && < 1
+      - recv >= 0.1.0 && < 0.2
+      - bytestring >= 0.9 && < 1
       - text >= 1 && < 3
 
   hs-hath-minio:

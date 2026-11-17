@@ -9,6 +9,8 @@ extra-deps:
   - time-units-1.0.0
   - ini-0.4.2
   - digest-0.0.2.1
+  # the vendored warp-tls needs network >= 3.2.12; the snapshot has 3.2.8
+  - network-3.2.14.0
 
 nix:
   enable: false

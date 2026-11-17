@@ -1,5 +1,56 @@
 # ChangeLog
 
+## 3.4.18
+
+* warp-tls: build with warp before 3.4.18 again
+  [#1167](https://github.com/yesodweb/wai/pull/1167)
+
+## 3.4.17
+
+Requires network 3.2.12.
+
+* The listening socket, and a connection socket no TLS context or
+  connection thread uses yet, are closed with `unsafeClose`.
+* With warp 3.4.21's `setUnsafeClose`, a TLS connection is closed with
+  `unsafeGracefulClose`.
+* Sends use network's `sendAllWith`, so warp's timeout reaches a send on
+  Windows too, and close_notify is given a quarter of the timeout, at
+  most a second.
+* A send after the peer's close_notify is dropped.  The GOAWAY which ends
+  an HTTP/2 connection the client has closed used to reach
+  `settingsOnException` as `PostHandshake Error_EOF`.
+
+## 3.4.16
+
+`tlsEarlyDataSize` defaults to 0, so 0-RTT is off unless a server asks for
+it: a request in early data is replayable and warp-tls has no RFC 8470
+handling.
+
+* Let a server say how much TLS early data it accepts.
+  [#1145](https://github.com/yesodweb/wai/pull/1145)
+
+## 3.4.15
+
+* The first read of a connection is given up on when the handshake
+  deadline passes, rather than interrupted by `timeout`, which does not
+  reach a socket call on Windows.
+
+## 3.4.14.1
+
+* The accept loop is stopped the way warp's is, by being told rather than by
+  having its socket closed under it.  This needs `warp` 3.5.0 or later; built
+  against an earlier one, warp-tls is as it was.  It needs what warp needs,
+  too: not Windows, and `network` 3.2.2 or later.
+  [#1123](https://github.com/yesodweb/wai/pull/1123)
+
+* Build with `warp-3.5.0`.
+  [#1095](https://github.com/yesodweb/wai/pull/1095)
+
+## 3.4.14
+
+* Build with `warp-3.4.13`.
+  [#1071](https://github.com/yesodweb/wai/pull/1071)
+
 ## 3.4.13
 
 * Introduced new smart constructor `tlsSettingsSni` to make it more convenient

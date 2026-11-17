@@ -25,6 +25,13 @@ packages:
       size: 1807
   original:
     hackage: digest-0.0.2.1
+- completed:
+    hackage: network-3.2.14.0@sha256:74a73ecad6c0a22b39bebc05723987def2beebbde7857b642ebd3e156c56b427,5532
+    pantry-tree:
+      sha256: 90db0620b73f3176ec47687f7c4454fdb7db16b8eb403b4488e57b6b8ea3424c
+      size: 4382
+  original:
+    hackage: network-3.2.14.0
 snapshots:
 - completed:
     sha256: c320c36b8a392602c9076bdd0c656e12dcab30f294105a50c3f8ef963c4c3a0d
