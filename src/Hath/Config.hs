@@ -25,7 +25,6 @@ data ClientConfig
   , proxy        :: !(Maybe ClientProxy)
     -- ^ Not read; no request goes through a proxy.
   , downloadDir  :: !Text
-    -- ^ Where the gallery downloader puts its files.
   , cachePath    :: !Text
     -- ^ A directory (Filesystem) or a database file (SQLite); R2 has no use for it.
   , cacheBackend :: !CacheBackend

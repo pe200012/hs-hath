@@ -149,7 +149,6 @@ openUpstream maxAllowedFileSize fileId uri fileIndex xres = do
     then pure (Left status404)
     else embed (firstOpened status500 urls)
 
--- | How asking one source went.
 data Attempt
   = Opened !(HC.Response HC.BodyReader)
   | Answered
@@ -211,12 +210,7 @@ download uri response finish = do
             | filled <= sent -> retrySTM
           settled          -> pure settled
 
--- | How far a download has come.
-data Progress
-  = Receiving !Int
-    -- ^ this many bytes so far
-  | Received
-  | Broken
+data Progress = Receiving !Int | Received | Broken
 
 copyInto :: ForeignPtr Word8 -> Int -> ByteString -> IO ()
 copyInto buffer offset chunk = unsafeUseAsCStringLen chunk $ \( source, len )

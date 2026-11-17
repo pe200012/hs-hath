@@ -22,7 +22,6 @@ offset = unsafePerformIO (newIORef 0)
 serverNow :: IO Int64
 serverNow = (+) <$> readIORef offset <*> ourNow
 
--- | Take the server's clock from the @server_time@ it sent.
 setServerTime :: Int64 -> IO ()
 setServerTime serverTime = ourNow >>= atomicWriteIORef offset . (serverTime -)
 

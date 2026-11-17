@@ -16,7 +16,6 @@ import           Network.Socket           ( SockAddr )
 
 import           Relude
 
--- | What becomes of a new connection.
 data Admission
   = Refused
   | Admitted

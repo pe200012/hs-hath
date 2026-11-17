@@ -5,7 +5,6 @@
 module Hath.Cache.SQLite
   ( initializeDB
   , runCacheSQLite
-    -- * Startup verification
   , VerificationStats(..)
   , verifyAllFiles
   ) where
@@ -23,7 +22,6 @@ import           Polysemy
 
 import           Relude
 
--- | Create the table if it is missing and set the pragmas we run with.
 initializeDB :: Connection -> IO ()
 initializeDB conn = do
   execute_
@@ -63,7 +61,6 @@ data VerificationStats
                       }
   deriving ( Show, Eq )
 
--- | Whether the content still has the SHA-1 its file id promises.
 intact :: Text -> ByteString -> Bool
 intact fileId bytes = (fileHash <$> parseFileURI (encodeUtf8 fileId)) == Just (sha1Hex bytes)
 

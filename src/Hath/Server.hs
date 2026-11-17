@@ -94,7 +94,6 @@ import           UnliftIO                             ( TChan
                                                       , writeTChan
                                                       )
 
--- | The WAI application: the 'application' behind its middleware.
 makeApplication :: ServerEnv -> Application
 makeApplication env = middleware (application env)
   where
@@ -231,7 +230,6 @@ quietHandshakes req e
   | Just ClientClosedConnectionPrematurely <- fromException e = pass
   | otherwise = defaultOnException req e
 
--- | Tell the RPC server we are near our connection limit.
 notifyOverload :: ClientConfig -> IO ()
 notifyOverload config = runRPCIO config overload >>= \case
   Left failure -> putStrLn [i|Overload notification failed: #{failure}|]

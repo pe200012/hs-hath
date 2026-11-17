@@ -35,7 +35,6 @@ import           Relude
 data IP = IPv4 !HostAddress | IPv6 !HostAddress6
   deriving ( Eq, Ord, Show )
 
--- | The address of a peer, without its port.
 sockAddrIP :: SockAddr -> Maybe IP
 sockAddrIP (SockAddrInet _ address) = Just $ IPv4 address
 sockAddrIP (SockAddrInet6 _ _ address _) = Just $ IPv6 address
@@ -50,8 +49,6 @@ parseIPv4 s = case traverse octet (BS.split '.' v4) of
   where
     v4         = fromMaybe s (BS.stripPrefix "::ffff:" s)
 
-    -- read without a String: this runs for every flood-controlled request.
-    -- Space around a number is allowed, as 'read' allowed it.
     octet part = case BS.readInt (BS.strip part) of
       Just ( n, "" )
         | n >= 0 && n <= 255 -> Just (fromIntegral n)
@@ -100,7 +97,6 @@ data IPRecord
   = IPRecord { hitCount    :: !Int
                -- ^ hits left after draining
              , lastHit     :: !Double
-               -- ^ when the last hit was counted
              , bannedUntil :: !Double
              }
   deriving ( Eq, Show )
@@ -132,7 +128,6 @@ registerHit now ip records = case Map.lookup ip live of
       | Map.size records > 1000 = Map.filter ((> now - idleSeconds) . lastHit) records
       | otherwise = records
 
--- | The hit records of one server.
 newtype FloodControl = FloodControl (IORef IPMap)
 
 newFloodControl :: IO FloodControl

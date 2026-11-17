@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 
--- | The SQLite cache backend.
 module SQLiteSpec ( sqliteSpecs ) where
 
 import qualified Data.ByteString        as BS

@@ -15,7 +15,6 @@ data HathSettings
   = HathSettings
   { clientHost :: !ByteString
   , clientPort :: !Int
-    -- ^ The port we must listen on.
   , throttleBytes :: !Int64
     -- ^ Bandwidth limit. Nothing enforces it; it sets 'maxConnections'.
   , diskLimitBytes :: !Int64
@@ -67,9 +66,7 @@ parseSettings = foldl' apply
       where
         ( name, value ) = nameValue line
 
--- | How many connections we take at once (Settings.getMaxConnections): what
--- @max_connections@ says, or else 20 and one more for every 10,000 bytes/s of
--- the throttle, up to 500.
+-- | How many connections we take at once (Settings.getMaxConnections).
 maxConnections :: HathSettings -> Int
 maxConnections settings
   | maxConnectionsOverride settings > 0 = maxConnectionsOverride settings

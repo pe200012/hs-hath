@@ -57,8 +57,7 @@ route path = case dropWhileEnd BSC.null (BSC.split '/' (unescapeEquals path)) of
   "" : "t" : _ -> Refuse status400
   _ -> Refuse status404
 
--- | The path with every @%3d@ in it made @=@. It is read as bytes, so the file
--- ids and options of @\/h\/@ reach the handlers without a trip through Text.
+-- | The path with every @%3d@ in it made @=@.
 unescapeEquals :: ByteString -> ByteString
 unescapeEquals path = case BSC.breakSubstring "%3d" path of
   ( before, after )
@@ -68,17 +67,14 @@ unescapeEquals path = case BSC.breakSubstring "%3d" path of
 -- | What the RPC server may tell us to do through @\/servercmd@, with what each needs.
 data ServerCommand
   = StillAlive
-    -- ^ are you there?
   | ThreadedProxyTest !ProxyTest
     -- ^ download from another client and report how it went
   | SpeedTest !Int
     -- ^ send this many bytes
   | RefreshSettings
-    -- ^ your settings have changed
   | StartDownloader
     -- ^ there is a gallery in your download queue
   | RefreshCerts
-    -- ^ fetch your new certificate
   deriving ( Eq, Show )
 
 -- | Downloads from another client's @\/t\/@ route, to time them.

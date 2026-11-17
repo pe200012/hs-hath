@@ -75,7 +75,6 @@ sha1Hex = convertToBase Base16 . Crypto.hash @ByteString @SHA1
 sha1HexText :: ByteString -> Text
 sha1HexText = decodeUtf8 . sha1Hex
 
--- | Signatures are the SHA-1 of their parts joined by dashes.
 signature :: [ ByteString ] -> ByteString
 signature = sha1Hex . BS.intercalate "-"
 
@@ -160,7 +159,7 @@ keystampValid cfg now fileId stamp = case BS.split '-' stamp of
   _ -> False
 
 -- | Whether the time of a server command or a speed test is close enough to
--- the server's @now@ (Settings.MAX_KEY_TIME_DRIFT): five minutes either way.
+-- the server's @now@ (Settings.MAX_KEY_TIME_DRIFT).
 commandTimeValid :: Int64 -> Int64 -> Bool
 commandTimeValid now time = abs (now - time) <= 300
 

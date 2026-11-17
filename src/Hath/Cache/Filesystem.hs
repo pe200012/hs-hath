@@ -88,7 +88,6 @@ runCacheFilesystem fs = interpret $ \case
         Left err -> throw $ StorageError [i|Could not delete #{path}: #{err}|]
         Right () -> pass
 
--- | Delete one of our files, whose status we have, and stop counting its bytes.
 removeCached :: FsCache -> FilePath -> Posix.FileStatus -> IO (Either SomeException ())
 removeCached fs path st = do
   removed <- tryAny (removeFile path)

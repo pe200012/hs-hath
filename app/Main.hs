@@ -51,8 +51,6 @@ main = do
     certs
     actions
 
--- | Create the table if the database is new and, unless told to skip it, check
--- every cached file against its hash.
 prepareSQLiteCache :: Options -> ClientConfig -> IO ()
 prepareSQLiteCache options config = withConnection (toString $ cachePath config) $ \conn -> do
   initializeDB conn

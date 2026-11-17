@@ -68,7 +68,6 @@ newStatsEnv = do
     <*> replicateM (length durationBounds + 1) counter
     <*> newIORef 0
 
--- | Requests run concurrently, so every update is atomic.
 add :: Int64 -> IORef Int64 -> IO ()
 add n ref = atomicModifyIORef' ref $ \old -> ( old + n, () )
 
@@ -83,11 +82,9 @@ addUpload = count statsSentBytes
 addDownload :: Members '[ Reader StatsEnv, Embed IO ] r => Int -> Sem r ()
 addDownload = count statsReceivedBytes
 
--- | One file served.
 incServed :: Members '[ Reader StatsEnv, Embed IO ] r => Sem r ()
 incServed = count statsSent 1
 
--- | One file fetched from upstream.
 incFetched :: Members '[ Reader StatsEnv, Embed IO ] r => Sem r ()
 incFetched = count statsReceived 1
 
@@ -109,13 +106,11 @@ trackConnection stats action = do
   add 1 (statsActiveConnections stats)
   action `finally` add (-1) (statsActiveConnections stats)
 
--- | Record how long a request took, in seconds.
 observeDuration :: StatsEnv -> Double -> IO ()
 observeDuration stats seconds = do
   whenJust (statsDurations stats !!? length (takeWhile (< seconds) durationBounds)) (add 1)
   atomicModifyIORef' (statsDurationSum stats) $ \total -> ( total + seconds, () )
 
--- | The metrics as they are now, for @\/metrics@.
 readMetrics :: Members '[ Reader StatsEnv, Embed IO ] r => Sem r Text
 readMetrics = do
   stats <- ask

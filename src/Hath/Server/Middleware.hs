@@ -49,7 +49,6 @@ tooManyRequests
     [ ( "Content-Type", "text/plain" ) ]
     "Too Many Requests"
 
--- | Count the requests being served.
 tracingConnections :: StatsEnv -> Middleware
 tracingConnections stats app req respond = trackConnection stats (app req respond)
 

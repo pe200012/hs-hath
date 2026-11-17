@@ -179,7 +179,6 @@ speedTest size time testKey = do
   addUpload size
   pure $ filler size
 
--- | A body sent in one piece.
 bytes :: Status -> ByteString -> ByteString -> Wai.Response
 bytes status contentType content
   = Wai.responseLBS status (responseHeaders contentType (BS.length content)) (fromStrict content)

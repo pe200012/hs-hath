@@ -155,12 +155,10 @@ downloadFiles maxSize directory gallery = go 0 0 [] [ ( file, 1 ) | file <- file
           stillMissing
 
 -- | Whether to go through a gallery's missing files once more, after this many
--- rounds and failed downloads (GalleryDownloader.java:74): at most nine rounds,
--- and none once the failures reach twice the number of files.
+-- rounds and failed downloads (GalleryDownloader.java:74).
 anotherRound :: Int -> Int -> Int -> Bool
 anotherRound fileCount rounds failed = rounds < 9 && failed < fileCount * 2
 
--- | How getting one file went.
 data Outcome
   = Present
     -- ^ it was there already, intact
@@ -227,7 +225,6 @@ intactAt path file = do
 hasExpectedHash :: GalleryFile -> ByteString -> Bool
 hasExpectedHash file content = maybe True (== sha1Hex content) (galleryFileHash file)
 
--- | Download a file into memory with 'fetchFile'.
 fetchBytes :: Int -> HC.Request -> IO (Either Text ByteString)
 fetchBytes maxSize request = do
   chunks <- newIORef []

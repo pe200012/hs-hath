@@ -170,7 +170,6 @@ filePath fileId time options = [i|/h/#{fileId}/keystamp=#{time}-#{stamp}#{option
 fetchable :: Text
 fetchable = ";fileindex=1;xres=1024"
 
--- | The path of a server command sent at @time@.
 commandPath :: Text -> Text -> Int64 -> String
 commandPath command additional time
   = [i|/servercmd/#{command}/#{additional}/#{time}/#{commandKey}|]
@@ -179,7 +178,6 @@ commandPath command additional time
       = signedWithKey
         [i|hentai@home-servercmd-#{command}-#{additional}-#{clientId testConfig}-#{time}-#{key testConfig}|]
 
--- | The key of a speed test of that size at @time@.
 speedTestKeyFor :: Int -> Int64 -> Text
 speedTestKeyFor size time
   = signedWithKey
@@ -656,7 +654,6 @@ withServer mock action = withSystemTempDirectory "hath-server" $ \dir -> do
         threadDelay 500000
         pure result
 
--- | Whether something accepts connections on the port.
 accepts :: Int -> IO Bool
 accepts port = isRight <$> try @IOException (bracket (connectLocal port) Sock.close (const pass))
 

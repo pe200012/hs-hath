@@ -23,14 +23,8 @@ import           Polysemy.Error ( Error )
 
 import           Relude
 
--- | How a cached file reaches the reader. Each backend has its own way.
-data CacheHit
-  = InMemory !ByteString
-    -- ^ the content itself
-  | Redirect !ByteString
-    -- ^ a URL to send the reader to
-  | LocalFile !FilePath
-    -- ^ a file to send straight from disk
+-- | How a cached file reaches the reader.
+data CacheHit = InMemory !ByteString | Redirect !ByteString | LocalFile !FilePath
   deriving ( Eq, Show )
 
 data Cache m a where

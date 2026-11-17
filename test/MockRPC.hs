@@ -35,7 +35,6 @@ data MockRPC
   , mockOutages       :: Int
     -- ^ how many RPC requests it answers with a 500 before it works
   , mockBlacklist     :: [ ByteString ]
-    -- ^ the lines of its get_blacklist reply
   , mockSeen          :: ( ByteString, ByteString ) -> IO ()
     -- ^ told the act and add of each RPC or gallery downloader request as it arrives
   , mockRPCServerIP   :: ByteString
@@ -65,7 +64,6 @@ defaultMockRPC
   , mockQueue         = const "NO_PENDING_DOWNLOADS"
   }
 
--- | The settings it assigns at login.
 loginSettings :: MockRPC -> [ ByteString ]
 loginSettings mock
   = [ "host=127.0.0.1"

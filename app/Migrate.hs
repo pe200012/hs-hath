@@ -97,8 +97,6 @@ main = do
 
 data Tally = Tally { migrated :: !Int, failed :: !Int }
 
--- | Upload one file under its bucket key (in a dry run, only say so) and count
--- how it went.
 migrateOne :: MigrateOptions -> Text -> (FileURI -> IO (Either Text ())) -> Tally -> IO Tally
 migrateOne opts fileId upload tally
   | optDryRun opts = tally <$ say ("  Would upload: " <> fileId)

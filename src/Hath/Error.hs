@@ -7,7 +7,6 @@ data HathError
   = TransportError !Text
     -- ^ The HTTP exchange with the RPC server failed, every time it was tried.
   | EmptyResponse
-    -- ^ The RPC server sent nothing.
   | RequestFailure !Text
     -- ^ The RPC server answered with this status instead of @OK@.
   | CertificateFailure !Text

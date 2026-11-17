@@ -15,7 +15,6 @@ import           System.IO.Error    ( userError )
 
 import           Test.Hspec
 
--- | A file of 1000 bytes.
 thousandBytes :: FileURI
 thousandBytes
   = FileURI { fileHash = "0123456789abcdef0123456789abcdef01234567"

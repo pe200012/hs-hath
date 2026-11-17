@@ -55,7 +55,6 @@ data R2Connection
                  , r2ConnBucket :: !Text
                  , r2UrlCache   :: !(AtomicLRU FileURI ( Double, ByteString ))
                    -- ^ Presigned links and when we stop handing them out (monotonic seconds).
-                   -- It lives here because the interpreter runs once per request.
                  }
 
 -- | Connect with the endpoint and bucket from the config and the credentials
@@ -93,14 +92,12 @@ fileURIToKey uri = T.take 4 fileId <> "/" <> fileId
   where
     fileId = renderFileURIText uri
 
--- | Run a bucket operation. Exceptions and Minio's own errors alike come back as text.
 runR2 :: R2Connection -> Minio.Minio a -> IO (Either Text a)
 runR2 conn action = try @SomeException (Minio.runMinioWith (r2MinioConn conn) action) <&> \case
   Left err         -> Left (show err)
   Right (Left err) -> Left (show err)
   Right (Right a)  -> Right a
 
--- | Upload a file under its key.
 putR2Object :: R2Connection -> FileURI -> ByteString -> IO (Either Text ())
 putR2Object conn uri bytes
   = runR2 conn

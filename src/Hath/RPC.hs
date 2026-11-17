@@ -162,7 +162,7 @@ httpManager
 
 {-# NOINLINE httpManager #-}
 
--- | How long a connection of 'httpManager' may take to open: 5 s.
+-- | How long a connection of 'httpManager' may take to open.
 connectMicros :: Int
 connectMicros = 5 * 1000000
 
@@ -216,7 +216,6 @@ exchange req = go (3 :: Int)
 worthRetrying :: Maybe Int -> Bool
 worthRetrying = maybe True (`notElem` [ 404, 410 ])
 
--- | The payload of an OK reply.
 payload :: Member (Error HathError) r => ByteString -> Sem r [ ByteString ]
 payload = fromEither . rpcPayload
 
@@ -244,7 +243,6 @@ serverStat = do
     $ logWarning
       [i|The H@H network has a client newer than build #{clientBuild}, the one hs-hath implements.|]
 
--- | Log in and receive the settings assigned to us.
 clientLogin :: Members '[ RPC, Error HathError, Log Message, Embed IO ] r => Sem r HathSettings
 clientLogin = do
   logInfo "Logging in"
@@ -276,11 +274,9 @@ startFailure port = \case
   failure -> Unannounced
     [i|Startup notification failed (#{failure}). The client keeps running, but the network will not send it anything; restart it.|]
 
--- | Tell the server we are going away.
 clientStop :: Members '[ RPC, Error HathError ] r => Sem r ()
 clientStop = void $ payload =<< callRPC "client_stop" ""
 
--- | The heartbeat. Fails with the server's status unless it answers OK.
 stillAlive :: Members '[ RPC, Error HathError ] r => Sem r ()
 stillAlive = void $ payload =<< callRPC "still_alive" ""
 
@@ -363,7 +359,6 @@ galleryFileSource gallery file attempt
          "dlfetch"
          [i|#{galleryID gallery};#{galleryFilePage file};#{galleryFileIndex file};#{galleryFileXRes file};#{attempt}|])
 
--- | Report the sources a gallery's files failed to come from.
 reportDownloadFailures :: Member RPC r => [ Text ] -> Sem r ()
 reportDownloadFailures = traverse_ (void . callRPC "dlfails") . failureReport
 

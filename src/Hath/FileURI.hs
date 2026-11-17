@@ -48,7 +48,6 @@ parseFileURI bytes = case BS.split '-' bytes of
 
     isHex c = isDigit c || (c >= 'a' && c <= 'f')
 
-    -- a number of one to that many digits, and nothing else
     number digits s = do
       guard (not (BS.null s) && BS.length s <= digits && BS.all isDigit s)
       fst <$> BS.readInt s
@@ -70,7 +69,6 @@ renderFileURIBytes uri
 renderFileURIText :: FileURI -> Text
 renderFileURIText = decodeUtf8 . renderFileURIBytes
 
--- | Content-Type of a file, from the type in its id.
 mimeType :: FileURI -> ByteString
 mimeType uri = fromMaybe "application/octet-stream" (List.lookup (fileExt uri) fileTypes)
 
