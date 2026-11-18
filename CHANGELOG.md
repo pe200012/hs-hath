@@ -4,7 +4,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to the
 [Haskell Package Versioning Policy](https://pvp.haskell.org/).
 
-## [Unreleased]
+## [1.3.0] - 2026-11-18
 
 ### Upgrade notes
 - **`/metrics` and `/admin/settings`** answer only a request that sends `Authorization: Bearer <token>`, the token being the value of `HATH_METRICS_TOKEN` in the environment. Without the variable both are gone (404); a Prometheus scrape needs `authorization: { credentials: <token> }` (see Security)
