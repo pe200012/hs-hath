@@ -5,7 +5,7 @@ import           Control.Exception  ( throwIO )
 
 import           Hath.Download      ( receive )
 import           Hath.FileURI       ( FileURI(..) )
-import           Hath.Locate        ( usableReply )
+import           Hath.Locate        ( usableReply, withinBudget )
 
 import           Network.HTTP.Types ( hContentLength )
 
@@ -39,6 +39,14 @@ locateSpecs = describe "Locate" $ do
 
     it "refuses a file larger than max_allowed_filesize"
       $ usableReply 999 thousandBytes 200 [ ( hContentLength, "1000" ) ] `shouldBe` False
+
+  describe "withinBudget" $ do
+    it "lets a download start while those under way stay within 512 MiB" $ do
+      withinBudget 536869912 1000 `shouldBe` True
+      withinBudget 536869913 1000 `shouldBe` False
+
+    it "lets a larger file through when nothing else is under way"
+      $ withinBudget 0 1073741824 `shouldBe` True
 
   describe "receive" $ do
     it "hands over each chunk with its offset"

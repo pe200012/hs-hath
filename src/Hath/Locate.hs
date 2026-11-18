@@ -1,13 +1,13 @@
 {-# LANGUAGE DataKinds #-}
 
 -- | Finding a requested file: in the cache, or else upstream.
-module Hath.Locate ( Located(..), locateResource, usableReply ) where
+module Hath.Locate ( Located(..), locateResource, usableReply, withinBudget, heldBytes ) where
 
 import           Colog                    ( Message )
 import           Colog.Polysemy           ( Log )
 
-import           Control.Concurrent       ( forkIO )
-import           Control.Exception        ( finally )
+import           Control.Concurrent       ( forkIOWithUnmask )
+import           Control.Exception        ( finally, mask_, onException )
 
 import qualified Data.ByteString.Char8    as BS
 import           Data.ByteString.Internal ( fromForeignPtr, fromForeignPtr0, mallocByteString )
@@ -36,6 +36,7 @@ import           Network.HTTP.Types       ( Header
                                           , status404
                                           , status500
                                           , status502
+                                          , status503
                                           , statusCode
                                           )
 
@@ -47,6 +48,7 @@ import           Polysemy.Reader          ( Reader, ask )
 import           Relude                   hiding ( Reader, ask )
 
 import           System.IO.Error          ( ioError, mkIOError, resourceVanishedErrorType )
+import           System.IO.Unsafe         ( unsafePerformIO )
 
 import           UnliftIO                 ( retrySTM, timeout, try )
 
@@ -60,7 +62,8 @@ data Located
 -- | Look in the cache; on a miss, ask the RPC server where the file is, by the
 -- @fileindex@ and @xres@ of the request and the file id as the reader asked for
 -- it, and start fetching it. Left is the status the reader gets when that
--- fails (see 'openUpstream').
+-- fails (see 'openUpstream'), or 503 while the downloads under way hold all
+-- they may ('bufferBudget').
 --
 -- Like the official client, we serve any file the server sends readers here
 -- for; static ranges only matter for pruning the cache.
@@ -90,7 +93,6 @@ locateResource maxAllowedFileSize fileId uri ( fileIndex, xres ) = lookupFile ur
         logWarning [i|Could not fetch #{uri}: #{statusCode status}|]
         pure (Left status)
       Right response -> do
-        incFetched
         -- runs on the download's thread, after the handler has returned
         finish <- deferToIO $ \case
           Left why      -> logWarning [i|Fetching #{uri} failed: #{why}|]
@@ -99,7 +101,12 @@ locateResource maxAllowedFileSize fileId uri ( fileIndex, xres ) = lookupFile ur
             -- a failed cache write only costs us the next hit
             catch @HathError (storeFile uri content)
               $ \e -> logWarning [i|Cache write failed for #{uri}: #{e}|]
-        Right . Streamed <$> embed (download uri response finish)
+        embed (download uri response finish) >>= \case
+          Just relay -> Right (Streamed relay) <$ incFetched
+          Nothing    -> do
+            logWarning
+              [i|Not fetching #{uri}: the downloads under way hold #{bufferBudget `div` 1048576} MiB already|]
+            pure (Left status503)
 
 -- | Open the first source that answers with the file, as the official
 -- ProxyFileDownloader does; the caller reads the body and must close the
@@ -168,25 +175,29 @@ usableReply maxAllowedFileSize uri status headers
 -- reader relays from the buffer, and the buffer, once verified, is what the
 -- cache keeps, so the file is in memory once. A reader that goes away leaves
 -- the download running, as the official ProxyFileDownloader's thread does.
--- @finish@ gets the verified file, or why there is none.
+-- @finish@ gets the verified file, or why there is none. Nothing, with the
+-- response closed, if the buffer would not fit the 'bufferBudget'.
 download :: FileURI
          -> HC.Response HC.BodyReader
          -> (Either Text ByteString -> IO ())
-         -> IO ((ByteString -> IO ()) -> IO ())
-download uri response finish = do
-  buffer <- mallocByteString size
-  progress <- newTVarIO (Receiving 0)
-  let keep offset chunk = do
-        copyInto buffer offset chunk
-        atomically $ writeTVar progress (Receiving (offset + BS.length chunk))
-  void $ forkIO $ do
-    -- 30 s for every read and 300 s for the whole (ProxyFileDownloader.java:186-200)
-    received <- fromMaybe (Left "it took over 300 s")
-      <$> timeout (seconds 300) (receive (seconds 30) size (HC.responseBody response) keep)
-      `finally` HC.responseClose response
-    atomically $ writeTVar progress (either (const Broken) (const Received) received)
-    finish $ received >> verified (fromForeignPtr0 buffer size)
-  pure (relay buffer progress)
+         -> IO (Maybe ((ByteString -> IO ()) -> IO ()))
+download uri response finish = mask_ $ reserve size >>= \case
+  False -> Nothing <$ HC.responseClose response
+  -- what is reserved must be released whatever happens, or the budget shrinks for good
+  True  -> flip onException (release size >> HC.responseClose response) $ do
+    buffer <- mallocByteString size
+    progress <- newTVarIO (Receiving 0)
+    let keep offset chunk = do
+          copyInto buffer offset chunk
+          atomically $ writeTVar progress (Receiving (offset + BS.length chunk))
+    void $ forkIOWithUnmask $ \unmask -> flip finally (release size) $ unmask $ do
+      -- 30 s for every read and 300 s for the whole (ProxyFileDownloader.java:186-200)
+      received <- fromMaybe (Left "it took over 300 s")
+        <$> timeout (seconds 300) (receive (seconds 30) size (HC.responseBody response) keep)
+        `finally` HC.responseClose response
+      atomically $ writeTVar progress (either (const Broken) (const Received) received)
+      finish $ received >> verified (fromForeignPtr0 buffer size)
+    pure (Just (relay buffer progress))
   where
     size = fileSize uri
 
@@ -211,6 +222,37 @@ download uri response finish = do
           settled          -> pure settled
 
 data Progress = Receiving !Int | Received | Broken
+
+-- | What the downloads under way may hold between them. A file being fetched
+-- is in memory until it is cached, and every request for it meanwhile fetches
+-- it again, so without a limit one valid link, asked for often enough, takes
+-- all the memory there is.
+-- ponytail: a fixed 512 MiB; make it an option if a node has less to spare
+bufferBudget :: Int
+bufferBudget = 512 * 1024 * 1024
+
+-- | Whether a download of @size@ bytes may start while those under way hold
+-- @taken@. A file larger than the budget is fetched when nothing else is.
+withinBudget :: Int -> Int -> Bool
+withinBudget taken size = taken == 0 || taken + size <= bufferBudget
+
+held :: TVar Int
+held = unsafePerformIO (newTVarIO 0)
+
+{-# NOINLINE held #-}
+
+-- | The bytes the downloads under way hold.
+heldBytes :: IO Int
+heldBytes = readTVarIO held
+
+reserve :: Int -> IO Bool
+reserve size = atomically $ do
+  taken <- readTVar held
+  let fits = withinBudget taken size
+  fits <$ when fits (writeTVar held (taken + size))
+
+release :: Int -> IO ()
+release size = atomically $ modifyTVar' held (subtract size)
 
 copyInto :: ForeignPtr Word8 -> Int -> ByteString -> IO ()
 copyInto buffer offset chunk = unsafeUseAsCStringLen chunk $ \( source, len )

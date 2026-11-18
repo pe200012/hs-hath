@@ -3,8 +3,6 @@ module Hath.Server.Middleware ( rateLimitMiddleware, tracingConnections, tracing
 
 import           Control.Exception        ( finally )
 
-import qualified Data.ByteString          as BS
-
 import           GHC.Clock                ( getMonotonicTime )
 
 import           Hath.Server.FloodControl ( FloodControl
@@ -16,31 +14,25 @@ import           Hath.Server.FloodControl ( FloodControl
 import           Hath.Stats               ( StatsEnv, observeDuration, trackConnection )
 
 import           Network.HTTP.Types       ( mkStatus )
-import           Network.Wai              ( Middleware
-                                          , Response
-                                          , rawPathInfo
-                                          , remoteHost
-                                          , responseLBS
-                                          )
+import           Network.Wai              ( Middleware, Response, remoteHost, responseLBS )
 
 import           Relude
 
--- | Flood control for @\/h\/@. Local addresses and those the predicate exempts
--- (the RPC servers, as in the official client) are never limited.
+-- | Flood control, for a request to any path: the official client counts
+-- every connection. Local addresses and those the predicate exempts (the RPC
+-- servers, as in the official client) are never limited.
 rateLimitMiddleware :: FloodControl -> (IP -> IO Bool) -> Middleware
-rateLimitMiddleware floodControl exempt app req respond
-  | "/h/" `BS.isPrefixOf` rawPathInfo req = case sockAddrIP (remoteHost req) of
-    -- a peer without an IP address (a Unix socket) is not limited
-    Nothing -> app req respond
-    Just ip
-      | isLocalIP ip -> app req respond
-      | otherwise -> do
-        now <- getMonotonicTime
-        allowed <- ifM (exempt ip) (pure True) (checkRateLimit floodControl ip now)
-        if allowed
-          then app req respond
-          else respond tooManyRequests
-  | otherwise = app req respond
+rateLimitMiddleware floodControl exempt app req respond = case sockAddrIP (remoteHost req) of
+  -- a peer without an IP address (a Unix socket) is not limited
+  Nothing -> app req respond
+  Just ip
+    | isLocalIP ip -> app req respond
+    | otherwise -> do
+      now <- getMonotonicTime
+      allowed <- ifM (exempt ip) (pure True) (checkRateLimit floodControl ip now)
+      if allowed
+        then app req respond
+        else respond tooManyRequests
 
 tooManyRequests :: Response
 tooManyRequests

@@ -46,6 +46,7 @@ import           Crypto.Store.PKCS12          ( readP12FileFromMemory
                                               )
 
 import qualified Data.ByteString.Char8        as BS
+import qualified Data.ByteString.Lazy         as LBS
 import           Data.String.Interpolate      ( i )
 import qualified Data.Text                    as T
 import           Data.X509                    ( CertificateChain, PrivKey )
@@ -188,6 +189,12 @@ request endpoint act add = do
       }
   fromEither reply
 
+-- | The longest reply we take, as the official client reads one into memory
+-- (FileDownloader.java:186). The RPC server is reached over plain HTTP: who
+-- sits in between could otherwise send a reply without end.
+maxReplyBytes :: Int
+maxReplyBytes = 10485760
+
 -- | Send a request and read the body of its 2xx reply. Like the official
 -- FileDownloader, make up to three attempts, one right after another
 -- (FileDownloader.java:147, 280-292).
@@ -200,13 +207,20 @@ exchange req = go (3 :: Int)
       outcome -> pure $ first (TransportError . snd) outcome
 
     -- the reply's body, or else the status it came with (none if the exchange broke off) and why
-    attempt          = try @HC.HttpException (HC.httpLbs req httpManager) <&> \case
+    attempt          = try @HC.HttpException (HC.withResponse req httpManager reply) <&> \case
       Left (HC.HttpExceptionRequest _ content) -> Left ( Nothing, show content )
       Left e -> Left ( Nothing, show e )
-      Right response
-        | statusIsSuccessful (HC.responseStatus response)
-          -> Right $ toStrict $ HC.responseBody response
-        | otherwise -> Left $ httpError $ statusCode $ HC.responseStatus response
+      Right ( status, body )
+        | not (statusIsSuccessful status) -> Left $ httpError $ statusCode status
+        | tooLong body -> Left ( Nothing, "a reply of more than 10 MiB" )
+        | otherwise -> Right $ toStrict body
+
+    -- one byte past the limit shows that there was more
+    reply response
+      = (,) (HC.responseStatus response)
+      <$> HC.brReadSome (HC.responseBody response) (maxReplyBytes + 1)
+
+    tooLong body = LBS.length body > fromIntegral maxReplyBytes
 
     httpError status = ( Just status, "HTTP " <> show status )
 

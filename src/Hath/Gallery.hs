@@ -12,7 +12,7 @@ import           Data.Char             ( isAsciiLower, isAsciiUpper, isDigit )
 import           Data.List             ( dropWhileEnd )
 import qualified Data.Text             as T
 
-import           Hath.Protocol         ( sha1Hex )
+import           Hath.Protocol         ( sameSecret, sha1Hex )
 
 import           Relude
 
@@ -50,6 +50,7 @@ parseMetadata clientKey bytes = case break (== "FILELIST") (BS.split '\n' bytes)
   ( header, _ : rest ) -> do
     let ( fileSection, informationSection ) = break (== "INFORMATION") rest
         fileLines = filter (not . BS.null) fileSection
+        listHash = sha1Hex (clientKey <> foldMap ("\n" <>) fileLines)
         field name
           = listToMaybe
             [ BS.drop 1 value
@@ -60,7 +61,7 @@ parseMetadata clientKey bytes = case break (== "FILELIST") (BS.split '\n' bytes)
     gid <- maybeToRight "invalid GID" $ mfilter (> 0) $ readIntExact =<< field "GID"
     minXRes <- maybeToRight "invalid MINXRES" $ mfilter validXRes $ field "MINXRES"
     title <- maybeToRight "no TITLE" $ field "TITLE"
-    when (field "DLHASH" /= Just (sha1Hex (clientKey <> foldMap ("\n" <>) fileLines)))
+    unless (any (sameSecret listHash) (field "DLHASH"))
       $ Left "DLHASH does not match the file list"
     files <- traverse parseFile fileLines
     pure

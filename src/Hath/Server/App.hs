@@ -45,6 +45,9 @@ data ServerEnv
     -- ^ Nothing: flood control is off (@--disable-rate-limit@)
   , envTrustProxyHeaders :: !Bool
     -- ^ take the reader's address from @X-Forwarded-For@
+  , envMetricsToken :: !(Maybe ByteString)
+    -- ^ @HATH_METRICS_TOKEN@: who sends it may read @\/metrics@ and
+    -- @\/admin\/settings@. Nothing: nobody may.
   }
 
 -- | The effects of a request handler. It ends a request with an error by

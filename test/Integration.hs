@@ -20,6 +20,7 @@ import           Hath.Cache.Filesystem     ( newFsCache, runCacheFilesystem )
 import           Hath.Cache.SQLite         ( initializeDB, runCacheSQLite )
 import           Hath.Config               ( ClientConfig(..), defaultClientConfig )
 import           Hath.Error                ( HathError(StorageError) )
+import           Hath.Locate               ( heldBytes )
 import           Hath.Protocol             ( sha1HexText )
 import           Hath.Server               ( ServerAction(..)
                                            , ServerEnv(..)
@@ -41,11 +42,14 @@ import           Network.HTTP.Client       ( HttpException
                                            , newManager
                                            , parseRequest
                                            , redirectCount
+                                           , requestHeaders
                                            , responseBody
                                            , responseHeaders
                                            , responseStatus
                                            )
-import           Network.HTTP.Types        ( HeaderName
+import           Network.HTTP.Types        ( Header
+                                           , HeaderName
+                                           , mkStatus
                                            , status200
                                            , status301
                                            , status400
@@ -85,32 +89,53 @@ testConfig
 -- * The application under test
 
 -- | Run the application on a free port, with the settings the mock RPC server
--- assigns at login.
-withAppUsing :: Bool -> CacheRunner -> MockRPC -> (Int -> IO a) -> IO a
-withAppUsing floodControlOn cache mock action = withMockRPC mock $ do
+-- assigns at login: without flood control, not behind a proxy, and with
+-- 'metricsToken' set, unless @adjust@ says otherwise.
+withAppUsing :: (ServerEnv -> ServerEnv) -> CacheRunner -> MockRPC -> (Int -> IO a) -> IO a
+withAppUsing adjust cache mock action = withMockRPC mock $ do
   actions <- newTChanIO
   downloadRequest <- newEmptyMVar
   settings <- newTVarIO (parseSettings defaultHathSettings (loginSettings mock))
   stats <- newStatsEnv
-  floodControl <- if floodControlOn
-    then Just <$> newFloodControl
-    else pure Nothing
   let app
         = makeApplication
+        $ adjust
           ServerEnv { envConfig = testConfig
                     , envSettings = settings
                     , envActions = actions
                     , envDownloadRequest = downloadRequest
                     , envStats = stats
                     , envCache = cache
-                    , envFloodControl = floodControl
+                    , envFloodControl = Nothing
                     , envTrustProxyHeaders = False
+                    , envMetricsToken = Just metricsToken
                     }
   Warp.testWithApplication (pure app) action
 
+metricsToken :: ByteString
+metricsToken = "let-me-see"
+
+-- | Behind a proxy on this machine, which says where each request came from,
+-- and with flood control on.
+behindProxy :: MockRPC -> (Int -> IO a) -> IO a
+behindProxy mock action = withMemoryCache $ \cache -> do
+  floodControl <- newFloodControl
+  withAppUsing
+    (\env -> env { envFloodControl = Just floodControl, envTrustProxyHeaders = True })
+    cache
+    mock
+    action
+
+-- | What the proxy adds to a request from this address.
+from :: ByteString -> [ Header ]
+from address = [ ( "X-Forwarded-For", address ) ]
+
+bearer :: ByteString -> [ Header ]
+bearer token = [ ( "Authorization", "Bearer " <> token ) ]
+
 -- | The application over an empty in-memory SQLite cache, without flood control.
 withMock :: MockRPC -> (Int -> IO a) -> IO a
-withMock mock action = withMemoryCache $ \cache -> withAppUsing False cache mock action
+withMock mock action = withMemoryCache $ \cache -> withAppUsing id cache mock action
 
 -- | The same, with an upstream that serves @content@ for any file.
 withApp :: ByteString -> (Int -> IO a) -> IO a
@@ -127,7 +152,7 @@ withFilesystemHit content action = withSystemTempDirectory "hath-fs" $ \root -> 
   writeFileBS (directory </> toString fileId) content
   fs <- newFsCache root
   withAppUsing
-    False
+    id
     CacheRunner { runCacheWith = runCacheFilesystem fs }
     defaultMockRPC { mockFileContent = "UPSTREAM_CONTENT" }
     (`action` fileId)
@@ -184,13 +209,19 @@ speedTestKeyFor size time
     [i|hentai@home-speedtest-#{size}-#{time}-#{clientId testConfig}-#{key testConfig}|]
 
 request :: ByteString -> Int -> String -> IO (Response LByteString)
-request verb port path = do
+request = requestWith []
+
+requestWith :: [ Header ] -> ByteString -> Int -> String -> IO (Response LByteString)
+requestWith headers verb port path = do
   manager <- newManager defaultManagerSettings
   req <- parseRequest [i|http://localhost:#{port}#{path}|]
-  httpLbs req { method = verb, redirectCount = 0 } manager
+  httpLbs req { method = verb, redirectCount = 0, requestHeaders = headers } manager
 
 fetch :: Int -> String -> IO (Response LByteString)
 fetch = request "GET"
+
+fetchWith :: [ Header ] -> Int -> String -> IO (Response LByteString)
+fetchWith headers = requestWith headers "GET"
 
 body :: Response LByteString -> ByteString
 body = toStrict . responseBody
@@ -287,7 +318,7 @@ integrationSpecs = do
                                          LookupFile _  -> pure Nothing
                                          StoreFile _ _ -> throw (StorageError "write refused")
                                          DeleteFile _  -> pass }
-      withAppUsing False brokenWrites defaultMockRPC { mockFileContent = content } $ \port -> do
+      withAppUsing id brokenWrites defaultMockRPC { mockFileContent = content } $ \port -> do
         time <- now
         response <- fetch port (filePath (fileIdFor content "jpg") time fetchable)
         responseStatus response `shouldBe` status200
@@ -382,11 +413,41 @@ integrationSpecs = do
           void $ timeout 10000000 $ try @HttpException (fetch port path)
       readIORef seen `shouldReturn` [ "srfetch", "srfetch" ]
 
-    it "exempts local addresses from flood control" $ withMemoryCache $ \cache
-      -> withAppUsing True cache defaultMockRPC { mockFileContent = "x" } $ \port -> do
+    it "holds no memory for a download that has ended, whole or broken off" $ do
+      let content = encodeUtf8 (T.replicate 100000 "z")
+          ended   = timeout 5000000 $ fix $ \again -> do
+            taken <- heldBytes
+            unless (taken == 0) $ threadDelay 50000 >> again
+      forM_ [ False, True ] $ \broken -> withMock
+        defaultMockRPC { mockFileContent = content, mockHangUpHalfway = broken }
+        $ \port -> do
+          time <- now
+          void
+            $ timeout 10000000
+            $ try @HttpException
+            $ fetch port (filePath (fileIdFor content "jpg") time fetchable)
+          ended `shouldReturn` Just ()
+
+    it "exempts local addresses from flood control"
+      $ behindProxy defaultMockRPC { mockFileContent = "x" }
+      $ \port -> do
         time <- now
         responses <- replicateM 13 $ fetch port (filePath (fileIdFor "x" "jpg") time fetchable)
         responseStatus <$> responses `shouldBe` replicate 13 status200
+
+  describe "Flood control"
+    $ it "blocks an address after ten requests, whatever they ask for, and no other"
+    $ behindProxy defaultMockRPC
+    $ \port -> do
+      let statuses address
+            = map (statusCode . responseStatus)
+            <$> replicateM 11 (fetchWith (from address) port "/robots.txt")
+      statuses "203.0.113.9" `shouldReturn` replicate 10 200 <> [ 429 ]
+      responseStatus
+        <$> fetchWith (from "203.0.113.9") port "/favicon.ico"
+        `shouldReturn` mkStatus 429 "Too Many Requests"
+      responseStatus
+        <$> fetchWith (from "203.0.113.10") port "/robots.txt" `shouldReturn` status200
 
   describe "Server commands" $ do
     it "answers still_alive" $ withApp "x" $ \port -> do
@@ -442,12 +503,24 @@ integrationSpecs = do
       response <- fetch port [i|/servercmd/still_alive/additional/#{time}|]
       responseStatus response `shouldBe` status403
 
-    it "refuses a command from an address rpc_server_ip does not list"
+    it "takes a command from an RPC server's address, and refuses one from another"
+      $ behindProxy defaultMockRPC { mockRPCServerIP = "192.0.2.1" }
+      $ \port -> do
+        time <- now
+        let commandFrom address
+              = responseStatus
+              <$> fetchWith (from address) port (commandPath "still_alive" "" time)
+        commandFrom "192.0.2.1" `shouldReturn` status200
+        commandFrom "203.0.113.9" `shouldReturn` status403
+
+    it "judges a command from a local address by its key alone, as behind a tunnel"
       $ withMock defaultMockRPC { mockRPCServerIP = "192.0.2.1" }
       $ \port -> do
         time <- now
         response <- fetch port (commandPath "still_alive" "" time)
-        responseStatus response `shouldBe` status403
+        responseStatus response `shouldBe` status200
+        refused <- fetch port [i|/servercmd/still_alive//#{time}/key|]
+        responseStatus refused `shouldBe` status403
 
     it "reports the successful tests of threaded_proxy_test, and does not hang on a failing target"
       $ withApp "x"
@@ -489,12 +562,27 @@ integrationSpecs = do
       responseStatus response `shouldBe` status400
 
   describe "Other routes" $ do
-    it "reports metrics" $ withApp "x" $ \port -> do
-      response <- fetch port "/metrics"
+    it "reports metrics to whoever sends the token" $ withApp "x" $ \port -> do
+      response <- fetchWith (bearer metricsToken) port "/metrics"
       responseStatus response `shouldBe` status200
       body response `shouldSatisfy` ("hath_cache_sent_total" `BS.isInfixOf`)
       -- a scrape must not be cached like a file
       header "Cache-Control" response `shouldBe` Nothing
+
+    it "shows the settings to whoever sends the token" $ withApp "x" $ \port -> do
+      response <- fetchWith (bearer metricsToken) port "/admin/settings"
+      responseStatus response `shouldBe` status200
+      body response `shouldSatisfy` ("rpcServerIPs" `BS.isInfixOf`)
+
+    forM_ [ "/metrics", "/admin/settings" ] $ \path -> do
+      it [i|refuses #{path} without the token|] $ withApp "x" $ \port -> do
+        responseStatus <$> fetch port path `shouldReturn` status403
+        responseStatus <$> fetchWith (bearer "let-me-se") port path `shouldReturn` status403
+        responseStatus <$> fetchWith (bearer "") port path `shouldReturn` status403
+
+      it [i|has no #{path} when no token is set|] $ withMemoryCache $ \cache
+        -> withAppUsing (\env -> env { envMetricsToken = Nothing }) cache defaultMockRPC $ \port
+        -> responseStatus <$> fetchWith (bearer "") port path `shouldReturn` status404
 
     it "disallows robots" $ withApp "x" $ \port -> do
       response <- fetch port "/robots.txt"

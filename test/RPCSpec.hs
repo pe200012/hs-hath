@@ -1,6 +1,7 @@
 -- | The RPC transport against the mock RPC server.
 module RPCSpec ( rpcSpecs ) where
 
+import qualified Data.ByteString.Char8  as BS
 import qualified Data.Text              as T
 import           Data.Time.Clock.System ( SystemTime(systemSeconds), getSystemTime )
 
@@ -10,6 +11,7 @@ import           Hath.FileURI           ( parseFileURI )
 import           Hath.RPC               ( StartFailure(..)
                                         , clientStart
                                         , getBlacklist
+                                        , nextGallery
                                         , overload
                                         , runRPCIO
                                         , startFailure
@@ -51,6 +53,12 @@ rpcSpecs = describe "RPC" $ after_ useOurClock $ do
     it "fails after three attempts"
       $ withMockRPC defaultMockRPC { mockOutages = 3 } (runRPCIO config clientStart)
       >>= (`shouldBe` Left (TransportError "HTTP 500"))
+
+    it "gives up on a reply of more than 10 MiB" $ do
+      queued <- withMockRPC
+        defaultMockRPC { mockQueue = const (BS.replicate 10485761 'x') }
+        (runRPCIO config (nextGallery Nothing))
+      void queued `shouldBe` Left (TransportError "a reply of more than 10 MiB")
 
   describe "on KEY_EXPIRED" $ do
     it "takes the server's time and signs a request without add again" $ do

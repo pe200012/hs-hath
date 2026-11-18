@@ -123,7 +123,19 @@ stack exec hs-hath -- --version
 
 The configuration is read from `./client-login`; `-c FILE` names another file. `stack exec hs-hath -- --help` lists the other options.
 
-Prometheus metrics are served at `/metrics`.
+Prometheus metrics are served at `/metrics`, and the settings the server assigned at `/admin/settings`, once `HATH_METRICS_TOKEN` is set in the environment (any long random string, for example from `openssl rand -hex 32`). A request must send it as `Authorization: Bearer <token>`; in Prometheus:
+
+```yaml
+scrape_configs:
+  - job_name: hath
+    scheme: https
+    authorization:
+      credentials: <token>
+    static_configs:
+      - targets: ["<host>:<port>"]
+```
+
+Without the variable both paths answer 404, like any path the official client does not have.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -131,10 +143,10 @@ Prometheus metrics are served at `/metrics`.
 
 * **Memory usage**: Not optimized yet — expect ~200 MiB RAM on average.
 * **S3 / Cloudflare R2**: The object store must return `ETag`, `Content-Length`, and `Last-Modified` headers; missing `ETag` will fail cache writes.
-* **Reverse proxy**: Run with `--trust-proxy-headers`, which takes the reader's address from `X-Forwarded-For`. Server commands (`/servercmd/`) are accepted only from the RPC servers' addresses, so without it every one of them is refused with 403. The connection limit sees only the peer's address and never refuses a local one, so it does not apply to a proxy on a local address.
+* **Reverse proxy**: Run with `--trust-proxy-headers`, which takes the reader's address from `X-Forwarded-For` when the proxy is on a loopback or private address. Flood control then counts readers, and server commands (`/servercmd/`) are taken from the RPC servers' addresses only. The connection limit sees only the peer's address and never refuses a local one, so it does not apply to a proxy on a local address.
+* **Tunnels** (rathole, frp, a plain port forward that rewrites the source): hs-hath sees every connection come from a local address and cannot tell readers apart, so neither flood control nor the connection limit applies; limit connections where the tunnel meets the internet. A server command from a local address is accepted on its key alone.
 * **Start-up**: If the server refuses `client_start` because another client is connected or the client id is in use, hs-hath exits. After any other failure (for example `FAIL_CONNECT_TEST`) it stays up without announcing itself, as the official client does, so that the port can be tested; restart it once the cause is fixed. A certificate with less than 24 h left is refused at start.
 * **Galleries** are saved as `<downloadDir>/<title> [<gid>]`, or `[<gid>-<xres>x]` for a resized one, and `galleryinfo.txt` is written once all of a gallery's files are there.
-* **Open endpoints**: `/metrics` and `/admin/settings` answer any request that reaches the port; hs-hath does not check who asks.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

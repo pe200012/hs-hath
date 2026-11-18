@@ -19,6 +19,7 @@ module Hath.Protocol
   , keystampValid
   , commandTimeValid
   , fetchParams
+  , sameSecret
     -- * RPC replies
   , verifyRPCResponse
   , rpcPayload
@@ -30,6 +31,7 @@ module Hath.Protocol
 import           Crypto.Hash             ( SHA1 )
 import qualified Crypto.Hash             as Crypto
 
+import           Data.ByteArray          ( constEq )
 import           Data.ByteArray.Encoding ( Base(Base16), convertToBase )
 import qualified Data.ByteString.Char8   as BS
 import           Data.Char               ( isDigit, toLower )
@@ -155,8 +157,14 @@ keystampValid :: ClientConfig -> Int64 -> ByteString -> ByteString -> Bool
 keystampValid cfg now fileId stamp = case BS.split '-' stamp of
   [ time, hash ]
     | Just ( issued, "" ) <- BS.readInt time -> abs (now - fromIntegral issued) < 900
-      && BS.map toLower hash == keystampHash cfg (fromIntegral issued) fileId
+      && sameSecret (BS.map toLower hash) (keystampHash cfg (fromIntegral issued) fileId)
   _ -> False
+
+-- | Whether a key or signature we were sent is the one we computed. The
+-- comparison takes as long wherever the two first differ, so the time a
+-- refusal takes does not tell a forger how much of a guess was right.
+sameSecret :: ByteString -> ByteString -> Bool
+sameSecret = constEq
 
 -- | Whether the time of a server command or a speed test is close enough to
 -- the server's @now@ (Settings.MAX_KEY_TIME_DRIFT).
@@ -184,7 +192,7 @@ verifyRPCResponse :: ByteString -> ByteString -> ByteString
 verifyRPCResponse clientKey bytes = case BS.split '\n' bytes of
   status : rest
     | Just ( time, sig ) <- BS.break (== '-') <$> BS.stripPrefix "OK-" status
-    , sig == "-" <> sha1Hex (time <> "-" <> clientKey <> foldMap ("\n" <>) body)
+    , sameSecret sig ("-" <> sha1Hex (time <> "-" <> clientKey <> foldMap ("\n" <>) body))
       -> BS.intercalate "\n" ("OK" : body)
     | "OK" `BS.isPrefixOf` status -> "RESPONSE_HASH_FAILED"
     where

@@ -131,6 +131,8 @@ startServer config options settings certs actions = do
   floodControl <- if disableRateLimit options
     then pure Nothing
     else Just <$> newFloodControl
+  -- an empty token would let in anyone who sends "Bearer "
+  metricsToken <- mfilter (not . null) <$> lookupEnv "HATH_METRICS_TOKEN"
   runGalleryDownloader config stats settingsVar downloadRequest
     `alongside` withCacheBackend
       config
@@ -144,6 +146,7 @@ startServer config options settings certs actions = do
                    , envCache = cache
                    , envFloodControl = floodControl
                    , envTrustProxyHeaders = trustProxyHeaders options
+                   , envMetricsToken = encodeUtf8 <$> metricsToken
                    }
          certs)
 

@@ -5,6 +5,7 @@ import           Control.Concurrent       ( forkIO, threadDelay )
 
 import           Data.ByteString.Builder  ( byteString )
 import qualified Data.ByteString.Char8    as BS
+import qualified Data.List                as List
 import qualified Data.Map.Strict          as Map
 import           Data.String.Interpolate  ( i )
 
@@ -20,6 +21,7 @@ import           Hath.Protocol            ( commandTimeValid
                                           , keystampValid
                                           , parseURLParams
                                           , responseHeaders
+                                          , sameSecret
                                           , serverCommandKey
                                           , speedTestKey
                                           )
@@ -31,7 +33,7 @@ import           Hath.Server.API          ( ProxyTest(..)
                                           , route
                                           )
 import           Hath.Server.App          ( App, ServerAction(..), ServerEnv(..), runApp )
-import           Hath.Server.FloodControl ( isRPCServer, sockAddrIP )
+import           Hath.Server.FloodControl ( isLocalIP, isRPCServer, sockAddrIP )
 import           Hath.ServerTime          ( serverNow )
 import           Hath.Settings            ( HathSettings(maxAllowedFileSize, rpcServerIPs) )
 import           Hath.Stats               ( addDownload, addUpload, incServed, readMetrics )
@@ -39,6 +41,7 @@ import           Hath.Stats               ( addDownload, addUpload, incServed, r
 import qualified Network.HTTP.Client      as HC
 import           Network.HTTP.Types       ( Header
                                           , Status
+                                          , hAuthorization
                                           , hCacheControl
                                           , hContentLength
                                           , hLocation
@@ -83,12 +86,21 @@ handle env req = case route (Wai.rawPathInfo req) of
   ServerCmd command additional time commandKey
     -> serverCommand env (Wai.remoteHost req) command additional time commandKey
   Test size time testKey -> speedTest size time testKey
-  Metrics -> ours <$> readMetrics
-  AdminSettings -> ours . show <$> embed @IO (readTVarIO (envSettings env))
+  Metrics -> tokenHolder >> ours <$> readMetrics
+  AdminSettings -> tokenHolder >> ours . show <$> embed @IO (readTVarIO (envSettings env))
   Refuse status -> throw status
   where
-    -- /metrics and /admin/settings are not the official client's; what they
-    -- say changes, so they do not carry its year of Cache-Control
+    -- /metrics and /admin/settings are not the official client's, and tell
+    -- what a reader has no business knowing (the RPC servers' addresses, for
+    -- one). They answer whoever sends the token; with none set, they are not there.
+    tokenHolder = case envMetricsToken env of
+      Nothing    -> throw status404
+      Just token -> unless (sameSecret sent ("Bearer " <> token)) $ throw status403
+
+    sent        = fromMaybe "" (List.lookup hAuthorization (Wai.requestHeaders req))
+
+    -- what they say changes, so they do not carry the official client's year
+    -- of Cache-Control
     ours
       = Wai.mapResponseHeaders (filter ((/= hCacheControl) . fst))
       . bytes status200 "text/plain;charset=utf-8"
@@ -124,18 +136,25 @@ resource env headOnly fileId optionsText = do
     options = parseURLParams optionsText
 
 -- | @\/servercmd\/\<command>\/\<additional>\/\<time>\/\<key>@: a command from the
--- RPC server (HTTPResponse.java:230-260). It must come from one of the RPC
--- servers' addresses, as flood control sees the peer, and its key proves the
--- sender: only the RPC server knows ours.
+-- RPC server (HTTPResponse.java:230-260). Its key proves the sender: only the
+-- RPC server knows ours. Like the official client, we also want it to come
+-- from one of the RPC servers' addresses, as flood control sees the peer. But
+-- behind a tunnel, or a proxy that does not pass addresses on, every peer is a
+-- local one and the RPC server would never get through, so a local peer's
+-- command is judged by its key alone.
 serverCommand :: ServerEnv -> SockAddr -> Text -> Text -> Int -> Text -> App Wai.Response
 serverCommand env peer command additional time commandKey = do
   settings <- embed @IO (readTVarIO (envSettings env))
   now <- embed serverNow
   cfg <- ask @ClientConfig
-  unless (maybe False (isRPCServer (rpcServerIPs settings)) (sockAddrIP peer)) $ throw status403
+  unless
+    (maybe False (\ip -> isLocalIP ip || isRPCServer (rpcServerIPs settings) ip) (sockAddrIP peer))
+    $ throw status403
   unless
     (commandTimeValid now (fromIntegral time)
-     && commandKey == serverCommandKey cfg command additional time)
+     && sameSecret
+       (encodeUtf8 commandKey)
+       (encodeUtf8 (serverCommandKey cfg command additional time)))
     $ throw status403
   maybe
     (pure $ text "INVALID_COMMAND")
@@ -175,7 +194,8 @@ speedTest :: Int -> Int64 -> ByteString -> App Wai.Response
 speedTest size time testKey = do
   now <- embed serverNow
   cfg <- ask @ClientConfig
-  unless (commandTimeValid now time && testKey == speedTestKey cfg size time) $ throw status403
+  unless (commandTimeValid now time && sameSecret testKey (speedTestKey cfg size time))
+    $ throw status403
   addUpload size
   pure $ filler size
 
