@@ -26,15 +26,43 @@ packages:
   original:
     hackage: digest-0.0.2.1
 - completed:
-    hackage: network-3.2.14.0@sha256:74a73ecad6c0a22b39bebc05723987def2beebbde7857b642ebd3e156c56b427,5532
+    hackage: file-io-0.1.5@sha256:1d68a81fa684d006b1ec73836cebe3de9a54688836915fe3e56a20389846bb4e,3309
     pantry-tree:
-      sha256: 90db0620b73f3176ec47687f7c4454fdb7db16b8eb403b4488e57b6b8ea3424c
-      size: 4382
+      sha256: 29b9dc0a18772cb73091b711a5dbda029fe89c1ffb06034b4f54258c4eabfe1b
+      size: 905
   original:
-    hackage: network-3.2.14.0
+    hackage: file-io-0.1.5
+- completed:
+    hackage: warp-3.4.21@sha256:4c46838a51b2cf5c75a9262b26aaf51da72b11451ca42e1bdfbaf11f8c959117,12563
+    pantry-tree:
+      sha256: 367e7eeebb2080f61d5aa3ae39fe8ea85f2acac9366a48b2daa5b387a6c2d22d
+      size: 4491
+  original:
+    hackage: warp-3.4.21
+- completed:
+    hackage: http2-5.4.14@sha256:383a440760817a8a1ed4c86047c07a734b4fbaab89cf45a54a85188071fb5cad,10748
+    pantry-tree:
+      sha256: 76689facf17078836dbb6e859a7af7e06c1820ab0c09b5da1493581e7b485f2b
+      size: 45009
+  original:
+    hackage: http2-5.4.14
+- completed:
+    hackage: http-semantics-0.4.2@sha256:9938dfae087bbb52bf79939997284c583855f4155367604612a8979caa8e41a9,1535
+    pantry-tree:
+      sha256: 65c0114900282645724b31cfedd8565a8bc5b674e79aa7e7f2d43a17951d8c40
+      size: 1189
+  original:
+    hackage: http-semantics-0.4.2
+- completed:
+    hackage: time-manager-0.5.2@sha256:06acb3c3f50d3078f1c5dda9af09a42d0bfdbcd5d8dcd520d45544028c08e02d,1494
+    pantry-tree:
+      sha256: d29d6142480e16ad74ee18c6935cb3d530bcdd7d539d801eddf5be3d8d8d367e
+      size: 534
+  original:
+    hackage: time-manager-0.5.2
 snapshots:
 - completed:
-    sha256: c320c36b8a392602c9076bdd0c656e12dcab30f294105a50c3f8ef963c4c3a0d
-    size: 726760
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/24/27.yaml
-  original: lts-24.27
+    sha256: 41f9239dc333bda1509499cc8449dd196a10b2c78cb0a0ceed63a0eedb2bea2c
+    size: 731895
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/24/67.yaml
+  original: lts-24.67

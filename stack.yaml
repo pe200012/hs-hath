@@ -1,4 +1,4 @@
-resolver: lts-24.27
+resolver: lts-24.67
 compiler: ghc-9.12.2
 
 packages:
@@ -9,8 +9,16 @@ extra-deps:
   - time-units-1.0.0
   - ini-0.4.2
   - digest-0.0.2.1
-  # the vendored warp-tls needs network >= 3.2.12; the snapshot has 3.2.8
-  - network-3.2.14.0
+  # ghc-9.12.2 ships file-io 0.1.5. The snapshot, made for ghc-9.10, has a newer
+  # one, which would replace it and everything built on it (directory, process).
+  - file-io-0.1.5
+  # warp before 3.4.17 can be made to read one request as two (HSEC-2026-0013),
+  # http2 before 5.4.14 lets a CONNECT name two hosts (HSEC-2026-0015); the
+  # snapshot has neither fix. The other two are what they need.
+  - warp-3.4.21
+  - http2-5.4.14
+  - http-semantics-0.4.2
+  - time-manager-0.5.2
 
 nix:
   enable: false
