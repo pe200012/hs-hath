@@ -8,6 +8,10 @@ copyright: "2024-2026 pe200012"
 
 extra-source-files:
   - README.md
+  - vendor/*/LICENSE
+  # loaded by the tests
+  - vendor/warp-tls-3.4.18/certificate.pem
+  - vendor/warp-tls-3.4.18/key.pem
 
 extra-doc-files:
   - CHANGELOG.md

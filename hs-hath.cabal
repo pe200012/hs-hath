@@ -21,6 +21,11 @@ tested-with:
     GHC == 9.12.2
 extra-source-files:
     README.md
+    vendor/cryptostore-0.3.0.1/LICENSE
+    vendor/minio-hs-1.7.0/LICENSE
+    vendor/warp-tls-3.4.18/LICENSE
+    vendor/warp-tls-3.4.18/certificate.pem
+    vendor/warp-tls-3.4.18/key.pem
 extra-doc-files:
     CHANGELOG.md
 
