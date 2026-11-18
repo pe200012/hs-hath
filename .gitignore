@@ -20,3 +20,14 @@ bench-work/
 /hs-hath-test.aux
 /hs-hath-test.pdf
 /hs-hath-test.ps
+
+# secrets and what a running client leaves behind
+/client-login
+/.env
+/service/.env
+/service/client.toml
+/service/asset/
+*.p12
+/r2/wrangler.toml
+/r2/.wrangler/
+/cache

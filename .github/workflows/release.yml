@@ -5,9 +5,9 @@ on:
     tags:
       - "v*.*.*"
 
-# the repo's default token is read-only; creating the release needs write
+# only the release job writes; the build job runs other people's actions
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -25,7 +25,7 @@ jobs:
         run: sudo apt install libsqlite3-dev
 
       - name: Setup LLVM
-        uses: ZhongRuoyu/setup-llvm@v0
+        uses: ZhongRuoyu/setup-llvm@eea6238baf53d41c1615923680d7a738da584318 # v0.2.0
         with:
           llvm-version: 19
 
@@ -51,7 +51,7 @@ jobs:
 
       - name: Compress binaries (Unix)
         if: runner.os != 'Windows'
-        uses: crazy-max/ghaction-upx@v3
+        uses: crazy-max/ghaction-upx@db8cc9515a4a7ea1b312cb82fbeae6d716daf777 # v3.2.0
         with:
           version: latest
           files: ./bin/*
@@ -72,6 +72,9 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    # creating the release
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v2
@@ -100,7 +103,7 @@ jobs:
           fi
 
       - name: Create Release
-        uses: docker://antonyurchenko/git-release:v6
+        uses: docker://antonyurchenko/git-release@sha256:b3a7d6a87981f8ed455e6b44c702e55afd95b3e628c324d7fd4f6f85728f792b # v6.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DRAFT_RELEASE: "false"
