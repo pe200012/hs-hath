@@ -9,29 +9,24 @@
         pkgs = nixpkgs.legacyPackages.${system};
 
         hPkgs =
-          pkgs.haskell.packages."ghc9122"; # need to match Stackage LTS version
-        # from stack.yaml snapshot
+          pkgs.haskell.packages."ghc9122"; # the compiler stack.yaml names
 
         myDevTools = [
-          hPkgs.ghc # GHC compiler in the desired version (will be available on PATH)
-          hPkgs.ghcid # Continuous terminal Haskell compile checker
-          hPkgs.floskell # Haskell formatter
-          hPkgs.hlint # Haskell codestyle checker
-          hPkgs.hoogle # Lookup Haskell documentation
-          hPkgs.haskell-language-server # LSP server for editor
-          hPkgs.implicit-hie # auto generate LSP hie.yaml file from cabal
-          hPkgs.retrie # Haskell refactoring tool
-          # hPkgs.cabal-install
+          hPkgs.ghc
+          hPkgs.ghcid
+          hPkgs.floskell
+          hPkgs.hlint
+          hPkgs.hoogle
+          hPkgs.haskell-language-server
+          hPkgs.implicit-hie
+          hPkgs.retrie
           stack-wrapped
         ];
 
         # Wrap Stack to work with our Nix integration. We don't want to modify
         # stack.yaml so non-Nix users don't notice anything.
-        # - no-nix: We don't want Stack's way of integrating Nix.
-        # --system-ghc    # Use the existing GHC on PATH (will come from this Nix file)
-        # --no-install-ghc  # Don't try to install GHC if no matching GHC found on PATH
         stack-wrapped = pkgs.symlinkJoin {
-          name = "stack"; # will be available as the usual `stack` in terminal
+          name = "stack";
           paths = [ pkgs.stack ];
           buildInputs = [ pkgs.makeWrapper ];
           postBuild = ''

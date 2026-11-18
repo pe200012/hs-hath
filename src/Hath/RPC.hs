@@ -4,14 +4,12 @@
 -- | Our side of the RPC with the H\@H server (protocol 1.6.6): the effect, its
 -- HTTP interpreter, and one function per request.
 module Hath.RPC
-  ( -- * Effect
-    RPC(..)
+  ( RPC(..)
   , runRPC
   , runRPCIO
   , worthRetrying
   , httpManager
   , connectMicros
-    -- * Session
   , serverStat
   , clientLogin
   , clientStart
@@ -24,9 +22,7 @@ module Hath.RPC
   , clientSettings
   , getCertificate
   , getBlacklist
-    -- * Files of our static ranges
   , fileSources
-    -- * Gallery downloader
   , nextGallery
   , galleryFileSource
   , reportDownloadFailures
@@ -163,7 +159,6 @@ httpManager
 
 {-# NOINLINE httpManager #-}
 
--- | How long a connection of 'httpManager' may take to open.
 connectMicros :: Int
 connectMicros = 5 * 1000000
 

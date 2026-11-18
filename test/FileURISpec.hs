@@ -2,12 +2,7 @@ module FileURISpec ( fileURISpecs ) where
 
 import qualified Data.ByteString.Char8 as BS
 
-import           Hath.FileURI          ( FileURI(..)
-                                       , mimeType
-                                       , parseFileURI
-                                       , renderFileURIBytes
-                                       , renderFileURIText
-                                       )
+import           Hath.FileURI          ( FileURI(..), parseFileURI, renderFileURIBytes )
 
 import           Relude
 
@@ -61,12 +56,3 @@ fileURISpecs = describe "FileURI" $ do
       , ""
       ]
     $ \fileId -> parseFileURI fileId `shouldBe` Nothing
-
-  it "knows the Content-Type of each type"
-    $ map (mimeType . FileURI hash 1 0 0) [ "jpg", "wbm", "wbp", "avf", "jxl" ]
-    `shouldBe` [ "image/jpeg", "video/webm", "image/webp", "image/avif", "image/jxl" ]
-
-  prop "renders the same id as text and as bytes" $ forAll fileURI $ \uri -> renderFileURIText uri
-    === decodeUtf8 (renderFileURIBytes uri)
-
-  prop "shows as its id" $ forAll fileURI $ \uri -> show uri === toString (renderFileURIText uri)

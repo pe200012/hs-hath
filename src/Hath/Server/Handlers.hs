@@ -1,4 +1,3 @@
--- | The request handlers, one per route of "Hath.Server.API".
 module Hath.Server.Handlers ( application ) where
 
 import           Control.Concurrent       ( forkIO, threadDelay )

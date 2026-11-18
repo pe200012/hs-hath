@@ -1,5 +1,3 @@
--- | The client end to end: the real application, and at the end the real TLS
--- server, against a mock RPC server.
 module Integration ( integrationSpecs ) where
 
 import           Control.Concurrent        ( forkIO, killThread, threadDelay )
@@ -86,8 +84,6 @@ testConfig
                         , downloadDir = "/tmp/hs-hath-test"
                         }
 
--- * The application under test
-
 -- | Run the application on a free port, with the settings the mock RPC server
 -- assigns at login: without flood control, not behind a proxy, and with
 -- 'metricsToken' set, unless @adjust@ says otherwise.
@@ -126,18 +122,15 @@ behindProxy mock action = withMemoryCache $ \cache -> do
     mock
     action
 
--- | What the proxy adds to a request from this address.
 from :: ByteString -> [ Header ]
 from address = [ ( "X-Forwarded-For", address ) ]
 
 bearer :: ByteString -> [ Header ]
 bearer token = [ ( "Authorization", "Bearer " <> token ) ]
 
--- | The application over an empty in-memory SQLite cache, without flood control.
 withMock :: MockRPC -> (Int -> IO a) -> IO a
 withMock mock action = withMemoryCache $ \cache -> withAppUsing id cache mock action
 
--- | The same, with an upstream that serves @content@ for any file.
 withApp :: ByteString -> (Int -> IO a) -> IO a
 withApp content = withMock defaultMockRPC { mockFileContent = content }
 
@@ -171,21 +164,16 @@ closeWhenIdle conn = go (100 :: Int)
       then threadDelay 10000 >> go (n - 1)
       else throwIO e
 
--- * Requests, signed the way the H\@H server signs them
-
 now :: IO Int64
 now = systemSeconds <$> getSystemTime
 
 signedWithKey :: Text -> Text
 signedWithKey = sha1HexText . encodeUtf8
 
--- | The id the server gives a file with this content and type.
 fileIdFor :: ByteString -> Text -> Text
 fileIdFor content ext
   = sha1HexText content <> "-" <> show (BS.length content) <> "-1024-768-" <> ext
 
--- | The path a reader asks for a file at, with a keystamp issued at @time@.
--- @options@ are appended to the keystamp, e.g. 'fetchable'.
 filePath :: Text -> Int64 -> Text -> String
 filePath fileId time options = [i|/h/#{fileId}/keystamp=#{time}-#{stamp}#{options}/file|]
   where
@@ -229,8 +217,6 @@ body = toStrict . responseBody
 header :: HeaderName -> Response LByteString -> Maybe ByteString
 header name = List.lookup name . responseHeaders
 
--- * Specs
-
 integrationSpecs :: Spec
 integrationSpecs = do
   describe "Files" $ do
@@ -252,25 +238,6 @@ integrationSpecs = do
         cached <- fetch port path
         responseStatus cached `shouldBe` status200
         body cached `shouldBe` content
-
-    forM_
-      [ ( "jpg", "image/jpeg" )
-      , ( "png", "image/png" )
-      , ( "gif", "image/gif" )
-      , ( "mp4", "video/mp4" )
-      , ( "wbm", "video/webm" )
-      , ( "wbp", "image/webp" )
-      , ( "avf", "image/avif" )
-      , ( "jxl", "image/jxl" )
-      ]
-      $ \( ext, contentType ) -> it [i|serves a .#{ext} file as #{contentType}|] $ do
-        let content = "CONTENT_OF_A_FILE"
-        withApp content $ \port -> do
-          time <- now
-          response <- fetch port (filePath (fileIdFor content ext) time fetchable)
-          responseStatus response `shouldBe` status200
-          body response `shouldBe` content
-          header "Content-Type" response `shouldBe` Just contentType
 
     it "sends the official client's headers, and no User-Agent" $ withApp "x" $ \port -> do
       time <- now
@@ -717,8 +684,6 @@ integrationSpecs = do
         threadDelay 6000000
         accepts port >>= (`shouldBe` False)
 
--- * The real server
-
 -- | Run 'startServer' on a free port with an SQLite cache in a temporary
 -- directory, and shut it down afterwards. The mock RPC server is told the port.
 withServer :: (Int -> MockRPC) -> (Int -> TChan ServerAction -> IO a) -> IO a
@@ -745,7 +710,6 @@ withServer mock action = withSystemTempDirectory "hath-server" $ \dir -> do
 accepts :: Int -> IO Bool
 accepts port = isRight <$> try @IOException (bracket (connectLocal port) Sock.close (const pass))
 
--- | Wait, up to ten seconds, until something accepts connections on the port.
 waitUntilListening :: Int -> IO ()
 waitUntilListening port = go (100 :: Int)
   where

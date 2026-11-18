@@ -2,17 +2,14 @@
 -- every request adds one hit, hits drain at one per second, and more than
 -- 'floodLimit' hits blocks the address for 'blockSeconds'.
 module Hath.Server.FloodControl
-  ( -- * Addresses
-    IP(..)
+  ( IP(..)
   , sockAddrIP
   , parseIPv4
   , isRPCServer
   , isLocalIP
-    -- * The pure rule
   , IPRecord
   , IPMap
   , registerHit
-    -- * Shared state
   , FloodControl
   , newFloodControl
   , checkRateLimit

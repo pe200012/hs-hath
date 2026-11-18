@@ -34,7 +34,6 @@ jobs:
           curl -sSL https://get.haskellstack.org/ | sh -s - -f
 
       - uses: actions/cache@v4
-        ## Looks like caching in macOS causes weird failures in the steps later.
         if: runner.os != 'macOS'
         with:
           path: |
@@ -72,7 +71,6 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    # creating the release
     permissions:
       contents: write
 

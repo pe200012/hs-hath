@@ -57,14 +57,12 @@ route path = case dropWhileEnd BSC.null (BSC.split '/' (unescapeEquals path)) of
   "" : "t" : _ -> Refuse status400
   _ -> Refuse status404
 
--- | The path with every @%3d@ in it made @=@.
 unescapeEquals :: ByteString -> ByteString
 unescapeEquals path = case BSC.breakSubstring "%3d" path of
   ( before, after )
     | BSC.null after -> before
     | otherwise -> before <> "=" <> unescapeEquals (BSC.drop 3 after)
 
--- | What the RPC server may tell us to do through @\/servercmd@, with what each needs.
 data ServerCommand
   = StillAlive
   | ThreadedProxyTest !ProxyTest

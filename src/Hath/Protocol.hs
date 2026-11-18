@@ -1,30 +1,24 @@
 -- | The wire formats and signatures of the Hentai\@Home protocol (official client
 -- 1.6.6), as pure functions.
 module Hath.Protocol
-  ( -- * Identity
-    clientBuild
+  ( clientBuild
   , responseHeaders
   , outgoingHeaders
-    -- * Hashing
   , sha1Hex
   , sha1HexText
-    -- * Request signatures
   , rpcActionKey
   , rpcQuery
   , serverCommandKey
   , speedTestKey
   , keystampHash
   , hathRequestToken
-    -- * Checking requests
   , keystampValid
   , commandTimeValid
   , fetchParams
   , sameSecret
-    -- * RPC replies
   , verifyRPCResponse
   , rpcPayload
   , retryWithServerTime
-    -- * Parameters
   , parseURLParams
   ) where
 

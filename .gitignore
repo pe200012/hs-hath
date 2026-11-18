@@ -9,7 +9,6 @@ node_modules
 dist-newstyle
 bench-work/
 
-# build outputs, profiles and logs
 /.artifacts/
 /bin/
 /dist/

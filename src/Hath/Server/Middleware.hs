@@ -1,4 +1,3 @@
--- | What every request passes through before it reaches a handler.
 module Hath.Server.Middleware ( rateLimitMiddleware, tracingConnections, tracingTimeUsage ) where
 
 import           Control.Exception        ( finally )

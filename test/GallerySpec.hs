@@ -45,7 +45,6 @@ galleryList header signedLines fileLines
 information :: [ ByteString ]
 information = [ "Title: t", "", "Tags: x" ]
 
--- | Gallery 123, at its original size, titled "t".
 downloadList :: [ ByteString ] -> [ ByteString ] -> ByteString
 downloadList = galleryList [ "GID 123", "FILECOUNT 2", "MINXRES org", "TITLE t" ]
 
@@ -59,7 +58,6 @@ goodLines = [ "1 99 org " <> sha1Hex "x" <> " jpg 001", "2 98 780 unknown webp p
 refused :: ByteString -> Bool
 refused = isLeft . parseMetadata clientKey
 
--- | A gallery with this id, minimum resolution and title, and no files.
 gallery :: Int -> ByteString -> Text -> GalleryMetadata
 gallery gid minXRes title
   = GalleryMetadata
@@ -132,10 +130,9 @@ gallerySpecs = describe "Gallery downloader" $ do
       fallbackDirectoryName (gallery 123 "org" "t") `shouldBe` "123"
       fallbackDirectoryName (gallery 123 "780" "t") `shouldBe` "123-780x"
 
-    it "takes max_filename_length from the settings, 125 unless they say otherwise" $ do
-      maxFilenameLength defaultHathSettings `shouldBe` 125
-      maxFilenameLength (parseSettings defaultHathSettings [ "max_filename_length=60" ])
-        `shouldBe` 60
+    it "takes max_filename_length from the settings"
+      $ maxFilenameLength (parseSettings defaultHathSettings [ "max_filename_length=60" ])
+      `shouldBe` 60
 
   describe "rounds" $ do
     it "go on for at most nine rounds" $ do

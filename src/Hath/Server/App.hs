@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 
--- | What the web server runs with, and the effects its handlers run in.
 module Hath.Server.App ( ServerEnv(..), ServerAction(..), App, runApp ) where
 
 import           Colog                    ( Message, richMessageAction )
@@ -24,7 +23,6 @@ import           Relude                   hiding ( Reader, runReader )
 
 import           UnliftIO                 ( TChan )
 
--- | Commands to the server loop.
 data ServerAction
   = Cert
     -- ^ fetch a new certificate and serve it from now on

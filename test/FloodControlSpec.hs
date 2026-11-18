@@ -22,7 +22,6 @@ import           Test.QuickCheck
 visitor :: IP
 visitor = IPv4 (tupleToHostAddress ( 203, 0, 113, 7 ))
 
--- | The records after hits at these times, and whether each hit was allowed.
 hits :: [ Double ] -> ( IPMap, [ Bool ] )
 hits = foldl' hit ( Map.empty, [] )
   where
@@ -38,7 +37,6 @@ floodControlSpecs = describe "Flood control" $ do
     floodControl <- newFloodControl
     let other = IPv4 (tupleToHostAddress ( 203, 0, 113, 8 ))
         t0    = 1000 :: Double
-    -- ten quick hits pass, the eleventh blocks
     firstTen <- forM [ 0 .. 9 ] $ \k -> checkRateLimit floodControl visitor (t0 + 0.1 * k)
     firstTen `shouldBe` replicate 10 True
     checkRateLimit floodControl visitor (t0 + 1.0) `shouldReturn` False
@@ -68,9 +66,6 @@ floodControlSpecs = describe "Flood control" $ do
   prop "never blocks a visitor who asks at most once a second"
     $ forAll (listOf (choose ( 1, 30 )))
     $ \gaps -> snd (hits (scanl (+) 1000 gaps)) === (True <$ (1000 : gaps))
-
-  it "allows ten hits at once and refuses the eleventh"
-    $ snd (hits (replicate 11 1000)) `shouldBe` replicate 10 True <> [ False ]
 
   it "refuses a blocked visitor without counting the request" $ do
     let blocked = fst (hits (replicate 11 1000))

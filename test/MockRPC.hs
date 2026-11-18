@@ -74,7 +74,6 @@ loginSettings mock
     , "rpc_server_ip=" <> mockRPCServerIP mock
     ]
 
--- | Run an action while @HATH_RPC_HOST@ names a mock server on a free port.
 withMockRPC :: MockRPC -> IO a -> IO a
 withMockRPC mock action = do
   outagesLeft <- newIORef (mockOutages mock)

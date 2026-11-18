@@ -1,4 +1,3 @@
--- | The RPC transport against the mock RPC server.
 module RPCSpec ( rpcSpecs ) where
 
 import qualified Data.ByteString.Char8  as BS

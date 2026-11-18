@@ -23,7 +23,6 @@ import           Polysemy.Error ( Error )
 
 import           Relude
 
--- | How a cached file reaches the reader.
 data CacheHit = InMemory !ByteString | Redirect !ByteString | LocalFile !FilePath
   deriving ( Eq, Show )
 
@@ -36,7 +35,6 @@ data Cache m a where
 
 makeSem ''Cache
 
--- | A backend chosen at run time.
 newtype CacheRunner
   = CacheRunner { runCacheWith :: forall r a. Members '[ Embed IO, Log Message, Error HathError ] r
                                => Sem (Cache : r) a

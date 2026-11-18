@@ -28,7 +28,6 @@ import           System.IO.Temp        ( withSystemTempDirectory )
 
 import           Test.Hspec
 
--- | A URI whose hash and size match the content, as the server hands them out.
 uriFor :: ByteString -> FileURI
 uriFor content
   = FileURI { fileHash = sha1Hex content
@@ -50,7 +49,6 @@ runFs fs program = do
 store :: FsCache -> ByteString -> IO ()
 store fs content = runFs fs $ storeFile (uriFor content) content
 
--- | The path a hit is served from.
 served :: FsCache -> ByteString -> IO (Maybe FilePath)
 served fs content = runFs fs (lookupFile (uriFor content)) <&> \case
   Just (LocalFile path) -> Just path

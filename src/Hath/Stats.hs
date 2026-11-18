@@ -5,7 +5,6 @@
 module Hath.Stats
   ( StatsEnv
   , newStatsEnv
-    -- * Counting
   , addUpload
   , addDownload
   , incServed
@@ -15,7 +14,6 @@ module Hath.Stats
   , addDlBytes
   , trackConnection
   , observeDuration
-    -- * Rendering
   , readMetrics
   , renderMetrics
   ) where
@@ -74,11 +72,9 @@ add n ref = atomicModifyIORef' ref $ \old -> ( old + n, () )
 count :: Members '[ Reader StatsEnv, Embed IO ] r => (StatsEnv -> IORef Int64) -> Int -> Sem r ()
 count counter n = ask >>= embed . add (fromIntegral n) . counter
 
--- | Bytes sent to readers.
 addUpload :: Members '[ Reader StatsEnv, Embed IO ] r => Int -> Sem r ()
 addUpload = count statsSentBytes
 
--- | Bytes fetched from upstream into the cache.
 addDownload :: Members '[ Reader StatsEnv, Embed IO ] r => Int -> Sem r ()
 addDownload = count statsReceivedBytes
 
@@ -88,19 +84,15 @@ incServed = count statsSent 1
 incFetched :: Members '[ Reader StatsEnv, Embed IO ] r => Sem r ()
 incFetched = count statsReceived 1
 
--- | One gallery taken from the download queue.
 incDlTask :: Members '[ Reader StatsEnv, Embed IO ] r => Sem r ()
 incDlTask = count statsDlTasks 1
 
--- | One gallery file downloaded.
 incDlFile :: Members '[ Reader StatsEnv, Embed IO ] r => Sem r ()
 incDlFile = count statsDlFiles 1
 
--- | Bytes of gallery files downloaded.
 addDlBytes :: Members '[ Reader StatsEnv, Embed IO ] r => Int -> Sem r ()
 addDlBytes = count statsDlBytes
 
--- | Count a connection as active while the action runs.
 trackConnection :: StatsEnv -> IO a -> IO a
 trackConnection stats action = do
   add 1 (statsActiveConnections stats)
@@ -142,7 +134,6 @@ renderMetrics stats uptime = do
   total <- readIORef (statsDurationSum stats)
   pure $ mconcat scalars <> durationHistogram durations total
 
--- | A counter or gauge, with its HELP and TYPE lines.
 scalar :: Text -> Text -> Text -> Int64 -> Text
 scalar typ name help value
   = unlines

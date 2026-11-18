@@ -2,7 +2,6 @@ name: Haskell CI
 
 on: [push, pull_request]
 
-# nothing here writes to the repository
 permissions:
   contents: read
 
@@ -16,9 +15,6 @@ jobs:
         plan:
           - ghc: "9.12.2"
             resolver: "lts-24.67"
-        ## include:
-        ##   - os: macOS-latest
-        ##     flags: '--flag greskell:-hint-test'
 
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.plan.allow-fail == true }}
@@ -38,7 +34,6 @@ jobs:
           curl -sSL https://get.haskellstack.org/ | sh -s - -f
 
       - uses: actions/cache@v4
-        ## Looks like caching in macOS causes weird failures in the steps later.
         if: runner.os != 'macOS'
         with:
           path: |

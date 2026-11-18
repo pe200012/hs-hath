@@ -1,4 +1,3 @@
--- | Logging at a severity, for code that runs in 'Sem'.
 module Hath.Log ( logInfo, logWarning, logError ) where
 
 import           Colog          ( Message, Msg(..), Severity(..) )

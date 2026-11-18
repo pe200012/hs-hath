@@ -150,8 +150,6 @@ startServer config options settings certs actions = do
                    }
          certs)
 
--- | Run the second action with the first running beside it. The first is
--- stopped when the second ends.
 alongside :: IO a -> IO b -> IO b
 alongside background action = withAsync background (const action)
 
@@ -247,7 +245,6 @@ announce config port = runRPCIO config clientStart >>= \case
     Refused why     -> die (toString why)
     Unannounced why -> False <$ putStrLn (toString why)
 
--- | Handle commands until one ends the client.
 commands :: ServerEnv -> IORef ( CertificateChain, PrivKey ) -> IO ()
 commands env credentials = atomically (readTChan (envActions env)) >>= \case
   GracefulShutdown -> pass

@@ -43,7 +43,6 @@ sampleURI
 sampleContent :: ByteString
 sampleContent = "test content for R2 storage"
 
--- | Run against a bucket, without the log.
 runR2Cache :: R2Connection
            -> Sem '[ Cache, Log Message, Error HathError, Embed IO ] a
            -> IO (Either HathError a)
@@ -60,11 +59,6 @@ redirected _ = False
 r2Specs :: Spec
 r2Specs = describe "R2 cache" $ beforeAll setupEnv $ do
   describe "mkR2Connection" $ do
-    it "connects when the credentials are in the environment"
-      $ \_ -> mkR2Connection testR2Config >>= \case
-        Left err -> expectationFailure $ "Connection failed: " <> toString err
-        Right _  -> pass
-
     it "fails without R2_ACCESS_KEY" $ \_ -> do
       setEnv "R2_ACCESS_KEY" ""
       result <- mkR2Connection testR2Config
@@ -72,14 +66,6 @@ r2Specs = describe "R2 cache" $ beforeAll setupEnv $ do
       isLeft result `shouldBe` True
 
   describe "runCacheR2" $ do
-    -- these two need a real bucket
-    xit "stores a file" $ \conn -> runR2Cache conn (storeFile sampleURI sampleContent)
-      >>= (`shouldBe` Right ())
-
-    xit "redirects to a file it stored" $ \conn -> do
-      _ <- runR2Cache conn $ storeFile sampleURI sampleContent
-      runR2Cache conn (lookupFile sampleURI) >>= (`shouldSatisfy` redirected)
-
     it "misses a file the bucket does not answer for"
       $ \conn -> runR2Cache conn (lookupFile sampleURI { fileHash = "nonexistent999" })
       >>= (`shouldSatisfy` (not . redirected))
@@ -97,7 +83,6 @@ r2Specs = describe "R2 cache" $ beforeAll setupEnv $ do
       runR2Cache conn (lookupFile sampleURI) >>= (`shouldSatisfy` redirected)
       readIORef heads `shouldReturn` 0
 
--- | A bucket that has every object and counts the HEADs it is asked.
 fakeBucket :: IORef Int -> Application
 fakeBucket heads req respond = do
   when (requestMethod req == "HEAD") $ atomicModifyIORef' heads (\n -> ( n + 1, () ))

@@ -81,7 +81,6 @@ optsInfo
 main :: IO ()
 main = do
   opts <- execParser optsInfo
-  -- the credentials come from R2_ACCESS_KEY and R2_SECRET_KEY
   mkR2Connection R2Config { r2Endpoint = optR2Endpoint opts, r2Bucket = optR2Bucket opts } >>= \case
     Left err -> do
       putTextLn $ "Error creating R2 connection: " <> err

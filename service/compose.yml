@@ -13,13 +13,13 @@ services:
       - WIREGUARD_ENDPOINT_IP
       - WIREGUARD_ENDPOINT_PORT # Usually 51820
       - WIREGUARD_PUBLIC_KEY
-      - FIREWALL_OUTBOUND_SUBNETS # Allow local VPN traffic
+      - FIREWALL_OUTBOUND_SUBNETS
     ports:
-      - "443:443"  # Your service port
+      - "443:443"
 
   rathole-client:
     image: rapiz1/rathole
-    network_mode: service:vpn  # Shares VPN network
+    network_mode: service:vpn
     volumes:
       - ./client.toml:/etc/rathole/client.toml
     depends_on:
@@ -31,14 +31,13 @@ services:
   hs-hath:
     image: hs-hath
     build: .
-    network_mode: service:vpn  # All three share the same network
+    network_mode: service:vpn
     volumes:
       - ./asset/client-login:/client-login
       - ./asset/cache:/cache
     environment:
       - R2_ACCESS_KEY
       - R2_SECRET_KEY
-      # set it to read /metrics and /admin/settings; without it they are not served
       - HATH_METRICS_TOKEN
     depends_on:
       - vpn

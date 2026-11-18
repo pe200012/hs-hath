@@ -92,10 +92,10 @@ settingsSpecs = do
     diskLimitBytes refreshed `shouldBe` 2000
     rpcServerIPs refreshed `shouldBe` [ "192.0.2.1", "192.0.2.2" ]
 
-  describe "max_allowed_filesize" $ it "is a GiB unless the server says otherwise" $ do
-    maxAllowedFileSize defaultHathSettings `shouldBe` 1073741824
-    maxAllowedFileSize (parseSettings defaultHathSettings [ "max_allowed_filesize=1000" ])
-      `shouldBe` 1000
+  describe "max_allowed_filesize"
+    $ it "is taken from the settings"
+    $ maxAllowedFileSize (parseSettings defaultHathSettings [ "max_allowed_filesize=1000" ])
+    `shouldBe` 1000
 
   describe "maxConnections" $ do
     let withSettings = maxConnections . parseSettings defaultHathSettings

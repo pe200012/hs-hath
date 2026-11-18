@@ -1,4 +1,3 @@
--- | What can go wrong between this client, the RPC server and the cache.
 module Hath.Error ( HathError(..) ) where
 
 import           Relude
@@ -12,7 +11,6 @@ data HathError
   | CertificateFailure !Text
     -- ^ The PKCS#12 file from @get_cert@ could not be read.
   | StorageError !Text
-    -- ^ A cache write failed.
   deriving ( Show, Eq )
 
 instance Exception HathError

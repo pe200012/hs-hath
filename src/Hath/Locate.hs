@@ -1,7 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 
 -- | Finding a requested file: in the cache, or else upstream.
-module Hath.Locate ( Located(..), locateResource, usableReply, withinBudget, heldBytes ) where
+module Hath.Locate ( Located(..), locateResource, usableReply, heldBytes ) where
 
 import           Colog                    ( Message )
 import           Colog.Polysemy           ( Log )
@@ -241,7 +241,6 @@ held = unsafePerformIO (newTVarIO 0)
 
 {-# NOINLINE held #-}
 
--- | The bytes the downloads under way hold.
 heldBytes :: IO Int
 heldBytes = readTVarIO held
 

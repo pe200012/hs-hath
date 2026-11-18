@@ -1,4 +1,3 @@
--- | Reading request paths and server commands as the official client does.
 module APISpec ( apiSpecs ) where
 
 import qualified Data.Map.Strict    as Map

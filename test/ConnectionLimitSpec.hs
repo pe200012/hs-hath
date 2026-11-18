@@ -1,4 +1,3 @@
--- | The cap on open connections and the overload notice near it.
 module ConnectionLimitSpec ( connectionLimitSpecs ) where
 
 import           Control.Concurrent          ( threadDelay )
